@@ -15,7 +15,7 @@ class CoreMigration {
 }
 
 abstract final class CoreMigrations {
-  static const currentVersion = 2;
+  static const currentVersion = 3;
 
   static final List<CoreMigration> migrations = [
     CoreMigration(
@@ -27,6 +27,11 @@ abstract final class CoreMigrations {
       version: 2,
       name: 'sync_and_projection_tables',
       apply: _syncAndProjectionTables,
+    ),
+    CoreMigration(
+      version: 3,
+      name: 'lan_sync_peer_secret',
+      apply: _lanSyncPeerSecret,
     ),
   ];
 
@@ -225,5 +230,9 @@ abstract final class CoreMigrations {
         updated_event_id TEXT NOT NULL
       )
     ''');
+  }
+
+  static Future<void> _lanSyncPeerSecret(DatabaseExecutor db) async {
+    await db.execute('ALTER TABLE sync_peers ADD COLUMN shared_secret TEXT');
   }
 }

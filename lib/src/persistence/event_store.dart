@@ -58,6 +58,13 @@ class EventStore {
     });
   }
 
+  Future<EventWriteResult> appendInTransaction(
+    Transaction txn,
+    EventEnvelope event,
+  ) {
+    return _appendInTransaction(txn, event);
+  }
+
   Future<int> count() async {
     final rows = await _db.rawQuery('SELECT COUNT(*) AS count FROM events');
     return rows.single['count'] as int;
@@ -65,6 +72,30 @@ class EventStore {
 
   Future<List<EventEnvelope>> fetchEvents() async {
     final rows = await _db.query('events', orderBy: 'hlc ASC, event_id ASC');
+    return rows.map(EventEnvelope.fromStorage).toList(growable: false);
+  }
+
+  Future<List<EventEnvelope>> fetchEventsAfter({
+    String? hlc,
+    String? eventId,
+    required int limit,
+  }) async {
+    final safeLimit = limit.clamp(1, 1000).toInt();
+    final rows = hlc == null
+        ? await _db.query(
+            'events',
+            orderBy: 'hlc ASC, event_id ASC',
+            limit: safeLimit,
+          )
+        : await _db.query(
+            'events',
+            where: eventId == null
+                ? 'hlc > ?'
+                : '(hlc > ? OR (hlc = ? AND event_id > ?))',
+            whereArgs: eventId == null ? [hlc] : [hlc, hlc, eventId],
+            orderBy: 'hlc ASC, event_id ASC',
+            limit: safeLimit,
+          );
     return rows.map(EventEnvelope.fromStorage).toList(growable: false);
   }
 

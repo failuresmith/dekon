@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/events/events.dart';
 import '../persistence/persistence.dart';
 import '../platform/app_database_path.dart';
+import '../sync/sync.dart';
 import 'models.dart';
 
 class DekonRepository {
@@ -41,6 +42,18 @@ class DekonRepository {
   }
 
   Future<void> close() => _db.close();
+
+  SyncStore createSyncStore() {
+    return SyncStore(database: _db, localDeviceId: _deviceId);
+  }
+
+  LanSyncServer createLanSyncServer() {
+    return LanSyncServer(store: createSyncStore());
+  }
+
+  LanSyncClient createLanSyncClient() {
+    return LanSyncClient(store: createSyncStore());
+  }
 
   Future<ProductSummary> createProduct({
     required String name,

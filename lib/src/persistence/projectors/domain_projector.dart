@@ -19,22 +19,32 @@ class DomainProjector {
       );
     }
     return _db.transaction((txn) async {
-      if (await _isAlreadyApplied(txn, event.eventId)) {
-        return ProjectionApplyResult(
-          ProjectionApplyStatus.duplicate,
-          event.eventId,
-        );
-      }
-      await _applySupported(txn, event);
-      await txn.insert('projection_applied_events', {
-        'event_id': event.eventId,
-        'applied_at': _now().toUtc().toIso8601String(),
-      });
+      return applyInTransaction(txn, event);
+    });
+  }
+
+  Future<ProjectionApplyResult> applyInTransaction(
+    Transaction txn,
+    EventEnvelope event,
+  ) async {
+    if (!EventSchema.isSupported(event.schemaVersion)) {
       return ProjectionApplyResult(
-        ProjectionApplyStatus.applied,
+        ProjectionApplyStatus.unsupported,
         event.eventId,
       );
+    }
+    if (await _isAlreadyApplied(txn, event.eventId)) {
+      return ProjectionApplyResult(
+        ProjectionApplyStatus.duplicate,
+        event.eventId,
+      );
+    }
+    await _applySupported(txn, event);
+    await txn.insert('projection_applied_events', {
+      'event_id': event.eventId,
+      'applied_at': _now().toUtc().toIso8601String(),
     });
+    return ProjectionApplyResult(ProjectionApplyStatus.applied, event.eventId);
   }
 
   Future<void> _applySupported(Transaction txn, EventEnvelope event) async {

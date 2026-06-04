@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
@@ -21,6 +23,13 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   var _index = 0;
+  late final _syncServer = widget.repository.createLanSyncServer();
+
+  @override
+  void dispose() {
+    unawaited(_syncServer.stop());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +44,7 @@ class _AppShellState extends State<AppShell> {
         mode: TransactionMode.buy,
         scanBarcode: widget.scanBarcode,
       ),
-      ReportsScreen(repository: widget.repository),
+      ReportsScreen(repository: widget.repository, syncServer: _syncServer),
     ];
     return Scaffold(
       appBar: AppBar(title: const Text('Dekon')),

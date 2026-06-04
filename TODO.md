@@ -15,7 +15,8 @@ This checklist tracks the work needed to move from `docs/SRS.md` to a signed And
 - [x] SQLite migrations/projection tables and domain projectors implemented.
 - [x] Minimal Sell, Buy, Reports UI implemented on top of the event/projector layer.
 - [x] Barcode scanning integrated into Sell and Buy with manual fallback.
-- [ ] Next step: run Android barcode permission/scan smoke tests, then implement LAN sync.
+- [x] LAN sync server endpoints, QR pairing, HMAC auth, and sync integration tests implemented.
+- [ ] Next step: run Android barcode/LAN sync smoke tests, then implement local backup/import.
 
 ## Guardrails
 
@@ -23,9 +24,9 @@ This checklist tracks the work needed to move from `docs/SRS.md` to a signed And
 - [x] Production dependency policy decided: install the minimum required set only.
 - [x] Do not add production dependencies outside `docs/PACKAGES.md` without explicit approval.
 - [ ] Prefer `pnpm` for any JavaScript tooling.
-- [ ] Keep POS operation offline-first; network/update failures must not block Sell, Buy, or Reports.
-- [ ] Treat all inventory mutations as append-only events; do not directly edit stock totals.
-- [ ] Do not log secrets, pairing tokens, release credentials, or sensitive transaction payloads.
+- [x] Keep POS operation offline-first; network/update failures must not block Sell, Buy, or Reports.
+- [x] Treat all inventory mutations as append-only events; do not directly edit stock totals.
+- [x] Do not log secrets, pairing tokens, release credentials, or sensitive transaction payloads.
 
 ## 1. Product And Technical Decisions
 
@@ -139,25 +140,25 @@ This checklist tracks the work needed to move from `docs/SRS.md` to a signed And
 
 ## 9. LAN Sync
 
-- [ ] Implement server mode lifecycle: start, visible running state, and stop.
-- [ ] Bind server to LAN-reachable interface only while server mode is enabled.
-- [ ] Implement `GET /health`.
-- [ ] Implement `GET /device`.
-- [ ] Implement `GET /events?since=<cursor>&limit=<n>`.
-- [ ] Implement `POST /events`.
-- [ ] Implement `GET /sync/state`.
-- [ ] Implement QR code server discovery.
-- [ ] Implement QR code device pairing.
+- [x] Implement server mode lifecycle: start, visible running state, and stop.
+- [x] Bind server to LAN-reachable interface only while server mode is enabled.
+- [x] Implement `GET /health`.
+- [x] Implement `GET /device`.
+- [x] Implement `GET /events?since=<cursor>&limit=<n>`.
+- [x] Implement `POST /events`.
+- [x] Implement `GET /sync/state`.
+- [x] Implement QR code server discovery.
+- [x] Implement QR code device pairing.
 - [ ] Keep manual server address entry as a support fallback only if QR setup fails.
-- [ ] Store trusted peer/device records.
-- [ ] Authenticate sync requests.
-- [ ] Redact tokens and secrets from logs.
-- [ ] Make event pull/push resumable after interruption.
-- [ ] Return accepted, duplicate, rejected, and unsupported event IDs from `POST /events`.
-- [ ] Add integration tests for duplicate `POST /events`.
-- [ ] Add integration tests for interrupted sync resume.
-- [ ] Add integration tests for unsupported schema storage.
-- [ ] Add integration tests for out-of-order sync convergence.
+- [x] Store trusted peer/device records.
+- [x] Authenticate sync requests.
+- [x] Redact tokens and secrets from logs.
+- [x] Make event pull/push resumable after interruption.
+- [x] Return accepted, duplicate, rejected, and unsupported event IDs from `POST /events`.
+- [x] Add integration tests for duplicate `POST /events`.
+- [x] Add integration tests for interrupted sync resume.
+- [x] Add integration tests for unsupported schema storage.
+- [x] Add integration tests for out-of-order sync convergence.
 
 ## 10. Backup And Recovery
 

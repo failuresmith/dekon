@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../application/application.dart';
+import '../sync/sync.dart';
 import 'product_form_dialog.dart';
 
 class ReportsScreen extends StatefulWidget {
-  const ReportsScreen({super.key, required this.repository});
+  const ReportsScreen({super.key, required this.repository, this.syncServer});
 
   final DekonRepository repository;
+  final LanSyncServer? syncServer;
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -14,6 +17,8 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   late Future<_ReportsData> _future = _load();
+  var _serverBusy = false;
+  String? _serverError;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +38,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
             padding: const EdgeInsets.all(16),
             children: [
               _status(data.summary),
+              const SizedBox(height: 12),
+              _syncServerPanel(),
               const SizedBox(height: 12),
               _metrics(data.summary),
               const SizedBox(height: 16),
@@ -68,7 +75,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Widget _status(ReportSummary summary) {
     final lastSync = summary.lastSyncAt?.toLocal().toString() ?? 'Never';
     return Text(
-      'Unsynced events: ${summary.unsyncedEventCount} • Last sync: $lastSync',
+      'Unsynced events: ${summary.unsyncedEventCount} - Last sync: $lastSync',
       key: const Key('sync-status'),
     );
   }
@@ -83,6 +90,58 @@ class _ReportsScreenState extends State<ReportsScreen> {
         _metric('Gross margin', formatMoney(summary.grossMarginMinor)),
         _metric('Low stock', summary.lowStockRows.length.toString()),
       ],
+    );
+  }
+
+  Widget _syncServerPanel() {
+    final server = widget.syncServer;
+    if (server == null) return const SizedBox.shrink();
+    final running = server.isRunning;
+    final qrData = server.pairingQrData;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('LAN Sync', style: Theme.of(context).textTheme.titleMedium),
+            if (_serverError != null) Text(_serverError!),
+            if (running) ...[
+              SelectableText(
+                server.serverUrl ?? 'Starting',
+                key: const Key('sync-server-url'),
+              ),
+              if (qrData != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: QrImageView(
+                    key: const Key('sync-pairing-qr'),
+                    data: qrData,
+                    version: QrVersions.auto,
+                    size: 160,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+              FilledButton.icon(
+                key: const Key('stop-sync-server'),
+                onPressed: _serverBusy ? null : _stopServer,
+                icon: const Icon(Icons.stop),
+                label: const Text('Stop LAN Sync'),
+              ),
+            ] else
+              FilledButton.icon(
+                key: const Key('start-sync-server'),
+                onPressed: _serverBusy ? null : _startServer,
+                icon: const Icon(Icons.sync),
+                label: Text(_serverBusy ? 'Starting' : 'Start LAN Sync'),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -126,6 +185,34 @@ class _ReportsScreenState extends State<ReportsScreen> {
       product: product,
     );
     await _refresh();
+  }
+
+  Future<void> _startServer() async {
+    setState(() {
+      _serverBusy = true;
+      _serverError = null;
+    });
+    try {
+      await widget.syncServer!.start();
+    } catch (error) {
+      _serverError = 'LAN sync failed: $error';
+    } finally {
+      if (mounted) setState(() => _serverBusy = false);
+    }
+  }
+
+  Future<void> _stopServer() async {
+    setState(() {
+      _serverBusy = true;
+      _serverError = null;
+    });
+    try {
+      await widget.syncServer!.stop();
+    } catch (error) {
+      _serverError = 'LAN sync stop failed: $error';
+    } finally {
+      if (mounted) setState(() => _serverBusy = false);
+    }
   }
 }
 
