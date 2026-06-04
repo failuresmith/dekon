@@ -1,6 +1,7 @@
 import 'package:dekon/main.dart';
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/persistence/persistence.dart';
+import 'package:dekon/src/ui/barcode_scanner_dialog.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -9,10 +10,14 @@ Future<DekonRepository> createTestRepository() async {
   final db = await CoreDatabase.open(
     path: inMemoryDatabasePath,
     factory: databaseFactoryFfiNoIsolate,
+    singleInstance: false,
   );
   return DekonRepository.open(database: db);
 }
 
-Widget testApp(DekonRepository repository) {
-  return MainApp(repositoryFactory: () async => repository);
+Widget testApp(DekonRepository repository, {BarcodeScanLauncher? scanBarcode}) {
+  return MainApp(
+    repositoryFactory: () async => repository,
+    scanBarcode: scanBarcode,
+  );
 }

@@ -37,6 +37,105 @@ void main() {
     expect(find.text('Beans'), findsOneWidget);
   });
 
+  testWidgets('scanned known barcode adds item to Sell flow', (tester) async {
+    final repository = await createTestRepository();
+    await repository.createProduct(
+      name: 'Scan Tea',
+      barcode: 'TEA-SCAN-1',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+
+    await tester.pumpWidget(
+      testApp(repository, scanBarcode: (_) async => 'TEA-SCAN-1'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-barcode')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Scan Tea'), findsOneWidget);
+  });
+
+  testWidgets('scanned known barcode adds item to Buy flow', (tester) async {
+    final repository = await createTestRepository();
+    await repository.createProduct(
+      name: 'Sugar',
+      barcode: 'SUGAR-1',
+      salePriceMinor: 300,
+      purchaseCostMinor: 125,
+    );
+
+    await tester.pumpWidget(
+      testApp(repository, scanBarcode: (_) async => 'SUGAR-1'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buy'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-barcode')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sugar'), findsOneWidget);
+  });
+
+  testWidgets('scanner failure preserves manual barcode fallback', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    await repository.createProduct(
+      name: 'Salt',
+      barcode: 'SALT-1',
+      salePriceMinor: 100,
+      purchaseCostMinor: 40,
+    );
+
+    await tester.pumpWidget(
+      testApp(
+        repository,
+        scanBarcode: (_) async {
+          throw StateError('permission denied');
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-barcode')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Scan unavailable. Enter barcode manually.'),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'SALT-1');
+    await tester.tap(find.byKey(const Key('lookup-product')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Salt'), findsOneWidget);
+  });
+
+  testWidgets('unknown scanned barcode opens product creation and adds item', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+
+    await tester.pumpWidget(
+      testApp(repository, scanBarcode: (_) async => 'SCAN-1'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-barcode')));
+    await tester.pumpAndSettle();
+
+    final barcodeField = tester.widget<TextFormField>(
+      find.byKey(const Key('product-barcode')),
+    );
+    expect(barcodeField.controller?.text, 'SCAN-1');
+    await tester.enterText(find.byKey(const Key('product-name')), 'Beans');
+    await tester.enterText(find.byKey(const Key('product-sale-price')), '2.50');
+    await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
+    await tester.tap(find.byKey(const Key('save-product')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Beans'), findsOneWidget);
+  });
+
   testWidgets('Buy persists purchase and Reports show stock and totals', (
     tester,
   ) async {

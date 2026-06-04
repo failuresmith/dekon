@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'src/app_config.dart';
 import 'src/application/application.dart';
 import 'src/ui/app_shell.dart';
+import 'src/ui/barcode_scanner_dialog.dart';
 
 typedef RepositoryFactory = Future<DekonRepository> Function();
 
@@ -11,9 +12,10 @@ void main() {
 }
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key, this.repositoryFactory});
+  const MainApp({super.key, this.repositoryFactory, this.scanBarcode});
 
   final RepositoryFactory? repositoryFactory;
+  final BarcodeScanLauncher? scanBarcode;
 
   @override
   Widget build(BuildContext context) {
@@ -25,15 +27,20 @@ class MainApp extends StatelessWidget {
       ),
       home: _RepositoryLoader(
         repositoryFactory: repositoryFactory ?? DekonRepository.open,
+        scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
       ),
     );
   }
 }
 
 class _RepositoryLoader extends StatefulWidget {
-  const _RepositoryLoader({required this.repositoryFactory});
+  const _RepositoryLoader({
+    required this.repositoryFactory,
+    required this.scanBarcode,
+  });
 
   final RepositoryFactory repositoryFactory;
+  final BarcodeScanLauncher scanBarcode;
 
   @override
   State<_RepositoryLoader> createState() => _RepositoryLoaderState();
@@ -58,7 +65,10 @@ class _RepositoryLoaderState extends State<_RepositoryLoader> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return AppShell(repository: snapshot.requireData);
+        return AppShell(
+          repository: snapshot.requireData,
+          scanBarcode: widget.scanBarcode,
+        );
       },
     );
   }

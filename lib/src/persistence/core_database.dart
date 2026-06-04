@@ -8,12 +8,14 @@ class CoreDatabase {
   static Future<Database> open({
     required String path,
     DatabaseFactory? factory,
+    bool singleInstance = true,
   }) {
     final selectedFactory = factory ?? databaseFactory;
     return selectedFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
         version: schemaVersion,
+        singleInstance: singleInstance,
         onCreate: (db, version) => CoreMigrations.apply(db, 0, version),
         onUpgrade: CoreMigrations.apply,
         onDowngrade: _failOnDowngrade,

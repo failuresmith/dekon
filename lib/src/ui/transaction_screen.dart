@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'barcode_scanner_dialog.dart';
 import 'product_lookup_field.dart';
 
 enum TransactionMode { sell, buy }
@@ -10,10 +11,12 @@ class TransactionScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.mode,
+    this.scanBarcode = showBarcodeScannerDialog,
   });
 
   final DekonRepository repository;
   final TransactionMode mode;
+  final BarcodeScanLauncher scanBarcode;
 
   @override
   State<TransactionScreen> createState() => _TransactionScreenState();
@@ -56,6 +59,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
               child: ProductLookupField(
                 repository: widget.repository,
                 onProductSelected: _addProduct,
+                scanBarcode: widget.scanBarcode,
               ),
             ),
           ],
