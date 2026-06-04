@@ -1,0 +1,38 @@
+services:
+  flutter-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      network: host
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        ALL_PROXY: ${ALL_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        all_proxy: ${ALL_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
+    image: dekon-flutter-dev:latest
+    network_mode: host
+    working_dir: /workspace
+    entrypoint: ["/workspace/tools/docker-entrypoint.sh"]
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1}
+    volumes:
+      - .:/workspace
+      - flutter-pub-cache:/root/.pub-cache
+      - flutter-gradle-cache:/root/.gradle
+    tty: true
+    stdin_open: true
+
+volumes:
+  flutter-pub-cache:
+  flutter-gradle-cache:

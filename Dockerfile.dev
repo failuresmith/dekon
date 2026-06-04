@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+FROM debian:bookworm-slim
+
+ARG FLUTTER_VERSION=stable
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    FLUTTER_HOME=/opt/flutter \
+    PATH=/opt/flutter/bin:/opt/flutter/bin/cache/dart-sdk/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:${PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=5 \
+        ca-certificates \
+        curl \
+        file \
+        git \
+        libglu1-mesa \
+        openjdk-17-jdk-headless \
+        unzip \
+        xz-utils \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch "${FLUTTER_VERSION}" https://github.com/flutter/flutter.git "${FLUTTER_HOME}" \
+    && flutter config --no-analytics \
+    && flutter precache --android
+
+ARG ANDROID_CMDLINE_TOOLS_VERSION=11076708
+ARG ANDROID_PLATFORM=android-36
+ARG ANDROID_COMPAT_PLATFORM=android-35
+ARG ANDROID_BUILD_TOOLS=36.0.0
+ARG ANDROID_NDK=28.2.13676358
+ARG ANDROID_CMAKE=3.22.1
+
+RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" \
+    && curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" -o /tmp/android-tools.zip \
+    && unzip -q /tmp/android-tools.zip -d /tmp/android-tools \
+    && mv /tmp/android-tools/cmdline-tools "${ANDROID_HOME}/cmdline-tools/latest" \
+    && rm -rf /tmp/android-tools /tmp/android-tools.zip \
+    && yes | sdkmanager --licenses >/dev/null \
+    && for package in \
+        "platform-tools" \
+        "platforms;${ANDROID_PLATFORM}" \
+        "platforms;${ANDROID_COMPAT_PLATFORM}" \
+        "build-tools;${ANDROID_BUILD_TOOLS}" \
+        "ndk;${ANDROID_NDK}" \
+        "cmake;${ANDROID_CMAKE}"; do \
+          for attempt in 1 2 3; do \
+            sdkmanager "${package}" && break; \
+            if [ "${attempt}" = "3" ]; then exit 1; fi; \
+            rm -rf "${ANDROID_HOME}/.temp" /root/.android/cache; \
+            sleep 5; \
+          done; \
+        done
+
+RUN flutter config --no-enable-web --no-enable-linux-desktop --no-enable-macos-desktop --no-enable-windows-desktop
+
+WORKDIR /workspace
+
+CMD ["bash"]
