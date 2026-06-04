@@ -16,7 +16,8 @@ This checklist tracks the work needed to move from `docs/SRS.md` to a signed And
 - [x] Minimal Sell, Buy, Reports UI implemented on top of the event/projector layer.
 - [x] Barcode scanning integrated into Sell and Buy with manual fallback.
 - [x] LAN sync server endpoints, QR pairing, HMAC auth, and sync integration tests implemented.
-- [ ] Next step: run Android barcode/LAN sync smoke tests, then implement local backup/import.
+- [x] Local backup/export and restore/import workflow implemented.
+- [ ] Next step: run Android barcode/LAN sync/backup smoke tests, then prepare release signing.
 
 ## Guardrails
 
@@ -162,15 +163,15 @@ This checklist tracks the work needed to move from `docs/SRS.md` to a signed And
 
 ## 10. Backup And Recovery
 
-- [ ] Add manual export workflow to a local directory.
-- [ ] Add manual import workflow from a local directory.
-- [ ] Use native directory picker from `file_selector` for local backup location.
-- [ ] Write export atomically: create temp file, flush, then move/rename to final backup file.
-- [ ] Include schema version, app version, export timestamp, and event count in backup metadata.
-- [ ] Validate backup file before import mutates local state.
-- [ ] Do not encrypt the database for the first APK.
-- [ ] Defer optional Google-based backup until after local backup/import is stable.
-- [ ] Validate backup compatibility with event schema version.
+- [x] Add manual export workflow to a local directory.
+- [x] Add manual import workflow from a local directory.
+- [x] Use native directory picker from `file_selector` for local backup location.
+- [x] Write export atomically: create temp file, flush, then move/rename to final backup file.
+- [x] Include schema version, app version, export timestamp, and event count in backup metadata.
+- [x] Validate backup file before import mutates local state.
+- [x] Do not encrypt the database for the first APK.
+- [x] Defer optional Google-based backup until after local backup/import is stable.
+- [x] Validate backup compatibility with event schema version.
 - [ ] Add recovery test for app restart during event write.
 - [ ] Add recovery test for app restart during sync.
 

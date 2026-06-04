@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/events/events.dart';
+import '../backup/backup.dart';
 import '../persistence/persistence.dart';
 import '../platform/app_database_path.dart';
 import '../sync/sync.dart';
@@ -53,6 +54,10 @@ class DekonRepository {
 
   LanSyncClient createLanSyncClient() {
     return LanSyncClient(store: createSyncStore());
+  }
+
+  BackupService createBackupService() {
+    return BackupService(database: _db);
   }
 
   Future<ProductSummary> createProduct({
