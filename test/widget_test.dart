@@ -1,9 +1,13 @@
-import 'package:dekon/main.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'helpers/test_app.dart';
 
 void main() {
   testWidgets('renders app name', (tester) async {
-    await tester.pumpWidget(const MainApp());
+    final repository = await createTestRepository();
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
 
     expect(find.text('Dekon'), findsOneWidget);
   });
