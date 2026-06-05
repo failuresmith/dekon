@@ -51,6 +51,30 @@ void main() {
       expect(futureSummary.salesMinor, 0);
       expect(futureSummary.purchasesMinor, 0);
       expect(futureSummary.grossMarginMinor, 0);
+
+      final dayTrend = await repository.reportTrend(
+        period: ReportTrendPeriod.day,
+        anchorLocal: now,
+      );
+      final weekTrend = await repository.reportTrend(
+        period: ReportTrendPeriod.week,
+        anchorLocal: now,
+      );
+      final monthTrend = await repository.reportTrend(
+        period: ReportTrendPeriod.month,
+        anchorLocal: now,
+      );
+      final yearTrend = await repository.reportTrend(
+        period: ReportTrendPeriod.year,
+        anchorLocal: now,
+      );
+
+      expect(dayTrend, hasLength(7));
+      expect(dayTrend.last.salesMinor, 400);
+      expect(dayTrend.last.purchasesMinor, 300);
+      expect(weekTrend, hasLength(8));
+      expect(monthTrend, hasLength(12));
+      expect(yearTrend, hasLength(5));
     },
   );
 
@@ -166,6 +190,10 @@ void main() {
           range: range,
           deviceId: _remoteCashierDeviceId,
         );
+        final selectedCashierTrend = await repository.reportTrend(
+          period: ReportTrendPeriod.day,
+          deviceId: _remoteCashierDeviceId,
+        );
 
         expect(localSummary.salesMinor, 400);
         expect(localSummary.purchasesMinor, 300);
@@ -179,6 +207,8 @@ void main() {
         expect(selectedCashierSummary.salesMinor, 800);
         expect(selectedCashierSummary.purchasesMinor, 600);
         expect(selectedCashierSummary.grossMarginMinor, 500);
+        expect(selectedCashierTrend.last.salesMinor, 800);
+        expect(selectedCashierTrend.last.purchasesMinor, 600);
       } finally {
         await repository.close();
       }

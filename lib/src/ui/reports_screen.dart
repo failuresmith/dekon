@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../application/application.dart';
+import 'report_trend_dialog.dart';
 
 enum _ReportPeriod { day, week, month, custom }
 
@@ -124,49 +128,64 @@ class _ReportsScreenState extends State<ReportsScreen> {
         widget.scope == ReportScope.allDevices &&
         _selectedCashierDeviceId == null;
     return Center(
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        spacing: 12,
-        runSpacing: 12,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _metric(
-            key: const Key('sales-report-metric'),
-            label: _salesLabel,
-            value: formatMoney(summary.salesMinor),
-            width: width,
-            onTap: () => _showTransactions(
-              kind: TransactionHistoryKind.sale,
-              title: _salesLabel,
-              range: summary.range,
-              deviceId: _selectedCashierDeviceId,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _metric(
+                key: const Key('sales-report-metric'),
+                label: _salesLabel,
+                value: formatMoney(summary.salesMinor),
+                width: width,
+                onTap: () => _showTransactions(
+                  kind: TransactionHistoryKind.sale,
+                  title: _salesLabel,
+                  range: summary.range,
+                  deviceId: _selectedCashierDeviceId,
+                ),
+              ),
+              _metric(
+                key: const Key('purchases-report-metric'),
+                label: 'Purchases',
+                value: formatMoney(summary.purchasesMinor),
+                width: width,
+                onTap: () => _showTransactions(
+                  kind: TransactionHistoryKind.purchase,
+                  title: 'Purchases',
+                  range: summary.range,
+                  deviceId: _selectedCashierDeviceId,
+                ),
+              ),
+              _metric(
+                key: const Key('gross-margin-report-metric'),
+                label: 'Gross Margin',
+                value: formatMoney(summary.grossMarginMinor),
+                width: width,
+              ),
+              if (showInventorySignals)
+                _metric(
+                  key: const Key('low-stock-report-metric'),
+                  label: 'Low Stock',
+                  value: summary.lowStockRows.length.toString(),
+                  width: width,
+                  onTap: () => _showLowStock(summary.lowStockRows),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            key: const Key('report-trend-button'),
+            onPressed: _showTrendChart,
+            icon: const Icon(Icons.stacked_bar_chart),
+            label: const Text('View Chart'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
             ),
           ),
-          _metric(
-            key: const Key('purchases-report-metric'),
-            label: 'Purchases',
-            value: formatMoney(summary.purchasesMinor),
-            width: width,
-            onTap: () => _showTransactions(
-              kind: TransactionHistoryKind.purchase,
-              title: 'Purchases',
-              range: summary.range,
-              deviceId: _selectedCashierDeviceId,
-            ),
-          ),
-          _metric(
-            key: const Key('gross-margin-report-metric'),
-            label: 'Gross Margin',
-            value: formatMoney(summary.grossMarginMinor),
-            width: width,
-          ),
-          if (showInventorySignals)
-            _metric(
-              key: const Key('low-stock-report-metric'),
-              label: 'Low Stock',
-              value: summary.lowStockRows.length.toString(),
-              width: width,
-              onTap: () => _showLowStock(summary.lowStockRows),
-            ),
         ],
       ),
     );
@@ -349,6 +368,42 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showTrendChart() async {
+    const landscapeOrientations = [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ];
+    _requestOrientations(landscapeOrientations);
+    if (!mounted) {
+      _requestOrientations(DeviceOrientation.values);
+      return;
+    }
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => ReportTrendDialog(
+          repository: widget.repository,
+          scope: widget.scope,
+          deviceId: _selectedCashierDeviceId,
+        ),
+      );
+    } finally {
+      _requestOrientations(DeviceOrientation.values);
+    }
+  }
+
+  void _requestOrientations(List<DeviceOrientation> orientations) {
+    unawaited(_setOrientations(orientations));
+  }
+
+  Future<void> _setOrientations(List<DeviceOrientation> orientations) async {
+    try {
+      await SystemChrome.setPreferredOrientations(orientations);
+    } catch (error) {
+      debugPrint('Report chart orientation request failed: $error');
+    }
   }
 
   Future<ReportSummary> _loadSummary() {

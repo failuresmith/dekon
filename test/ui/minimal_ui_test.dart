@@ -484,6 +484,7 @@ void main() {
     expect(find.text('Daily Sales'), findsOneWidget);
     expect(find.text('4.00'), findsOneWidget);
     expect(find.text('Low Stock'), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-button')), findsOneWidget);
     expect(find.text('Empty Soda'), findsNothing);
     expect(find.textContaining('Unsynced events:'), findsOneWidget);
     expect(find.textContaining('Last sync:'), findsOneWidget);
@@ -493,6 +494,31 @@ void main() {
         tester.getTopLeft(find.byKey(const Key('sales-report-metric'))).dy,
       ),
     );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('report-trend-button'))).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const Key('low-stock-report-metric'))).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('report-trend-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sales vs Purchases'), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-period-day')), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-period-week')), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-period-month')), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-period-year')), findsOneWidget);
+    expect(find.byKey(const Key('report-trend-chart')), findsOneWidget);
+    expect(find.text('Sales'), findsOneWidget);
+    expect(find.text('Purchases'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('report-trend-period-month')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Last 12 months'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('sales-report-metric')));
     await tester.pumpAndSettle();

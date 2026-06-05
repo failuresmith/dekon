@@ -384,6 +384,36 @@ class DekonRepository {
     ];
   }
 
+  Future<List<ReportTrendBucket>> reportTrend({
+    ReportTrendPeriod period = ReportTrendPeriod.day,
+    ReportScope scope = ReportScope.allDevices,
+    String? deviceId,
+    DateTime? anchorLocal,
+  }) async {
+    final ranges = _trendRanges(period, anchorLocal ?? _now());
+    final buckets = <ReportTrendBucket>[];
+    for (final range in ranges) {
+      buckets.add(
+        ReportTrendBucket(
+          range: range,
+          salesMinor: await _rangeTotal(
+            TransactionHistoryKind.sale,
+            range,
+            scope,
+            deviceId,
+          ),
+          purchasesMinor: await _rangeTotal(
+            TransactionHistoryKind.purchase,
+            range,
+            scope,
+            deviceId,
+          ),
+        ),
+      );
+    }
+    return buckets;
+  }
+
   Future<List<TransactionHistoryEntry>> transactionHistory(
     TransactionHistoryKind kind, {
     ReportDateRange? range,
@@ -477,6 +507,73 @@ class DekonRepository {
       startLocal: start,
       endLocalExclusive: start.add(const Duration(days: 1)),
     );
+  }
+
+  List<ReportDateRange> _trendRanges(
+    ReportTrendPeriod period,
+    DateTime anchorLocal,
+  ) {
+    return switch (period) {
+      ReportTrendPeriod.day => _dayTrendRanges(anchorLocal),
+      ReportTrendPeriod.week => _weekTrendRanges(anchorLocal),
+      ReportTrendPeriod.month => _monthTrendRanges(anchorLocal),
+      ReportTrendPeriod.year => _yearTrendRanges(anchorLocal),
+    };
+  }
+
+  List<ReportDateRange> _dayTrendRanges(DateTime anchorLocal) {
+    final today = _dayStart(anchorLocal);
+    final first = today.subtract(const Duration(days: 6));
+    return List.generate(7, (index) {
+      final start = first.add(Duration(days: index));
+      return ReportDateRange(
+        startLocal: start,
+        endLocalExclusive: start.add(const Duration(days: 1)),
+      );
+    });
+  }
+
+  List<ReportDateRange> _weekTrendRanges(DateTime anchorLocal) {
+    final current = _weekStart(anchorLocal);
+    final first = current.subtract(const Duration(days: 49));
+    return List.generate(8, (index) {
+      final start = first.add(Duration(days: 7 * index));
+      return ReportDateRange(
+        startLocal: start,
+        endLocalExclusive: start.add(const Duration(days: 7)),
+      );
+    });
+  }
+
+  List<ReportDateRange> _monthTrendRanges(DateTime anchorLocal) {
+    final first = DateTime(anchorLocal.year, anchorLocal.month - 11);
+    return List.generate(12, (index) {
+      final start = DateTime(first.year, first.month + index);
+      return ReportDateRange(
+        startLocal: start,
+        endLocalExclusive: DateTime(first.year, first.month + index + 1),
+      );
+    });
+  }
+
+  List<ReportDateRange> _yearTrendRanges(DateTime anchorLocal) {
+    final firstYear = anchorLocal.year - 4;
+    return List.generate(5, (index) {
+      final year = firstYear + index;
+      return ReportDateRange(
+        startLocal: DateTime(year),
+        endLocalExclusive: DateTime(year + 1),
+      );
+    });
+  }
+
+  DateTime _dayStart(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime _weekStart(DateTime value) {
+    final today = _dayStart(value);
+    return today.subtract(Duration(days: value.weekday - 1));
   }
 
   Future<int> _rangeTotal(

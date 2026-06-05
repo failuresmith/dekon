@@ -74,6 +74,8 @@ enum TransactionHistoryKind { sale, purchase }
 
 enum ReportScope { allDevices, localDevice }
 
+enum ReportTrendPeriod { day, week, month, year }
+
 class CashierReportFilter {
   const CashierReportFilter({required this.deviceId, required this.label});
 
@@ -120,6 +122,20 @@ class ReportDateRange {
 
   DateTime get startUtc => startLocal.toUtc();
   DateTime get endUtcExclusive => endLocalExclusive.toUtc();
+}
+
+class ReportTrendBucket {
+  const ReportTrendBucket({
+    required this.range,
+    required this.salesMinor,
+    required this.purchasesMinor,
+  });
+
+  final ReportDateRange range;
+  final int salesMinor;
+  final int purchasesMinor;
+
+  int get maxMinor => salesMinor > purchasesMinor ? salesMinor : purchasesMinor;
 }
 
 class StockReportRow {
