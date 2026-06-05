@@ -325,6 +325,7 @@ class DekonRepository {
   Future<ReportSummary> reportSummary({
     ReportDateRange? range,
     ReportScope scope = ReportScope.allDevices,
+    String? deviceId,
   }) async {
     final reportRange = range ?? _localDayRange(_now());
     final stockRows = await _stockRows();
@@ -335,29 +336,55 @@ class DekonRepository {
         TransactionHistoryKind.sale,
         reportRange,
         scope,
+        deviceId,
       ),
       purchasesMinor: await _rangeTotal(
         TransactionHistoryKind.purchase,
         reportRange,
         scope,
+        deviceId,
       ),
-      grossMarginMinor: await _grossMarginEstimate(reportRange, scope),
+      grossMarginMinor: await _grossMarginEstimate(
+        reportRange,
+        scope,
+        deviceId,
+      ),
       lowStockRows: stockRows.where((row) => row.quantity <= 0).toList(),
       unsyncedEventCount: await _eventStore.count(),
       lastSyncAt: await _lastSyncAt(),
     );
   }
 
+  Future<List<CashierReportFilter>> cashierReportFilters() async {
+    final rows = await _db.rawQuery('''
+      SELECT device_id, display_name
+      FROM devices
+      WHERE trust_status = 'trusted'
+      ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), device_id)) ASC
+      ''');
+    return [
+      for (final row in rows)
+        CashierReportFilter(
+          deviceId: row['device_id'] as String,
+          label: _cashierLabel(
+            row['device_id'] as String,
+            row['display_name'] as String?,
+          ),
+        ),
+    ];
+  }
+
   Future<List<TransactionHistoryEntry>> transactionHistory(
     TransactionHistoryKind kind, {
     ReportDateRange? range,
     ReportScope scope = ReportScope.allDevices,
+    String? deviceId,
     int? limit = 20,
   }) async {
     final source = _transactionSource(kind);
     final where = ['e.type = ?', '${source.alias}.${source.statusColumn} = 0'];
     final args = <Object?>[_transactionType(kind)];
-    _addScopeFilter(where, args, scope);
+    _addDeviceFilter(where, args, scope, deviceId);
     if (range != null) {
       where.add('${source.alias}.occurred_at >= ?');
       where.add('${source.alias}.occurred_at < ?');
@@ -446,11 +473,18 @@ class DekonRepository {
     TransactionHistoryKind kind,
     ReportDateRange range,
     ReportScope scope,
+    String? deviceId,
   ) async {
     final source = _transactionSource(kind);
-    final scopeFilter = _scopeSql(scope, 'e');
-    final rows = await _db.rawQuery(
-      '''
+    final filterDeviceId = _filterDeviceId(scope, deviceId);
+    final deviceFilter = _deviceFilterSql(filterDeviceId, 'e');
+    final args = <Object?>[
+      _transactionType(kind),
+      range.startUtc.toIso8601String(),
+      range.endUtcExclusive.toIso8601String(),
+    ];
+    if (filterDeviceId != null) args.add(filterDeviceId);
+    final rows = await _db.rawQuery('''
       SELECT COALESCE(SUM(${source.alias}.total_minor), 0) AS total
       FROM ${source.table} ${source.alias}
       JOIN events e ON e.entity_id = ${source.alias}.${source.idColumn}
@@ -458,25 +492,25 @@ class DekonRepository {
         AND ${source.alias}.occurred_at >= ?
         AND ${source.alias}.occurred_at < ?
         AND ${source.alias}.${source.statusColumn} = 0
-        $scopeFilter
-      ''',
-      [
-        _transactionType(kind),
-        range.startUtc.toIso8601String(),
-        range.endUtcExclusive.toIso8601String(),
-        if (scope == ReportScope.localDevice) _deviceId,
-      ],
-    );
+        $deviceFilter
+      ''', args);
     return rows.single['total'] as int;
   }
 
   Future<int> _grossMarginEstimate(
     ReportDateRange range,
     ReportScope scope,
+    String? deviceId,
   ) async {
-    final scopeFilter = _scopeSql(scope, 'e');
-    final rows = await _db.rawQuery(
-      '''
+    final filterDeviceId = _filterDeviceId(scope, deviceId);
+    final deviceFilter = _deviceFilterSql(filterDeviceId, 'e');
+    final args = <Object?>[
+      EventTypes.inventorySaleRecorded,
+      range.startUtc.toIso8601String(),
+      range.endUtcExclusive.toIso8601String(),
+    ];
+    if (filterDeviceId != null) args.add(filterDeviceId);
+    final rows = await _db.rawQuery('''
       SELECT e.payload_json
       FROM events e
       JOIN sales_projection s ON s.sale_id = e.entity_id
@@ -484,15 +518,8 @@ class DekonRepository {
         AND s.voided = 0
         AND s.occurred_at >= ?
         AND s.occurred_at < ?
-        $scopeFilter
-      ''',
-      [
-        EventTypes.inventorySaleRecorded,
-        range.startUtc.toIso8601String(),
-        range.endUtcExclusive.toIso8601String(),
-        if (scope == ReportScope.localDevice) _deviceId,
-      ],
-    );
+        $deviceFilter
+      ''', args);
     var margin = 0;
     for (final row in rows) {
       final payload = jsonDecode(row['payload_json'] as String) as Map;
@@ -597,18 +624,41 @@ class DekonRepository {
     };
   }
 
-  void _addScopeFilter(
+  void _addDeviceFilter(
     List<String> where,
     List<Object?> args,
     ReportScope scope,
+    String? deviceId,
   ) {
-    if (scope != ReportScope.localDevice) return;
+    final filterDeviceId = _filterDeviceId(scope, deviceId);
+    if (filterDeviceId == null) return;
     where.add('e.device_id = ?');
-    args.add(_deviceId);
+    args.add(filterDeviceId);
   }
 
-  String _scopeSql(ReportScope scope, String alias) {
-    return scope == ReportScope.localDevice ? 'AND $alias.device_id = ?' : '';
+  String? _filterDeviceId(ReportScope scope, String? deviceId) {
+    if (scope == ReportScope.localDevice) return _deviceId;
+    final trimmed = deviceId?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  String _deviceFilterSql(String? deviceId, String alias) {
+    return deviceId == null ? '' : 'AND $alias.device_id = ?';
+  }
+
+  String _cashierLabel(String deviceId, String? displayName) {
+    final trimmed = displayName?.trim();
+    if (trimmed == null ||
+        trimmed.isEmpty ||
+        trimmed == 'Peer' ||
+        trimmed == 'Dekon phone') {
+      return 'Cashier ${_shortDeviceId(deviceId)}';
+    }
+    return trimmed;
+  }
+
+  String _shortDeviceId(String deviceId) {
+    return deviceId.length <= 8 ? deviceId : deviceId.substring(0, 8);
   }
 
   DateTime? _optionalDateTime(Map<String, Object?> payload, String key) {

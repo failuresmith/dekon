@@ -20,8 +20,10 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   var _period = _ReportPeriod.day;
+  String? _selectedCashierDeviceId;
   DateTimeRange? _customRange;
   late Future<ReportSummary> _future = _loadSummary();
+  late Future<List<CashierReportFilter>> _cashiersFuture = _loadCashiers();
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +63,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       ],
                       const SizedBox(height: 12),
                       _periodSelector(summary.range),
+                      if (widget.scope == ReportScope.allDevices) ...[
+                        const SizedBox(height: 12),
+                        _cashierSelector(),
+                      ],
                       Expanded(child: Center(child: _metrics(summary))),
                       _syncStatus(summary),
                     ],
@@ -114,7 +120,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final availableWidth = MediaQuery.sizeOf(context).width - 32;
     final narrowWidth = (availableWidth - 12) / 2;
     final width = availableWidth >= 340 ? 156.0 : narrowWidth;
-    final showInventorySignals = widget.scope == ReportScope.allDevices;
+    final showInventorySignals =
+        widget.scope == ReportScope.allDevices &&
+        _selectedCashierDeviceId == null;
     return Center(
       child: Wrap(
         alignment: WrapAlignment.center,
@@ -130,6 +138,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               kind: TransactionHistoryKind.sale,
               title: _salesLabel,
               range: summary.range,
+              deviceId: _selectedCashierDeviceId,
             ),
           ),
           _metric(
@@ -141,6 +150,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               kind: TransactionHistoryKind.purchase,
               title: 'Purchases',
               range: summary.range,
+              deviceId: _selectedCashierDeviceId,
             ),
           ),
           _metric(
@@ -159,6 +169,49 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _cashierSelector() {
+    return FutureBuilder<List<CashierReportFilter>>(
+      future: _cashiersFuture,
+      builder: (context, snapshot) {
+        final cashiers = snapshot.data ?? const <CashierReportFilter>[];
+        final selectedDeviceId = _selectedCashierDeviceId;
+        final selectedCashierMissing =
+            selectedDeviceId != null &&
+            cashiers.every((cashier) => cashier.deviceId != selectedDeviceId);
+        final filterItems = [
+          if (selectedCashierMissing)
+            CashierReportFilter(
+              deviceId: selectedDeviceId,
+              label: 'Selected cashier',
+            ),
+          ...cashiers,
+        ];
+        return Center(
+          child: SizedBox(
+            width: 280,
+            child: DropdownButtonFormField<String>(
+              key: const Key('cashier-report-filter'),
+              initialValue: _selectedCashierDeviceId ?? '',
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Cashier',
+              ),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('All devices')),
+                for (final cashier in filterItems)
+                  DropdownMenuItem(
+                    value: cashier.deviceId,
+                    child: Text(cashier.label),
+                  ),
+              ],
+              onChanged: (value) => _setCashierFilter(value),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -255,11 +308,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
     required TransactionHistoryKind kind,
     required String title,
     required ReportDateRange range,
+    String? deviceId,
   }) async {
     final entries = await widget.repository.transactionHistory(
       kind,
       range: range,
       scope: widget.scope,
+      deviceId: deviceId,
       limit: null,
     );
     if (!mounted) return;
@@ -300,14 +355,28 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return widget.repository.reportSummary(
       range: _activeRange(),
       scope: widget.scope,
+      deviceId: _selectedCashierDeviceId,
     );
+  }
+
+  Future<List<CashierReportFilter>> _loadCashiers() {
+    if (widget.scope != ReportScope.allDevices) return Future.value(const []);
+    return widget.repository.cashierReportFilters();
   }
 
   Future<void> _refresh() async {
     setState(() {
       _future = _loadSummary();
+      _cashiersFuture = _loadCashiers();
     });
     await _future;
+  }
+
+  void _setCashierFilter(String? value) {
+    setState(() {
+      _selectedCashierDeviceId = value == null || value.isEmpty ? null : value;
+      _future = _loadSummary();
+    });
   }
 
   Future<void> _setPeriod(_ReportPeriod period) async {

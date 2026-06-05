@@ -72,6 +72,13 @@ enum TransactionHistoryKind { sale, purchase }
 
 enum ReportScope { allDevices, localDevice }
 
+class CashierReportFilter {
+  const CashierReportFilter({required this.deviceId, required this.label});
+
+  final String deviceId;
+  final String label;
+}
+
 class TransactionHistoryLine {
   const TransactionHistoryLine({
     required this.productName,

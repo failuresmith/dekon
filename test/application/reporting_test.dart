@@ -7,6 +7,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../helpers/event_fixtures.dart';
 import '../helpers/test_app.dart';
 
+const _remoteCashierDeviceId = '018f2f12-7b60-7a15-8c7d-000000000002';
+
 void main() {
   setUpAll(sqfliteFfiInit);
 
@@ -73,6 +75,11 @@ void main() {
         await repository.recordSale([
           TransactionLineDraft(product: product, quantity: 1),
         ]);
+        await repository.createSyncStore().trustPeer(
+          deviceId: _remoteCashierDeviceId,
+          displayName: 'Front Register',
+          sharedSecret: 'shared-secret',
+        );
         await _appendRemoteTransactions(db, product.productId);
 
         final today = DateTime.now();
@@ -98,6 +105,11 @@ void main() {
           scope: ReportScope.localDevice,
           limit: null,
         );
+        final cashierFilters = await repository.cashierReportFilters();
+        final selectedCashierSummary = await repository.reportSummary(
+          range: range,
+          deviceId: _remoteCashierDeviceId,
+        );
 
         expect(localSummary.salesMinor, 400);
         expect(localSummary.purchasesMinor, 300);
@@ -106,6 +118,11 @@ void main() {
         expect(allSummary.purchasesMinor, 900);
         expect(allSummary.grossMarginMinor, 750);
         expect(localSales, hasLength(1));
+        expect(cashierFilters.single.deviceId, _remoteCashierDeviceId);
+        expect(cashierFilters.single.label, 'Front Register');
+        expect(selectedCashierSummary.salesMinor, 800);
+        expect(selectedCashierSummary.purchasesMinor, 600);
+        expect(selectedCashierSummary.grossMarginMinor, 500);
       } finally {
         await repository.close();
       }
@@ -117,10 +134,9 @@ Future<void> _appendRemoteTransactions(Database db, String productId) async {
   final store = EventStore(db);
   final projector = DomainProjector(db);
   final now = DateTime.now().toUtc();
-  final remoteDeviceId = '018f2f12-7b60-7a15-8c7d-000000000002';
   final purchase = makeTestEvent(
     eventId: '018f2f12-7b60-7a15-8c7d-000000400001',
-    deviceId: remoteDeviceId,
+    deviceId: _remoteCashierDeviceId,
     type: EventTypes.inventoryPurchaseRecorded,
     entityId: 'remote-purchase-1',
     physicalTimeMillis: now.millisecondsSinceEpoch,
@@ -135,7 +151,7 @@ Future<void> _appendRemoteTransactions(Database db, String productId) async {
   );
   final sale = makeTestEvent(
     eventId: '018f2f12-7b60-7a15-8c7d-000000400002',
-    deviceId: remoteDeviceId,
+    deviceId: _remoteCashierDeviceId,
     type: EventTypes.inventorySaleRecorded,
     entityId: 'remote-sale-1',
     physicalTimeMillis: now.millisecondsSinceEpoch + 1,

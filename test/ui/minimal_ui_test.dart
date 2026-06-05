@@ -1,9 +1,13 @@
 import 'package:dekon/src/application/application.dart';
+import 'package:dekon/src/domain/events/events.dart';
 import 'package:dekon/src/sync/sync.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../helpers/event_fixtures.dart';
 import '../helpers/test_app.dart';
+
+const _frontRegisterDeviceId = '018f2f12-7b60-7a15-8c7d-000000000002';
 
 void main() {
   testWidgets('first run asks for device role and main enters app', (
@@ -503,6 +507,44 @@ void main() {
     expect(find.text('Daily Sales'), findsNothing);
   });
 
+  testWidgets('Reports can filter performance by cashier', (tester) async {
+    final repository = await createTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Register Tea',
+      barcode: 'REGISTER-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordSale([
+      TransactionLineDraft(product: product, quantity: 1),
+    ]);
+    await _importFrontRegisterTransactions(repository, product.productId);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reports'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('cashier-report-filter')), findsOneWidget);
+    expect(find.text('12.00'), findsOneWidget);
+    expect(find.byKey(const Key('low-stock-report-metric')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('cashier-report-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Front Register').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('8.00'), findsOneWidget);
+    expect(find.text('12.00'), findsNothing);
+    expect(find.byKey(const Key('low-stock-report-metric')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('sales-report-metric')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Register Tea x2'), findsOneWidget);
+    expect(find.textContaining('Register Tea x1'), findsNothing);
+  });
+
   testWidgets('Sell persists sale after stock check', (tester) async {
     final repository = await createTestRepository(onboarded: true);
     final product = await repository.createProduct(
@@ -562,4 +604,49 @@ void main() {
 
     expect(find.text('Sale saved'), findsOneWidget);
   });
+}
+
+Future<void> _importFrontRegisterTransactions(
+  DekonRepository repository,
+  String productId,
+) async {
+  final store = repository.createSyncStore();
+  await store.trustPeer(
+    deviceId: _frontRegisterDeviceId,
+    displayName: 'Front Register',
+    sharedSecret: 'shared-secret',
+  );
+  final now = DateTime.now().toUtc();
+  await store.importEvents([
+    makeTestEvent(
+      eventId: '018f2f12-7b60-7a15-8c7d-000000500001',
+      deviceId: _frontRegisterDeviceId,
+      type: EventTypes.inventoryPurchaseRecorded,
+      entityId: 'front-register-purchase-1',
+      physicalTimeMillis: now.millisecondsSinceEpoch,
+      createdAt: now,
+      payload: {
+        'occurred_at': now.toIso8601String(),
+        'total_minor': 600,
+        'line_items': [
+          {'product_id': productId, 'quantity': 4, 'unit_cost_minor': 150},
+        ],
+      },
+    ),
+    makeTestEvent(
+      eventId: '018f2f12-7b60-7a15-8c7d-000000500002',
+      deviceId: _frontRegisterDeviceId,
+      type: EventTypes.inventorySaleRecorded,
+      entityId: 'front-register-sale-1',
+      physicalTimeMillis: now.millisecondsSinceEpoch + 1,
+      createdAt: now.add(const Duration(milliseconds: 1)),
+      payload: {
+        'occurred_at': now.toIso8601String(),
+        'total_minor': 800,
+        'line_items': [
+          {'product_id': productId, 'quantity': 2, 'unit_price_minor': 400},
+        ],
+      },
+    ),
+  ]);
 }
