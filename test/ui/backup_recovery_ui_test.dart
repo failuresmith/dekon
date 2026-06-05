@@ -65,7 +65,7 @@ void main() {
     final preview = BackupPreview(
       exportedAt: DateTime.utc(2026, 6, 4),
       eventCount: 1,
-      appVersion: '0.1.3+4',
+      appVersion: '0.1.4+5s',
     );
     final backupService = _FakeBackupService(
       previewResult: preview,
