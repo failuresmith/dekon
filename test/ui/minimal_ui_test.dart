@@ -85,6 +85,44 @@ void main() {
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
   });
 
+  testWidgets('main shell shows green indicator for connected cashier', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    try {
+      await repository.createSyncStore().trustCashierPeer(
+        deviceId: _frontRegisterDeviceId,
+        sharedSecret: 'shared-secret',
+      );
+
+      await tester.pumpWidget(testApp(repository));
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('main-cashier-connection-indicator-connected')),
+      );
+
+      expect(
+        find.byKey(const Key('main-cashier-connection-indicator-connected')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-disconnected')),
+        findsNothing,
+      );
+      expect(
+        (tester.getCenter(
+                  find.byKey(const Key('main-cashier-connection-indicator')),
+                ) -
+                tester.getCenter(find.byKey(const Key('open-settings'))))
+            .distance,
+        lessThan(1),
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
   testWidgets('cashier shell shows Inventory and scopes Reports to device', (
     tester,
   ) async {
@@ -639,6 +677,13 @@ void main() {
 
     expect(find.text('Sale saved'), findsOneWidget);
   });
+}
+
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 20; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (finder.evaluate().isNotEmpty) return;
+  }
 }
 
 Future<void> _importFrontRegisterTransactions(

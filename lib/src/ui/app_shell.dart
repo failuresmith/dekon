@@ -8,6 +8,7 @@ import 'cashier_pairing_panel.dart';
 import 'cashier_sync_indicator.dart';
 import 'device_onboarding_screen.dart';
 import 'inventory_screen.dart';
+import 'main_cashier_connection_indicator.dart';
 import 'reports_screen.dart';
 import 'settings_screen.dart';
 import 'transaction_screen.dart';
@@ -95,8 +96,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   Widget _settingsAction(DeviceRoleSettings settings) {
-    final showSyncIndicator =
+    final showCashierSyncIndicator =
         settings.role == DeviceRole.cashierDevice && settings.locked;
+    final showMainCashierIndicator = settings.role == DeviceRole.mainDevice;
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -106,9 +108,15 @@ class _AppShellState extends State<AppShell> {
           onPressed: _openSettings,
           icon: const Icon(Icons.settings),
         ),
-        if (showSyncIndicator)
+        if (showCashierSyncIndicator)
           IgnorePointer(
             child: CashierSyncIndicator(repository: widget.repository),
+          ),
+        if (showMainCashierIndicator)
+          IgnorePointer(
+            child: MainCashierConnectionIndicator(
+              repository: widget.repository,
+            ),
           ),
       ],
     );

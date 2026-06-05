@@ -414,6 +414,24 @@ class DekonRepository {
     return buckets;
   }
 
+  Future<bool> hasRecentlyConnectedCashier({
+    Duration activeWindow = const Duration(seconds: 75),
+  }) async {
+    final cutoff = _now().toUtc().subtract(activeWindow).toIso8601String();
+    final rows = await _db.rawQuery(
+      '''
+      SELECT 1
+      FROM devices
+      WHERE trust_status = 'trusted'
+        AND last_seen_at IS NOT NULL
+        AND last_seen_at >= ?
+      LIMIT 1
+      ''',
+      [cutoff],
+    );
+    return rows.isNotEmpty;
+  }
+
   Future<List<TransactionHistoryEntry>> transactionHistory(
     TransactionHistoryKind kind, {
     ReportDateRange? range,

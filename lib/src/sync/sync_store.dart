@@ -67,6 +67,7 @@ class SyncStore {
         sharedSecret: sharedSecret,
         baseUrl: baseUrl,
         now: now,
+        lastSeenAt: now,
       );
       return displayName;
     });
@@ -254,6 +255,7 @@ class SyncStore {
     required String sharedSecret,
     required String now,
     String? baseUrl,
+    String? lastSeenAt,
   }) async {
     await txn.insert('devices', {
       'device_id': deviceId,
@@ -262,6 +264,7 @@ class SyncStore {
       'shared_secret_hash': SyncSecrets.hash(sharedSecret),
       'created_at': now,
       'updated_at': now,
+      'last_seen_at': ?lastSeenAt,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     await txn.update(
       'devices',
@@ -270,6 +273,7 @@ class SyncStore {
         'trust_status': 'trusted',
         'shared_secret_hash': SyncSecrets.hash(sharedSecret),
         'updated_at': now,
+        'last_seen_at': ?lastSeenAt,
       },
       where: 'device_id = ?',
       whereArgs: [deviceId],
