@@ -45,6 +45,7 @@ class DekonRepository {
   }
 
   Stream<void> get eventsChanged => _syncActivityBus.eventsChanged;
+  Stream<void> get syncStateChanged => _syncActivityBus.syncStateChanged;
   Stream<SyncTransferActivity> get syncTransfers => _syncActivityBus.transfers;
 
   Future<void> close() async {

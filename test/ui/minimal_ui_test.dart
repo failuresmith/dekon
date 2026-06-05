@@ -548,8 +548,29 @@ void main() {
     expect(find.byKey(const Key('report-trend-period-month')), findsOneWidget);
     expect(find.byKey(const Key('report-trend-period-year')), findsOneWidget);
     expect(find.byKey(const Key('report-trend-chart')), findsOneWidget);
-    expect(find.text('Sales'), findsOneWidget);
+    expect(
+      find.byKey(const Key('report-trend-selection-summary')),
+      findsOneWidget,
+    );
+    expect(find.text('Sales'), findsWidgets);
     expect(find.text('Purchases'), findsWidgets);
+    final bucketFinder = find.byWidgetPredicate(
+      (widget) => widget.key.toString().contains('report-trend-bucket-'),
+    );
+    expect(bucketFinder, findsWidgets);
+    final dialogRect = tester.getRect(find.byType(Dialog));
+    final bucketRect = tester.getRect(bucketFinder.first);
+    expect(dialogRect.contains(bucketRect.topLeft), true);
+    expect(dialogRect.contains(bucketRect.bottomRight), true);
+
+    await tester.tap(bucketFinder.first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('report-trend-selection-summary')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
 
     await tester.tap(find.byKey(const Key('report-trend-period-month')));
     await tester.pumpAndSettle();
@@ -578,6 +599,45 @@ void main() {
 
     expect(find.text('Sales'), findsOneWidget);
     expect(find.text('Daily Sales'), findsNothing);
+  });
+
+  testWidgets('Reports sync labels refresh while the view stays open', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Live Sync Tea',
+      barcode: 'LIVE-SYNC-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 2),
+    ]);
+    final syncStore = repository.createSyncStore();
+    await syncStore.trustPeer(
+      deviceId: _frontRegisterDeviceId,
+      displayName: 'Cashier-1',
+      sharedSecret: 'shared-secret',
+      baseUrl: 'http://main.local',
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reports'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unsynced events: 2'), findsOneWidget);
+
+    final events = await syncStore.fetchEventsAfter(null, limit: 100);
+    await syncStore.updatePushCursor(
+      _frontRegisterDeviceId,
+      SyncCursor.fromEvent(events.last),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unsynced events: 0'), findsOneWidget);
   });
 
   testWidgets('Reports can filter performance by cashier', (tester) async {

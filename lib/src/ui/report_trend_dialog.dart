@@ -25,17 +25,18 @@ class _ReportTrendDialogState extends State<ReportTrendDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final chartHeight = (MediaQuery.sizeOf(context).height * 0.5)
-        .clamp(180.0, 260.0)
-        .toDouble();
+    final viewport = MediaQuery.sizeOf(context);
+    final dialogWidth = (viewport.width - 32).clamp(320.0, 760.0).toDouble();
+    final dialogHeight = (viewport.height - 32).clamp(320.0, 560.0).toDouble();
     return Dialog(
+      insetPadding: const EdgeInsets.all(16),
       child: SafeArea(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
+        child: SizedBox(
+          width: dialogWidth,
+          height: dialogHeight,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
@@ -76,7 +77,7 @@ class _ReportTrendDialogState extends State<ReportTrendDialog> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 16),
-                SizedBox(height: chartHeight, child: _trendBody()),
+                Expanded(child: _trendBody()),
               ],
             ),
           ),

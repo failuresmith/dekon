@@ -2,13 +2,19 @@ import 'dart:async';
 
 class SyncActivityBus {
   final _eventsChanged = StreamController<void>.broadcast();
+  final _syncStateChanged = StreamController<void>.broadcast();
   final _transfers = StreamController<SyncTransferActivity>.broadcast();
 
   Stream<void> get eventsChanged => _eventsChanged.stream;
+  Stream<void> get syncStateChanged => _syncStateChanged.stream;
   Stream<SyncTransferActivity> get transfers => _transfers.stream;
 
   void notifyEventsChanged() {
     if (!_eventsChanged.isClosed) _eventsChanged.add(null);
+  }
+
+  void notifySyncStateChanged() {
+    if (!_syncStateChanged.isClosed) _syncStateChanged.add(null);
   }
 
   void notifyTransfer(SyncTransferActivity activity) {
@@ -18,6 +24,7 @@ class SyncActivityBus {
 
   Future<void> close() async {
     await _eventsChanged.close();
+    await _syncStateChanged.close();
     await _transfers.close();
   }
 }

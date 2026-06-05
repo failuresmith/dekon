@@ -148,6 +148,7 @@ class SyncStore {
       where: 'peer_device_id = ?',
       whereArgs: [deviceId],
     );
+    activityBus?.notifySyncStateChanged();
   }
 
   Future<void> updatePullCursor(String deviceId, SyncCursor? cursor) {
@@ -288,6 +289,7 @@ class SyncStore {
       where: 'peer_device_id = ?',
       whereArgs: [deviceId],
     );
+    activityBus?.notifySyncStateChanged();
   }
 
   Future<void> _trustPeerInTransaction(

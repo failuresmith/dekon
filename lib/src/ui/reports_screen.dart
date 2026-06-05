@@ -29,6 +29,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   late Future<ReportSummary> _future = _loadSummary();
   late Future<List<CashierReportFilter>> _cashiersFuture = _loadCashiers();
   StreamSubscription<void>? _eventsChangedSubscription;
+  StreamSubscription<void>? _syncStateChangedSubscription;
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
       _eventsChangedSubscription?.cancel();
+      _syncStateChangedSubscription?.cancel();
       _future = _loadSummary();
       _cashiersFuture = _loadCashiers();
       _subscribeToRepository();
@@ -50,6 +52,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   @override
   void dispose() {
     _eventsChangedSubscription?.cancel();
+    _syncStateChangedSubscription?.cancel();
     super.dispose();
   }
 
@@ -450,6 +453,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   void _subscribeToRepository() {
     _eventsChangedSubscription = widget.repository.eventsChanged.listen((_) {
+      if (mounted) _reload();
+    });
+    _syncStateChangedSubscription = widget.repository.syncStateChanged.listen((
+      _,
+    ) {
       if (mounted) _reload();
     });
   }
