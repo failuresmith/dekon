@@ -131,6 +131,14 @@ class SyncDeviceInfo {
   final String deviceId;
   final String displayName;
 
+  factory SyncDeviceInfo.fromJson(Object? value) {
+    final map = _stringMap(value, 'device info');
+    return SyncDeviceInfo(
+      deviceId: _stringField(map, 'device_id'),
+      displayName: _stringField(map, 'display_name'),
+    );
+  }
+
   Map<String, Object?> toJson() => {
     'protocol_version': syncProtocolVersion,
     'event_schema_version': EventSchema.currentVersion,
@@ -181,6 +189,24 @@ class SyncPairingPayload {
   };
 
   String toQrJson() => jsonEncode(toJson());
+}
+
+class ManualPairingResult {
+  const ManualPairingResult({
+    required this.deviceInfo,
+    required this.sharedSecret,
+  });
+
+  final SyncDeviceInfo deviceInfo;
+  final String sharedSecret;
+
+  factory ManualPairingResult.fromJson(Object? value) {
+    final map = _stringMap(value, 'manual pairing result');
+    return ManualPairingResult(
+      deviceInfo: SyncDeviceInfo.fromJson(map),
+      sharedSecret: _stringField(map, 'shared_secret'),
+    );
+  }
 }
 
 class SyncState {

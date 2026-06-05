@@ -49,6 +49,47 @@ class LanSyncClient {
     return peer;
   }
 
+  Future<TrustedPeer> pairWithManualAddress(
+    String address, {
+    String displayName = 'Dekon phone',
+  }) async {
+    final baseUrl = _normalizeManualAddress(address);
+    final deviceUri = Uri.parse(baseUrl).resolve('/device');
+    final deviceResponse = await _client.get(deviceUri);
+    if (deviceResponse.statusCode != 200) {
+      throw SyncClientException(
+        'Main device lookup failed with ${deviceResponse.statusCode}.',
+      );
+    }
+    final deviceInfo = SyncDeviceInfo.fromJson(jsonDecode(deviceResponse.body));
+    final pairUri = Uri.parse(baseUrl).resolve('/pair');
+    final response = await _client.post(
+      pairUri,
+      headers: const {'content-type': 'application/json'},
+      body: jsonEncode({
+        'device_id': store.localDeviceId,
+        'display_name': displayName,
+        'manual_pairing': true,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw SyncClientException('Pairing failed with ${response.statusCode}.');
+    }
+    final result = ManualPairingResult.fromJson(jsonDecode(response.body));
+    if (result.deviceInfo.deviceId != deviceInfo.deviceId) {
+      throw SyncClientException('Main device identity changed during pairing.');
+    }
+    await store.trustPeer(
+      deviceId: deviceInfo.deviceId,
+      displayName: result.deviceInfo.displayName,
+      baseUrl: baseUrl,
+      sharedSecret: result.sharedSecret,
+    );
+    final peer = await store.trustedPeer(deviceInfo.deviceId);
+    if (peer == null) throw SyncClientException('Paired peer was not stored.');
+    return peer;
+  }
+
   Future<PostEventsResult> pullFromPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final cursor = peer.lastPulledCursor;
@@ -127,6 +168,24 @@ class LanSyncClient {
       throw SyncClientException('Trusted peer is missing a base URL.');
     }
     return peer;
+  }
+
+  String _normalizeManualAddress(String address) {
+    final trimmed = address.trim();
+    if (trimmed.isEmpty) {
+      throw const FormatException('Enter the main device IP address.');
+    }
+    final withScheme = trimmed.contains('://') ? trimmed : 'http://$trimmed';
+    final uri = Uri.tryParse(withScheme);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      throw const FormatException('Enter a valid main device IP address.');
+    }
+    final normalized = Uri(
+      scheme: uri.scheme,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : 0,
+    );
+    return normalized.toString().replaceFirst(RegExp(r'/$'), '');
   }
 
   Map<String, String> _authHeaders(

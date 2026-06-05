@@ -2,6 +2,7 @@ import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/backup/backup.dart';
 import 'package:dekon/src/sync/sync.dart';
 import 'package:dekon/src/ui/barcode_scanner_dialog.dart';
+import 'package:dekon/src/ui/cashier_pairing_panel.dart';
 import 'package:dekon/src/ui/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,25 +94,36 @@ void main() {
     }
   });
 
-  testWidgets('Settings persists cashier device role', (tester) async {
+  testWidgets('Settings hides device role and shows connect cashier action', (
+    tester,
+  ) async {
     final repository = await createTestRepository();
+    final syncServer = repository.createLanSyncServer();
     try {
       await tester.pumpWidget(
-        _reportsApp(repository, backupFiles: const _FakeBackupFiles()),
+        _reportsApp(
+          repository,
+          backupFiles: const _FakeBackupFiles(),
+          syncServer: syncServer,
+        ),
       );
       await _pumpWork(tester);
-      await tester.tap(find.byKey(const Key('cashier-device-role')));
-      await _pumpWork(tester);
 
-      expect(await repository.deviceRole(), DeviceRole.cashierDevice);
+      expect(find.text('Device Role'), findsNothing);
+      expect(find.byKey(const Key('cashier-device-role')), findsNothing);
+      expect(find.text('Connect Cashier Device'), findsOneWidget);
+      expect(find.text('Start LAN Sync'), findsNothing);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
+      await syncServer.stop();
       await repository.close();
     }
   });
 
   testWidgets('Settings pairs cashier device and locks role', (tester) async {
     final repository = await createTestRepository();
+    await repository.setDeviceRole(DeviceRole.cashierDevice);
+    final syncServer = repository.createLanSyncServer();
     final payload = SyncPairingPayload(
       baseUrl: 'http://192.168.1.10:1234',
       serverDeviceId: '019e9239-1111-7000-8000-000000000001',
@@ -124,6 +136,7 @@ void main() {
         _reportsApp(
           repository,
           backupFiles: const _FakeBackupFiles(),
+          syncServer: syncServer,
           scanBarcode: (_) async => payload.toQrJson(),
           pairWithMainDevice: (payload) async {
             pairedPayload = payload;
@@ -131,23 +144,66 @@ void main() {
         ),
       );
       await _pumpWork(tester);
-      await tester.tap(find.byKey(const Key('cashier-device-role')));
       await _pumpUntilFound(tester, find.byKey(const Key('pair-main-device')));
       await tester.tap(find.byKey(const Key('pair-main-device')));
       await _pumpUntilFound(tester, find.text('Paired with Main Device.'));
 
       final settings = await repository.deviceRoleSettings();
-      final cashierTile = tester.widget<RadioListTile<DeviceRole>>(
-        find.byKey(const Key('cashier-device-role')),
-      );
 
       expect(pairedPayload?.serverDeviceId, payload.serverDeviceId);
       expect(settings.role, DeviceRole.cashierDevice);
       expect(settings.locked, true);
-      expect(cashierTile.enabled, false);
-      expect(find.text('Paired. Device role is locked.'), findsOneWidget);
+      expect(settings.onboardingCompleted, true);
+      expect(
+        find.text('Connected to a main device. This role cannot be changed.'),
+        findsOneWidget,
+      );
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
+      await syncServer.stop();
+      await repository.close();
+    }
+  });
+
+  testWidgets('Settings pairs cashier device by manual IP entry', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    await repository.setDeviceRole(DeviceRole.cashierDevice);
+    final syncServer = repository.createLanSyncServer();
+    String? pairedAddress;
+    try {
+      await tester.pumpWidget(
+        _reportsApp(
+          repository,
+          backupFiles: const _FakeBackupFiles(),
+          syncServer: syncServer,
+          pairWithMainDeviceAddress: (address) async {
+            pairedAddress = address;
+          },
+        ),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('pair-main-device-manual')),
+      );
+      await tester.tap(find.byKey(const Key('pair-main-device-manual')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('manual-main-device-address')),
+        '192.168.1.10:1234',
+      );
+      await tester.tap(find.byKey(const Key('confirm-manual-main-device')));
+      await _pumpUntilFound(tester, find.text('Paired with Main Device.'));
+
+      final settings = await repository.deviceRoleSettings();
+      expect(pairedAddress, '192.168.1.10:1234');
+      expect(settings.role, DeviceRole.cashierDevice);
+      expect(settings.locked, true);
+      expect(settings.onboardingCompleted, true);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await syncServer.stop();
       await repository.close();
     }
   });
@@ -200,17 +256,21 @@ Widget _reportsApp(
   DekonRepository repository, {
   required BackupFileActions backupFiles,
   BackupRunner? backupService,
+  LanSyncServer? syncServer,
   BarcodeScanLauncher? scanBarcode,
   MainDevicePairer? pairWithMainDevice,
+  MainDeviceAddressPairer? pairWithMainDeviceAddress,
 }) {
   return MaterialApp(
     home: Scaffold(
       body: SettingsScreen(
         repository: repository,
+        syncServer: syncServer,
         backupFiles: backupFiles,
         backupService: backupService,
         scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
         pairWithMainDevice: pairWithMainDevice,
+        pairWithMainDeviceAddress: pairWithMainDeviceAddress,
       ),
     ),
   );

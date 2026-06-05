@@ -5,8 +5,7 @@ import '../application/application.dart';
 import '../backup/backup.dart';
 import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
-
-typedef MainDevicePairer = Future<void> Function(SyncPairingPayload payload);
+import 'cashier_pairing_panel.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -17,6 +16,7 @@ class SettingsScreen extends StatefulWidget {
     this.backupFiles = const BackupFileActions(),
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
+    this.pairWithMainDeviceAddress,
   });
 
   final DekonRepository repository;
@@ -25,6 +25,7 @@ class SettingsScreen extends StatefulWidget {
   final BackupFileActions backupFiles;
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
+  final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -37,11 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _roleLocked;
   var _serverBusy = false;
   var _backupBusy = false;
-  var _pairingBusy = false;
   var _backupNeedsRetry = false;
   String? _serverError;
   String? _backupStatus;
-  String? _pairingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -62,8 +61,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 12),
-            _deviceRolePanel(role, locked),
-            const SizedBox(height: 12),
             _syncPanel(role, locked),
             const SizedBox(height: 12),
             _backupPanel(),
@@ -73,82 +70,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _deviceRolePanel(DeviceRole role, bool locked) {
-    return _panel(
-      title: 'Device Role',
-      child: RadioGroup<DeviceRole>(
-        groupValue: role,
-        onChanged: locked ? (_) {} : _setRole,
-        child: Column(
-          children: [
-            RadioListTile<DeviceRole>(
-              key: const Key('main-device-role'),
-              value: DeviceRole.mainDevice,
-              selected: role == DeviceRole.mainDevice,
-              enabled: !locked,
-              title: const Text('Main Device'),
-              subtitle: const Text('Stores and manages the shared data.'),
-            ),
-            RadioListTile<DeviceRole>(
-              key: const Key('cashier-device-role'),
-              value: DeviceRole.cashierDevice,
-              selected: role == DeviceRole.cashierDevice,
-              enabled: !locked,
-              title: const Text('Cashier Device'),
-              subtitle: const Text(
-                'Connects to the main device and records sales.',
-              ),
-            ),
-            if (role == DeviceRole.cashierDevice) ...[
-              if (locked)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
-                  child: Text('Paired. Device role is locked.'),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.icon(
-                      key: const Key('pair-main-device'),
-                      onPressed: _pairingBusy ? null : _pairCashierDevice,
-                      icon: const Icon(Icons.qr_code_scanner),
-                      label: Text(
-                        _pairingBusy ? 'Pairing' : 'Pair with Main Device',
-                      ),
-                    ),
-                  ),
-                ),
-              if (_pairingStatus != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: Text(_pairingStatus!),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _syncPanel(DeviceRole role, bool locked) {
     final server = widget.syncServer;
     if (server == null) return const SizedBox.shrink();
     if (role == DeviceRole.cashierDevice) {
       return _panel(
-        title: 'LAN Sync',
-        child: Text(
-          locked
-              ? 'Connected to a main device. This role cannot be changed.'
-              : 'Pair this cashier device with the main device before use.',
-        ),
+        title: 'Main Device Connection',
+        child: locked
+            ? const Text(
+                'Connected to a main device. This role cannot be changed.',
+              )
+            : CashierPairingPanel(
+                repository: widget.repository,
+                scanBarcode: widget.scanBarcode,
+                pairWithMainDevice: widget.pairWithMainDevice,
+                pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+                onPaired: _refreshRoleSettings,
+              ),
       );
     }
     final running = server.isRunning;
     final qrData = server.pairingQrData;
     return _panel(
-      title: 'LAN Sync',
+      title: 'Cashier Devices',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -173,14 +117,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               key: const Key('stop-sync-server'),
               onPressed: _serverBusy ? null : _stopServer,
               icon: const Icon(Icons.stop),
-              label: const Text('Stop LAN Sync'),
+              label: const Text('Stop Connecting'),
             ),
           ] else
             FilledButton.icon(
               key: const Key('start-sync-server'),
               onPressed: _serverBusy ? null : _startServer,
               icon: const Icon(Icons.sync),
-              label: Text(_serverBusy ? 'Starting' : 'Start LAN Sync'),
+              label: Text(_serverBusy ? 'Starting' : 'Connect Cashier Device'),
             ),
         ],
       ),
@@ -247,72 +191,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _setRole(DeviceRole? role) async {
-    if (role == null) return;
-    final previous = _role;
-    setState(() => _role = role);
-    try {
-      await widget.repository.setDeviceRole(role);
-      _roleFuture = Future.value(DeviceRoleSettings(role: role, locked: false));
-    } catch (error) {
-      setState(() => _role = previous);
-      _message('Device role save failed: $error');
-    }
-  }
-
-  Future<void> _pairCashierDevice() async {
+  void _refreshRoleSettings() {
     setState(() {
-      _pairingBusy = true;
-      _pairingStatus = null;
+      _role = DeviceRole.cashierDevice;
+      _roleLocked = true;
+      _roleFuture = widget.repository.deviceRoleSettings();
     });
-    try {
-      final scanned = await widget.scanBarcode(context);
-      if (!mounted || scanned == null || scanned.trim().isEmpty) return;
-      final payload = SyncPairingPayload.fromQrJson(scanned.trim());
-      if (payload.expiresAt.isBefore(DateTime.now().toUtc())) {
-        throw const FormatException('Pairing code has expired.');
-      }
-      await _pairWithMainDevice(payload);
-      await widget.repository.lockDeviceRole(DeviceRole.cashierDevice);
-      final settings = const DeviceRoleSettings(
-        role: DeviceRole.cashierDevice,
-        locked: true,
-      );
-      setState(() {
-        _role = settings.role;
-        _roleLocked = settings.locked;
-        _roleFuture = Future.value(settings);
-        _pairingStatus = 'Paired with Main Device.';
-      });
-    } catch (error) {
-      if (mounted) {
-        setState(
-          () => _pairingStatus = 'Pairing failed: ${_safePairingError(error)}',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _pairingBusy = false);
-    }
-  }
-
-  Future<void> _pairWithMainDevice(SyncPairingPayload payload) async {
-    final injected = widget.pairWithMainDevice;
-    if (injected != null) {
-      await injected(payload);
-      return;
-    }
-    final client = widget.repository.createLanSyncClient();
-    try {
-      await client.pairWithServer(payload, displayName: 'Cashier Device');
-    } finally {
-      client.close();
-    }
-  }
-
-  String _safePairingError(Object error) {
-    if (error is FormatException) return error.message;
-    if (error is SyncClientException) return error.message;
-    return 'Could not pair with the main device.';
   }
 
   Future<void> _startServer() async {

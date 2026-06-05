@@ -4,6 +4,8 @@ import 'package:dekon/src/domain/events/events.dart';
 import 'package:dekon/src/persistence/persistence.dart';
 import 'package:dekon/src/sync/sync.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shelf/shelf.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -51,6 +53,78 @@ void main() {
 
       expect(response.statusCode, 200);
       expect(peer?.displayName, 'Counter phone');
+    });
+  });
+
+  test('manual pairing stores a trusted peer during active pairing', () async {
+    await _withHarness((harness) async {
+      final pairing = harness.server.createPairingPayload(
+        baseUrl: 'http://localhost',
+      );
+      final response = await harness.server.handler(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/pair'),
+          body: jsonEncode({
+            'device_id': _peerDeviceId,
+            'display_name': 'Counter phone',
+            'manual_pairing': true,
+          }),
+        ),
+      );
+      final body = await _json(response);
+      final peer = await harness.store.trustedPeer(_peerDeviceId);
+
+      expect(response.statusCode, 200);
+      expect(body['shared_secret'], pairing.pairingSecret);
+      expect(peer?.sharedSecret, pairing.pairingSecret);
+    });
+  });
+
+  test('manual address client stores returned shared secret', () async {
+    await _withHarness((harness) async {
+      const baseUrl = 'http://192.168.1.10:1234';
+      final client = LanSyncClient(
+        store: harness.store,
+        client: MockClient((request) async {
+          if (request.url.toString() == '$baseUrl/device') {
+            return http.Response(
+              jsonEncode({
+                'protocol_version': syncProtocolVersion,
+                'event_schema_version': EventSchema.currentVersion,
+                'device_id': _peerDeviceId,
+                'display_name': 'Main device',
+              }),
+              200,
+            );
+          }
+          if (request.url.toString() == '$baseUrl/pair') {
+            final body = jsonDecode(request.body) as Map<String, Object?>;
+            expect(body['manual_pairing'], true);
+            return http.Response(
+              jsonEncode({
+                'protocol_version': syncProtocolVersion,
+                'event_schema_version': EventSchema.currentVersion,
+                'device_id': _peerDeviceId,
+                'display_name': 'Main device',
+                'shared_secret': _sharedSecret,
+              }),
+              200,
+            );
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+      addTearDown(client.close);
+
+      await client.pairWithManualAddress(
+        '192.168.1.10:1234',
+        displayName: 'Counter phone',
+      );
+      final peer = await harness.store.trustedPeer(_peerDeviceId);
+
+      expect(peer?.baseUrl, baseUrl);
+      expect(peer?.sharedSecret, _sharedSecret);
     });
   });
 

@@ -39,10 +39,15 @@ enum DeviceRole {
 }
 
 class DeviceRoleSettings {
-  const DeviceRoleSettings({required this.role, required this.locked});
+  const DeviceRoleSettings({
+    required this.role,
+    required this.locked,
+    required this.onboardingCompleted,
+  });
 
   final DeviceRole role;
   final bool locked;
+  final bool onboardingCompleted;
 }
 
 class TransactionLineDraft {

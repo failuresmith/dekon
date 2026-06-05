@@ -1,14 +1,74 @@
 import 'package:dekon/src/application/application.dart';
+import 'package:dekon/src/sync/sync.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
 
 void main() {
-  testWidgets('app shell shows focused navigation and settings gear', (
+  testWidgets('first run asks for device role and main enters app', (
     tester,
   ) async {
     final repository = await createTestRepository();
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Set up this device'), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-main-device')), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-cashier-device')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('onboarding-main-device')));
+    await tester.pumpAndSettle();
+
+    final settings = await repository.deviceRoleSettings();
+    expect(settings.role, DeviceRole.mainDevice);
+    expect(settings.onboardingCompleted, true);
+    expect(find.byKey(const Key('open-settings')), findsOneWidget);
+  });
+
+  testWidgets('cashier onboarding requires successful pairing', (tester) async {
+    final repository = await createTestRepository();
+    final payload = SyncPairingPayload(
+      baseUrl: 'http://192.168.1.10:1234',
+      serverDeviceId: '019e9239-1111-7000-8000-000000000001',
+      pairingSecret: 'pairing-secret',
+      expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
+    );
+    SyncPairingPayload? pairedPayload;
+
+    await tester.pumpWidget(
+      testApp(
+        repository,
+        scanBarcode: (_) async => payload.toQrJson(),
+        pairWithMainDevice: (payload) async {
+          pairedPayload = payload;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('onboarding-cashier-device')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pair cashier device'), findsOneWidget);
+    expect(find.byKey(const Key('pair-main-device')), findsOneWidget);
+    expect(find.byKey(const Key('open-settings')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('pair-main-device')));
+    await tester.pumpAndSettle();
+
+    final settings = await repository.deviceRoleSettings();
+    expect(pairedPayload?.serverDeviceId, payload.serverDeviceId);
+    expect(settings.role, DeviceRole.cashierDevice);
+    expect(settings.locked, true);
+    expect(settings.onboardingCompleted, true);
+    expect(find.byKey(const Key('open-settings')), findsOneWidget);
+  });
+
+  testWidgets('app shell shows focused navigation and settings gear', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -24,7 +84,7 @@ void main() {
   testWidgets('unknown barcode opens product creation and adds the item', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -43,7 +103,7 @@ void main() {
   testWidgets('product search filters matching products by name', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Green Tea',
       barcode: 'GREEN-TEA',
@@ -72,7 +132,7 @@ void main() {
   testWidgets('Add Product creates initial stock and Inventory adjusts it', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -104,7 +164,7 @@ void main() {
   });
 
   testWidgets('scanned known barcode adds item to Sell flow', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Scan Tea',
       barcode: 'TEA-SCAN-1',
@@ -123,7 +183,7 @@ void main() {
   });
 
   testWidgets('scanned known barcode adds item to Buy flow', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Sugar',
       barcode: 'SUGAR-1',
@@ -146,7 +206,7 @@ void main() {
   testWidgets('scanner failure preserves manual barcode fallback', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Salt',
       barcode: 'SALT-1',
@@ -180,7 +240,7 @@ void main() {
   testWidgets('unknown scanned barcode opens product creation and adds item', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(
       testApp(repository, scanBarcode: (_) async => 'SCAN-1'),
@@ -203,7 +263,7 @@ void main() {
   });
 
   testWidgets('Buy persists purchase and Reports show totals', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -233,7 +293,7 @@ void main() {
   });
 
   testWidgets('Sell persists sale after stock check', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Tea',
       barcode: 'TEA-1',
@@ -268,7 +328,7 @@ void main() {
   });
 
   testWidgets('Sell warns before allowing negative stock', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Rice',
       barcode: 'RICE-1',

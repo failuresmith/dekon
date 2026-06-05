@@ -68,8 +68,12 @@ class DekonRepository {
     final rows = await _db.query(
       'app_settings',
       columns: ['key', 'value'],
-      where: 'key IN (?, ?)',
-      whereArgs: const ['device_role', 'device_role_locked'],
+      where: 'key IN (?, ?, ?)',
+      whereArgs: const [
+        'device_role',
+        'device_role_locked',
+        'device_onboarding_completed',
+      ],
     );
     final values = {
       for (final row in rows) row['key'] as String: row['value'] as String,
@@ -77,6 +81,7 @@ class DekonRepository {
     return DeviceRoleSettings(
       role: DeviceRole.fromStorage(values['device_role']),
       locked: values['device_role_locked'] == 'true',
+      onboardingCompleted: values['device_onboarding_completed'] == 'true',
     );
   }
 
@@ -86,6 +91,26 @@ class DekonRepository {
       throw StateError('Device role is locked after pairing.');
     }
     await _setAppSetting('device_role', role.storageValue);
+  }
+
+  Future<void> completeDeviceOnboarding(DeviceRole role) async {
+    final settings = await deviceRoleSettings();
+    if (settings.locked && settings.role != role) {
+      throw StateError('Device role is locked after pairing.');
+    }
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      await txn.insert('app_settings', {
+        'key': 'device_role',
+        'value': role.storageValue,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': 'device_onboarding_completed',
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<void> lockDeviceRole(DeviceRole role) async {
@@ -98,6 +123,11 @@ class DekonRepository {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.insert('app_settings', {
         'key': 'device_role_locked',
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': 'device_onboarding_completed',
         'value': 'true',
         'updated_at': now,
       }, conflictAlgorithm: ConflictAlgorithm.replace);

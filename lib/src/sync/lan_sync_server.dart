@@ -120,7 +120,8 @@ class LanSyncServer {
       }, status: HttpStatus.forbidden);
     }
     final decoded = _decodeMap(body);
-    if (decoded['pairing_secret'] != payload.pairingSecret) {
+    final manualPairing = decoded['manual_pairing'] == true;
+    if (!manualPairing && decoded['pairing_secret'] != payload.pairingSecret) {
       return _unauthorized();
     }
     final peerDeviceId = _requiredString(decoded, 'device_id');
@@ -130,7 +131,10 @@ class LanSyncServer {
       baseUrl: decoded['base_url'] as String?,
       sharedSecret: payload.pairingSecret,
     );
-    return _json(store.deviceInfo().toJson());
+    return _json({
+      ...store.deviceInfo().toJson(),
+      'shared_secret': payload.pairingSecret,
+    });
   }
 
   Future<Response> _events(Request request, TrustedPeer peer) async {

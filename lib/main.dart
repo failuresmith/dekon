@@ -4,6 +4,7 @@ import 'src/app_config.dart';
 import 'src/application/application.dart';
 import 'src/ui/app_shell.dart';
 import 'src/ui/barcode_scanner_dialog.dart';
+import 'src/ui/cashier_pairing_panel.dart';
 
 typedef RepositoryFactory = Future<DekonRepository> Function();
 
@@ -12,10 +13,18 @@ void main() {
 }
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key, this.repositoryFactory, this.scanBarcode});
+  const MainApp({
+    super.key,
+    this.repositoryFactory,
+    this.scanBarcode,
+    this.pairWithMainDevice,
+    this.pairWithMainDeviceAddress,
+  });
 
   final RepositoryFactory? repositoryFactory;
   final BarcodeScanLauncher? scanBarcode;
+  final MainDevicePairer? pairWithMainDevice;
+  final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +37,8 @@ class MainApp extends StatelessWidget {
       home: _RepositoryLoader(
         repositoryFactory: repositoryFactory ?? DekonRepository.open,
         scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
+        pairWithMainDevice: pairWithMainDevice,
+        pairWithMainDeviceAddress: pairWithMainDeviceAddress,
       ),
     );
   }
@@ -37,10 +48,14 @@ class _RepositoryLoader extends StatefulWidget {
   const _RepositoryLoader({
     required this.repositoryFactory,
     required this.scanBarcode,
+    this.pairWithMainDevice,
+    this.pairWithMainDeviceAddress,
   });
 
   final RepositoryFactory repositoryFactory;
   final BarcodeScanLauncher scanBarcode;
+  final MainDevicePairer? pairWithMainDevice;
+  final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
   @override
   State<_RepositoryLoader> createState() => _RepositoryLoaderState();
@@ -68,6 +83,8 @@ class _RepositoryLoaderState extends State<_RepositoryLoader> {
         return AppShell(
           repository: snapshot.requireData,
           scanBarcode: widget.scanBarcode,
+          pairWithMainDevice: widget.pairWithMainDevice,
+          pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
         );
       },
     );
