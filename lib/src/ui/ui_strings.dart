@@ -245,6 +245,11 @@ class UiStrings {
     return _text(en: 'Restock history', fa: 'سابقه تأمین');
   }
 
+  String get saleDetail => _text(en: 'Sale detail', fa: 'جزئیات فروش');
+  String get restockDetail {
+    return _text(en: 'Restock detail', fa: 'جزئیات تأمین');
+  }
+
   String get scan => _text(en: 'Scan', fa: 'اسکن');
   String get scanBarcode => _text(en: 'Scan barcode', fa: 'اسکن بارکد');
   String get scanBarcodeOrSearchProduct {
@@ -306,6 +311,7 @@ class UiStrings {
   }
 
   String get clear => _text(en: 'Clear', fa: 'پاک کردن');
+  String get back => _text(en: 'Back', fa: 'بازگشت');
   String get close => _text(en: 'Close', fa: 'بستن');
   String get saveBackup => _text(en: 'Save Backup', fa: 'ذخیره پشتیبان');
   String get restoreBackup =>
@@ -823,6 +829,15 @@ class UiStrings {
 
   String itemsCount(int count) =>
       _text(en: 'Items: $count', fa: 'تعداد کالا: ${integer(count)}');
+
+  String transactionTotal(String amount) {
+    return _text(en: 'Total: $amount', fa: 'مجموع: $amount');
+  }
+
+  String lineQuantity(String quantity) {
+    return _text(en: 'Quantity: $quantity', fa: 'تعداد: ${digits(quantity)}');
+  }
+
   String saveFailed(Object error) {
     return _text(en: 'Save failed: $error', fa: 'ذخیره ناموفق بود: $error');
   }

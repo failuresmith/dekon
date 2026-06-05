@@ -1010,6 +1010,100 @@ void main() {
     expect(find.text('400 Rial'), findsOneWidget);
   });
 
+  testWidgets('Transaction history opens readable sale and restock details', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final tea = await repository.createProduct(
+      name: 'Tea',
+      barcode: 'DETAIL-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    final sugar = await repository.createProduct(
+      name: 'Sugar',
+      barcode: 'DETAIL-SUGAR',
+      salePriceMinor: 250,
+      purchaseCostMinor: 100,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: tea, quantity: 5),
+      TransactionLineDraft(product: sugar, quantity: 7),
+    ]);
+    await repository.recordSale([
+      TransactionLineDraft(product: tea, quantity: 2),
+      TransactionLineDraft(product: sugar, quantity: 3),
+    ]);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sell-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale history'), findsOneWidget);
+    expect(find.textContaining('Tea x2'), findsOneWidget);
+    expect(find.textContaining('Sugar x3'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('transaction-history-entry-0')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale detail'), findsOneWidget);
+    expect(find.text('Total: 1,550 Rial'), findsOneWidget);
+    final saleTeaLine = find.byKey(const Key('transaction-history-line-0'));
+    final saleSugarLine = find.byKey(const Key('transaction-history-line-1'));
+    expect(
+      find.descendant(of: saleTeaLine, matching: find.text('Tea')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: saleTeaLine, matching: find.text('Quantity: 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: saleTeaLine, matching: find.text('800 Rial')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: saleSugarLine, matching: find.text('Sugar')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: saleSugarLine, matching: find.text('Quantity: 3')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('transaction-history-back')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale history'), findsOneWidget);
+    expect(find.text('Sale detail'), findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restock'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('restock-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Restock history'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('transaction-history-entry-0')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Restock detail'), findsOneWidget);
+    expect(find.text('Total: 1,450 Rial'), findsOneWidget);
+    final restockTeaLine = find.byKey(const Key('transaction-history-line-0'));
+    final restockSugarLine = find.byKey(
+      const Key('transaction-history-line-1'),
+    );
+    expect(
+      find.descendant(of: restockTeaLine, matching: find.text('Quantity: 5')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: restockSugarLine, matching: find.text('Quantity: 7')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Sell warns before allowing negative stock', (tester) async {
     final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(

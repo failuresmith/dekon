@@ -402,7 +402,6 @@ Future<void> showTransactionHistoryDialog({
   required TransactionMode mode,
 }) async {
   final isSell = mode == TransactionMode.sell;
-  final strings = context.strings;
   final kind = isSell
       ? TransactionHistoryKind.sale
       : TransactionHistoryKind.purchase;
@@ -410,26 +409,40 @@ Future<void> showTransactionHistoryDialog({
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(isSell ? strings.saleHistory : strings.restockHistory),
+    builder: (context) =>
+        _TransactionHistoryDialog(isSell: isSell, history: history),
+  );
+}
+
+class _TransactionHistoryDialog extends StatefulWidget {
+  const _TransactionHistoryDialog({
+    required this.isSell,
+    required this.history,
+  });
+
+  final bool isSell;
+  final List<TransactionHistoryEntry> history;
+
+  @override
+  State<_TransactionHistoryDialog> createState() {
+    return _TransactionHistoryDialogState();
+  }
+}
+
+class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
+  TransactionHistoryEntry? _selectedEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    final selectedEntry = _selectedEntry;
+    return AlertDialog(
+      title: _title(strings, selectedEntry),
       content: SizedBox(
         width: double.maxFinite,
-        child: history.isEmpty
-            ? Text(strings.noPreviousTransactions)
-            : ListView.builder(
-                shrinkWrap: true,
-                itemCount: history.length,
-                itemBuilder: (context, index) {
-                  final entry = history[index];
-                  return ListTile(
-                    title: Text(strings.money(entry.totalMinor)),
-                    subtitle: Text(
-                      '${strings.timestamp(entry.occurredAt)}\n'
-                      '${_historyLineSummary(entry, strings)}',
-                    ),
-                  );
-                },
-              ),
+        child: selectedEntry == null
+            ? _historyList(strings)
+            : _historyDetail(strings, selectedEntry),
       ),
       actions: [
         TextButton(
@@ -437,8 +450,137 @@ Future<void> showTransactionHistoryDialog({
           child: Text(strings.close),
         ),
       ],
-    ),
-  );
+    );
+  }
+
+  Widget _title(UiStrings strings, TransactionHistoryEntry? selectedEntry) {
+    final showingDetail = selectedEntry != null;
+    final title = showingDetail
+        ? _detailTitle(strings)
+        : _historyTitle(strings);
+    if (selectedEntry == null) return Text(title);
+    return Row(
+      children: [
+        IconButton(
+          key: const Key('transaction-history-back'),
+          tooltip: strings.back,
+          onPressed: () => setState(() => _selectedEntry = null),
+          icon: const BackButtonIcon(),
+        ),
+        const SizedBox(width: 4),
+        Expanded(child: Text(title)),
+      ],
+    );
+  }
+
+  String _historyTitle(UiStrings strings) {
+    return widget.isSell ? strings.saleHistory : strings.restockHistory;
+  }
+
+  String _detailTitle(UiStrings strings) {
+    return widget.isSell ? strings.saleDetail : strings.restockDetail;
+  }
+
+  Widget _historyList(UiStrings strings) {
+    if (widget.history.isEmpty) return Text(strings.noPreviousTransactions);
+    return _boundedContent(
+      ListView.separated(
+        shrinkWrap: true,
+        itemCount: widget.history.length,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final entry = widget.history[index];
+          return ListTile(
+            key: Key('transaction-history-entry-$index'),
+            title: Text(strings.money(entry.totalMinor)),
+            subtitle: Text(
+              '${strings.timestamp(entry.occurredAt)}\n'
+              '${_historyLineSummary(entry, strings)}',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: Icon(_detailIcon(context)),
+            onTap: () => setState(() => _selectedEntry = entry),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _historyDetail(UiStrings strings, TransactionHistoryEntry entry) {
+    final itemCount = entry.lines.isEmpty ? 2 : entry.lines.length + 1;
+    return _boundedContent(
+      ListView.separated(
+        shrinkWrap: true,
+        itemCount: itemCount,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          if (index == 0) return _historyDetailSummary(strings, entry);
+          if (entry.lines.isEmpty) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(strings.noLineDetails),
+            );
+          }
+          final lineIndex = index - 1;
+          final line = entry.lines[lineIndex];
+          return ListTile(
+            key: Key('transaction-history-line-$lineIndex'),
+            contentPadding: EdgeInsets.zero,
+            title: Text(line.productName),
+            subtitle: Text(
+              strings.lineQuantity(strings.quantity(line.quantity)),
+            ),
+            trailing: Text(
+              strings.money(line.lineTotalMinor),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _historyDetailSummary(
+    UiStrings strings,
+    TransactionHistoryEntry entry,
+  ) {
+    return Padding(
+      key: const Key('transaction-history-detail-summary'),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(strings.timestamp(entry.occurredAt)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: Text(strings.itemsCount(entry.lines.length))),
+              Text(
+                strings.transactionTotal(strings.money(entry.totalMinor)),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _boundedContent(Widget child) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.62,
+      ),
+      child: child,
+    );
+  }
+}
+
+IconData _detailIcon(BuildContext context) {
+  return Directionality.of(context) == TextDirection.rtl
+      ? Icons.chevron_left
+      : Icons.chevron_right;
 }
 
 String _historyLineSummary(TransactionHistoryEntry entry, UiStrings strings) {
