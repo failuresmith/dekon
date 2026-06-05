@@ -19,15 +19,42 @@ class BarcodeScannerDialog extends StatefulWidget {
   State<BarcodeScannerDialog> createState() => _BarcodeScannerDialogState();
 }
 
-class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
-  final _controller = MobileScannerController();
+class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
+    with WidgetsBindingObserver {
+  final _controller = MobileScannerController(autoStart: false);
   var _closing = false;
+  var _disposed = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_startScanner());
+    });
+  }
+
+  @override
   void dispose() {
-    unawaited(_controller.dispose());
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_disposeController());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_disposed || _closing) return;
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_startScanner());
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        unawaited(_stopScanner());
+    }
   }
 
   @override
@@ -46,11 +73,18 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
                 controller: _controller,
                 onDetect: _handleDetect,
                 onDetectError: _handleError,
+                errorBuilder: (context, error) {
+                  return _ScannerMessage(_messageFor(error));
+                },
+                placeholderBuilder: (context) {
+                  return const _ScannerMessage('Starting camera...');
+                },
               ),
               ValueListenableBuilder<MobileScannerState>(
                 valueListenable: _controller,
                 builder: (context, state, _) {
-                  if (!state.hasCameraPermission) {
+                  if (state.error?.errorCode ==
+                      MobileScannerErrorCode.permissionDenied) {
                     return const _ScannerMessage(
                       'Camera permission denied. Enter barcode manually.',
                     );
@@ -79,6 +113,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
     final value = capture.barcodes.firstOrNull?.rawValue?.trim();
     if (value == null || value.isEmpty) return;
     _closing = true;
+    unawaited(_stopScanner());
     Navigator.pop(context, value);
   }
 
@@ -93,6 +128,35 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
       return 'Camera permission denied. Enter barcode manually.';
     }
     return 'Camera unavailable. Enter barcode manually.';
+  }
+
+  Future<void> _startScanner() async {
+    if (_disposed ||
+        _closing ||
+        _controller.value.isRunning ||
+        _controller.value.isStarting) {
+      return;
+    }
+    try {
+      await _controller.start();
+      if (mounted && _error != null) setState(() => _error = null);
+    } catch (error) {
+      _handleError(error, StackTrace.current);
+    }
+  }
+
+  Future<void> _stopScanner() async {
+    if (!_controller.value.isRunning) return;
+    try {
+      await _controller.stop();
+    } catch (_) {
+      // Stopping is best-effort while closing or backgrounding the dialog.
+    }
+  }
+
+  Future<void> _disposeController() async {
+    await _stopScanner();
+    await _controller.dispose();
   }
 }
 
