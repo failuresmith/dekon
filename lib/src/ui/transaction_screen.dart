@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'product_lookup_field.dart';
+import 'transaction_quantity_input.dart';
 
 enum TransactionMode { sell, buy }
 
@@ -147,22 +148,25 @@ class _TransactionScreenState extends State<TransactionScreen> {
           tooltip: 'Decrease quantity',
           onPressed: line.quantity <= 1
               ? null
-              : () => _changeQuantity(index, -1),
+              : () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  _changeQuantity(index, -1);
+                },
           icon: const Icon(Icons.remove_circle_outline),
         ),
-        SizedBox(
-          width: 36,
-          child: Text(
-            line.quantity.g,
-            key: Key('line-quantity-$index'),
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+        TransactionQuantityInput(
+          key: ValueKey('quantity-input-${line.product.productId}'),
+          fieldKey: Key('line-quantity-$index'),
+          value: line.quantity,
+          onChanged: (quantity) => _setQuantity(index, quantity),
         ),
         IconButton(
           key: Key('increase-line-$index'),
           tooltip: 'Increase quantity',
-          onPressed: () => _changeQuantity(index, 1),
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            _changeQuantity(index, 1);
+          },
           icon: const Icon(Icons.add_circle_outline),
         ),
       ],
@@ -216,19 +220,25 @@ class _TransactionScreenState extends State<TransactionScreen> {
     });
   }
 
-  void _changeQuantity(int index, double delta) {
+  void _setQuantity(int index, double quantity) {
+    if (!quantity.isFinite || quantity <= 0) return;
     final current = _lines[index];
-    final nextQuantity = current.quantity + delta;
-    if (nextQuantity <= 0) return;
     setState(() {
       _negativeProductIds.clear();
       _lines[index] = TransactionLineDraft(
         product: current.product,
-        quantity: nextQuantity,
+        quantity: quantity,
         unitPriceMinor: current.unitPriceMinor,
         unitCostMinor: current.unitCostMinor,
       );
     });
+  }
+
+  void _changeQuantity(int index, double delta) {
+    final current = _lines[index];
+    final nextQuantity = current.quantity + delta;
+    if (nextQuantity <= 0) return;
+    _setQuantity(index, nextQuantity);
   }
 
   void _removeLine(int index) {

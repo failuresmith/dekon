@@ -148,6 +148,56 @@ void main() {
     expect(await repository.products(), isEmpty);
   });
 
+  testWidgets('Buy quantity count supports numeric replacement', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    await repository.createProduct(
+      name: 'Bulk Rice',
+      barcode: 'BULK-RICE',
+      salePriceMinor: 150,
+      purchaseCostMinor: 100,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buy'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'BULK-RICE');
+    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await tester.pumpAndSettle();
+
+    final quantityFinder = find.byKey(const Key('line-quantity-0'));
+    await tester.tap(quantityFinder);
+    await tester.pump();
+
+    final focusedField = tester.widget<TextField>(quantityFinder);
+    expect(
+      focusedField.keyboardType,
+      const TextInputType.numberWithOptions(decimal: true),
+    );
+    expect(
+      focusedField.controller?.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 1),
+    );
+
+    await tester.enterText(quantityFinder, '125');
+    await tester.pumpAndSettle();
+
+    final editedField = tester.widget<TextField>(quantityFinder);
+    expect(editedField.controller?.text, '125');
+    final total = tester.widget<Text>(find.byKey(const Key('purchase-total')));
+    expect(total.data, '125.00');
+
+    await tester.tap(find.byKey(const Key('finish-purchase')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bulk Rice'), findsOneWidget);
+    expect(find.text('Stock 125'), findsOneWidget);
+  });
+
   testWidgets('Buy and Sell are the Inventory stock mutation path', (
     tester,
   ) async {
