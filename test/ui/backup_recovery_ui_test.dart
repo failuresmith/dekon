@@ -26,7 +26,12 @@ void main() {
       await tester.pumpWidget(
         _reportsApp(
           repository,
-          backupFiles: const _FakeBackupFiles(exportDirectory: '/tmp'),
+          backupFiles: const _FakeBackupFiles(
+            saveResult: BackupSaveResult(
+              path: '/storage/emulated/0/Download/dekon-backup.json',
+              fileName: 'dekon-backup.json',
+            ),
+          ),
           backupService: backupService,
         ),
       );
@@ -34,14 +39,19 @@ void main() {
       await tester.tap(find.byKey(const Key('save-backup')));
       await _pumpUntilFound(
         tester,
-        find.text('Saved 1 records to /tmp/dekon-backup.json'),
+        find.text(
+          'Saved 1 records to /storage/emulated/0/Download/dekon-backup.json',
+        ),
       );
 
       expect(
-        find.text('Saved 1 records to /tmp/dekon-backup.json'),
+        find.text(
+          'Saved 1 records to /storage/emulated/0/Download/dekon-backup.json',
+        ),
         findsOneWidget,
       );
-      expect(backupService.exportCalled, true);
+      expect(backupService.prepareCalled, true);
+      expect(backupService.discardCalled, true);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await repository.close();
@@ -213,13 +223,20 @@ void main() {
   ) async {
     final repository = await createTestRepository();
     final backupService = _FakeBackupService(
-      exportError: BackupException('Storage access was denied.'),
+      exportResult: BackupExportResult(
+        path: '/tmp/dekon-backup.json',
+        fileName: 'dekon-backup.json',
+        eventCount: 1,
+        exportedAt: DateTime.utc(2026, 6, 4),
+      ),
     );
     try {
       await tester.pumpWidget(
         _reportsApp(
           repository,
-          backupFiles: const _FakeBackupFiles(exportDirectory: '/tmp'),
+          backupFiles: const _FakeBackupFiles(
+            saveError: BackupStorageException('Storage access was denied.'),
+          ),
           backupService: backupService,
         ),
       );
@@ -232,6 +249,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const Key('retry-backup')), findsOneWidget);
+      expect(backupService.discardCalled, true);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await repository.close();
@@ -277,13 +295,21 @@ Widget _reportsApp(
 }
 
 class _FakeBackupFiles extends BackupFileActions {
-  const _FakeBackupFiles({this.exportDirectory, this.importFile});
+  const _FakeBackupFiles({this.saveResult, this.saveError, this.importFile});
 
-  final String? exportDirectory;
+  final BackupSaveResult? saveResult;
+  final Object? saveError;
   final BackupImportFile? importFile;
 
   @override
-  Future<String?> chooseExportDirectory() async => exportDirectory;
+  Future<BackupSaveResult?> saveExportedBackup({
+    required String sourcePath,
+    required String fileName,
+  }) async {
+    final error = saveError;
+    if (error != null) throw error;
+    return saveResult;
+  }
 
   @override
   Future<BackupImportFile?> chooseImportFile() async => importFile;
@@ -292,24 +318,40 @@ class _FakeBackupFiles extends BackupFileActions {
 class _FakeBackupService implements BackupRunner {
   _FakeBackupService({
     this.exportResult,
-    this.exportError,
     this.previewResult,
     this.importResult,
   });
 
   final BackupExportResult? exportResult;
-  final Object? exportError;
   final BackupPreview? previewResult;
   final BackupImportResult? importResult;
   var exportCalled = false;
+  var prepareCalled = false;
+  var discardCalled = false;
   var importCalled = false;
 
   @override
   Future<BackupExportResult> exportToDirectory(String directoryPath) async {
     exportCalled = true;
-    final error = exportError;
-    if (error != null) throw error;
     return exportResult!;
+  }
+
+  @override
+  Future<BackupExportDraft> prepareExport() async {
+    prepareCalled = true;
+    final result = exportResult!;
+    return BackupExportDraft(
+      path: result.path,
+      fileName: result.fileName,
+      eventCount: result.eventCount,
+      exportedAt: result.exportedAt,
+      cleanupDirectoryPath: '/tmp/dekon-backup-draft',
+    );
+  }
+
+  @override
+  Future<void> discardPreparedExport(BackupExportDraft draft) async {
+    discardCalled = true;
   }
 
   @override

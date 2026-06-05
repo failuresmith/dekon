@@ -233,19 +233,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _backupNeedsRetry = false;
       _backupStatus = null;
     });
+    BackupExportDraft? draft;
     try {
-      final directory = await widget.backupFiles.chooseExportDirectory();
-      if (directory == null) return;
-      final result = await _backupService.exportToDirectory(directory);
+      draft = await _backupService.prepareExport();
+      final savedFile = await widget.backupFiles.saveExportedBackup(
+        sourcePath: draft.path,
+        fileName: draft.fileName,
+      );
+      if (savedFile == null) return;
+      final result = draft.savedAs(
+        path: savedFile.path,
+        fileName: savedFile.fileName,
+      );
       _backupStatus = 'Saved ${result.eventCount} records to ${result.path}';
       _message('Backup saved to ${result.fileName}');
     } on BackupException catch (error) {
+      _backupNeedsRetry = true;
+      _backupStatus = 'Backup failed: ${error.message}';
+    } on BackupStorageException catch (error) {
       _backupNeedsRetry = true;
       _backupStatus = 'Backup failed: ${error.message}';
     } catch (error) {
       _backupNeedsRetry = true;
       _backupStatus = 'Backup failed: $error';
     } finally {
+      if (draft != null) await _backupService.discardPreparedExport(draft);
       if (mounted) setState(() => _backupBusy = false);
     }
   }

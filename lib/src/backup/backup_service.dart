@@ -15,6 +15,8 @@ const _backupFormatVersion = 1;
 
 abstract interface class BackupRunner {
   Future<BackupExportResult> exportToDirectory(String directoryPath);
+  Future<BackupExportDraft> prepareExport();
+  Future<void> discardPreparedExport(BackupExportDraft draft);
   Future<BackupPreview> preview(String contents);
   Future<BackupImportResult> importBackup(String contents);
 }
@@ -96,6 +98,29 @@ class BackupService implements BackupRunner {
       if (error is BackupException) rethrow;
       throw BackupException('Backup could not be saved.');
     }
+  }
+
+  @override
+  Future<BackupExportDraft> prepareExport() async {
+    final directory = await Directory.systemTemp.createTemp('dekon_backup_');
+    try {
+      final result = await exportToDirectory(directory.path);
+      return BackupExportDraft(
+        path: result.path,
+        fileName: result.fileName,
+        eventCount: result.eventCount,
+        exportedAt: result.exportedAt,
+        cleanupDirectoryPath: directory.path,
+      );
+    } catch (_) {
+      await _deleteDirectory(directory);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> discardPreparedExport(BackupExportDraft draft) {
+    return _deleteDirectory(Directory(draft.cleanupDirectoryPath));
   }
 
   @override
@@ -239,6 +264,14 @@ class BackupService implements BackupRunner {
     }
   }
 
+  Future<void> _deleteDirectory(Directory directory) async {
+    try {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } on FileSystemException {
+      // Temporary cleanup should not hide the original backup outcome.
+    }
+  }
+
   String _string(Map<String, Object?> map, String key) {
     final value = map[key];
     if (value is String && value.trim().isNotEmpty) return value;
@@ -276,6 +309,31 @@ class BackupExportResult {
   final String fileName;
   final int eventCount;
   final DateTime exportedAt;
+}
+
+class BackupExportDraft {
+  const BackupExportDraft({
+    required this.path,
+    required this.fileName,
+    required this.eventCount,
+    required this.exportedAt,
+    required this.cleanupDirectoryPath,
+  });
+
+  final String path;
+  final String fileName;
+  final int eventCount;
+  final DateTime exportedAt;
+  final String cleanupDirectoryPath;
+
+  BackupExportResult savedAs({required String path, required String fileName}) {
+    return BackupExportResult(
+      path: path,
+      fileName: fileName,
+      eventCount: eventCount,
+      exportedAt: exportedAt,
+    );
+  }
 }
 
 class BackupImportResult {
