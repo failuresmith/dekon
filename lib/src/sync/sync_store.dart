@@ -91,7 +91,27 @@ class SyncStore {
       [deviceId],
     );
     if (rows.isEmpty) return null;
-    final row = rows.single;
+    return _trustedPeerFromRow(rows.single);
+  }
+
+  Future<List<TrustedPeer>> trustedPeers() async {
+    final rows = await _db.rawQuery('''
+      SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
+             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc
+      FROM devices d
+      JOIN sync_peers p ON p.peer_device_id = d.device_id
+      WHERE d.trust_status = 'trusted'
+      ORDER BY d.updated_at DESC, d.device_id ASC
+      ''');
+    final peers = <TrustedPeer>[];
+    for (final row in rows) {
+      final peer = _trustedPeerFromRow(row);
+      if (peer != null) peers.add(peer);
+    }
+    return peers;
+  }
+
+  TrustedPeer? _trustedPeerFromRow(Map<String, Object?> row) {
     final secret = row['shared_secret'] as String?;
     if (secret == null || secret.isEmpty) return null;
     return TrustedPeer(

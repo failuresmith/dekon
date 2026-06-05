@@ -98,6 +98,17 @@ void main() {
     expect(find.text('Buy'), findsOneWidget);
     expect(find.text('Inventory'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
+    expect(find.byKey(const Key('cashier-sync-indicator')), findsOneWidget);
+    expect(
+      find.byKey(const Key('cashier-sync-indicator-disconnected')),
+      findsOneWidget,
+    );
+    expect(
+      (tester.getCenter(find.byKey(const Key('cashier-sync-indicator'))) -
+              tester.getCenter(find.byKey(const Key('open-settings'))))
+          .distance,
+      lessThan(1),
+    );
 
     await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();

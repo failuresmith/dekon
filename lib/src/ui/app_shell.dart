@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
+import 'cashier_sync_indicator.dart';
 import 'device_onboarding_screen.dart';
 import 'inventory_screen.dart';
 import 'reports_screen.dart';
@@ -82,14 +83,7 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dekon'),
-        actions: [
-          IconButton(
-            key: const Key('open-settings'),
-            tooltip: 'Settings',
-            onPressed: _openSettings,
-            icon: const Icon(Icons.settings),
-          ),
-        ],
+        actions: [_settingsAction(settings)],
       ),
       body: items[index].screen,
       bottomNavigationBar: NavigationBar(
@@ -97,6 +91,26 @@ class _AppShellState extends State<AppShell> {
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: [for (final item in items) item.destination],
       ),
+    );
+  }
+
+  Widget _settingsAction(DeviceRoleSettings settings) {
+    final showSyncIndicator =
+        settings.role == DeviceRole.cashierDevice && settings.locked;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          key: const Key('open-settings'),
+          tooltip: 'Settings',
+          onPressed: _openSettings,
+          icon: const Icon(Icons.settings),
+        ),
+        if (showSyncIndicator)
+          IgnorePointer(
+            child: CashierSyncIndicator(repository: widget.repository),
+          ),
+      ],
     );
   }
 

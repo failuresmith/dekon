@@ -105,6 +105,21 @@ class LanSyncClient {
     }
   }
 
+  Future<void> pingPeer(String peerDeviceId) async {
+    final peer = await _requiredPeer(peerDeviceId);
+    final uri = Uri.parse(peer.baseUrl!).resolve('/sync/state');
+    final response = await _client.get(
+      uri,
+      headers: _authHeaders('GET', uri, const [], peer),
+    );
+    if (response.statusCode != 200) {
+      throw SyncClientException(
+        'Main device ping failed with ${response.statusCode}.',
+      );
+    }
+    await store.markPeerSuccess(peer.deviceId);
+  }
+
   Future<PostEventsResult> pullFromPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final cursor = peer.lastPulledCursor;
