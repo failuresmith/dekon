@@ -128,15 +128,15 @@ class LanSyncServer {
       return _unauthorized();
     }
     final peerDeviceId = _requiredString(decoded, 'device_id');
-    await store.trustPeer(
+    final assignedDisplayName = await store.trustCashierPeer(
       deviceId: peerDeviceId,
-      displayName: decoded['display_name'] as String? ?? 'Peer',
       baseUrl: decoded['base_url'] as String?,
       sharedSecret: payload.pairingSecret,
     );
     return _json({
       ...store.deviceInfo().toJson(),
       'shared_secret': payload.pairingSecret,
+      'assigned_display_name': assignedDisplayName,
       'server_time': _now().toUtc().toIso8601String(),
     });
   }

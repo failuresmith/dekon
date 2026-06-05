@@ -540,7 +540,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('cashier-report-filter')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Front Register').last);
+    await tester.tap(find.text('Cashier-1').last);
     await tester.pumpAndSettle();
 
     expect(find.text('8.00'), findsOneWidget);
@@ -622,7 +622,7 @@ Future<void> _importFrontRegisterTransactions(
   final store = repository.createSyncStore();
   await store.trustPeer(
     deviceId: _frontRegisterDeviceId,
-    displayName: 'Front Register',
+    displayName: 'Cashier-1',
     sharedSecret: 'shared-secret',
   );
   final now = DateTime.now().toUtc();

@@ -38,44 +38,48 @@ class SyncStore {
     }
     final now = _now().toUtc().toIso8601String();
     await _db.transaction((txn) async {
-      await txn.insert('devices', {
-        'device_id': deviceId,
-        'display_name': _displayName(displayName),
-        'trust_status': 'trusted',
-        'shared_secret_hash': SyncSecrets.hash(sharedSecret),
-        'created_at': now,
-        'updated_at': now,
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      await txn.update(
-        'devices',
-        {
-          'display_name': _displayName(displayName),
-          'trust_status': 'trusted',
-          'shared_secret_hash': SyncSecrets.hash(sharedSecret),
-          'updated_at': now,
-        },
-        where: 'device_id = ?',
-        whereArgs: [deviceId],
-      );
-      await txn.insert('sync_peers', {
-        'peer_device_id': deviceId,
-        'base_url': baseUrl,
-        'shared_secret': sharedSecret,
-        'created_at': now,
-        'updated_at': now,
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      await txn.update(
-        'sync_peers',
-        {
-          'base_url': baseUrl,
-          'shared_secret': sharedSecret,
-          'last_error': null,
-          'updated_at': now,
-        },
-        where: 'peer_device_id = ?',
-        whereArgs: [deviceId],
+      await _trustPeerInTransaction(
+        txn,
+        deviceId: deviceId,
+        displayName: displayName,
+        sharedSecret: sharedSecret,
+        baseUrl: baseUrl,
+        now: now,
       );
     });
+  }
+
+  Future<String> trustCashierPeer({
+    required String deviceId,
+    required String sharedSecret,
+    String? baseUrl,
+  }) async {
+    if (deviceId == localDeviceId) {
+      throw ArgumentError.value(deviceId, 'deviceId', 'Cannot trust self.');
+    }
+    final now = _now().toUtc().toIso8601String();
+    return _db.transaction((txn) async {
+      final displayName = await _cashierDisplayNameForPairing(txn, deviceId);
+      await _trustPeerInTransaction(
+        txn,
+        deviceId: deviceId,
+        displayName: displayName,
+        sharedSecret: sharedSecret,
+        baseUrl: baseUrl,
+        now: now,
+      );
+      return displayName;
+    });
+  }
+
+  Future<void> updateLocalDeviceDisplayName(String displayName) async {
+    final now = _now().toUtc().toIso8601String();
+    await _db.update(
+      'devices',
+      {'display_name': _displayName(displayName), 'updated_at': now},
+      where: 'device_id = ?',
+      whereArgs: [localDeviceId],
+    );
   }
 
   Future<TrustedPeer?> trustedPeer(String deviceId) async {
@@ -241,6 +245,95 @@ class SyncStore {
       where: 'peer_device_id = ?',
       whereArgs: [deviceId],
     );
+  }
+
+  Future<void> _trustPeerInTransaction(
+    Transaction txn, {
+    required String deviceId,
+    required String displayName,
+    required String sharedSecret,
+    required String now,
+    String? baseUrl,
+  }) async {
+    await txn.insert('devices', {
+      'device_id': deviceId,
+      'display_name': _displayName(displayName),
+      'trust_status': 'trusted',
+      'shared_secret_hash': SyncSecrets.hash(sharedSecret),
+      'created_at': now,
+      'updated_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await txn.update(
+      'devices',
+      {
+        'display_name': _displayName(displayName),
+        'trust_status': 'trusted',
+        'shared_secret_hash': SyncSecrets.hash(sharedSecret),
+        'updated_at': now,
+      },
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+    );
+    await txn.insert('sync_peers', {
+      'peer_device_id': deviceId,
+      'base_url': baseUrl,
+      'shared_secret': sharedSecret,
+      'created_at': now,
+      'updated_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await txn.update(
+      'sync_peers',
+      {
+        'base_url': baseUrl,
+        'shared_secret': sharedSecret,
+        'last_error': null,
+        'updated_at': now,
+      },
+      where: 'peer_device_id = ?',
+      whereArgs: [deviceId],
+    );
+  }
+
+  Future<String> _cashierDisplayNameForPairing(
+    Transaction txn,
+    String deviceId,
+  ) async {
+    final existing = await txn.query(
+      'devices',
+      columns: ['display_name'],
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      final displayName = existing.single['display_name'] as String?;
+      if (_cashierNumber(displayName) != null) return displayName!.trim();
+    }
+
+    final rows = await txn.query(
+      'devices',
+      columns: ['display_name'],
+      where: 'trust_status = ?',
+      whereArgs: const ['trusted'],
+    );
+    final used = <int>{};
+    for (final row in rows) {
+      final number = _cashierNumber(row['display_name'] as String?);
+      if (number != null) used.add(number);
+    }
+    var next = 1;
+    while (used.contains(next)) {
+      next++;
+    }
+    return 'Cashier-$next';
+  }
+
+  int? _cashierNumber(String? displayName) {
+    final match = RegExp(
+      r'^Cashier-([1-9][0-9]*)$',
+    ).firstMatch(displayName?.trim() ?? '');
+    if (match == null) return null;
+    return int.tryParse(match.group(1)!);
   }
 
   bool _isProjectable(EventEnvelope event) {

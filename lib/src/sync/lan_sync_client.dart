@@ -42,13 +42,21 @@ class LanSyncClient {
       throw SyncClientException('Pairing failed with ${response.statusCode}.');
     }
     _updateClockOffsetFromBody(response.body);
+    final result = ManualPairingResult.fromJson(jsonDecode(response.body));
+    if (result.deviceInfo.deviceId != payload.serverDeviceId) {
+      throw SyncClientException('Main device identity changed during pairing.');
+    }
+    if (result.sharedSecret != payload.pairingSecret) {
+      throw SyncClientException('Pairing secret changed during pairing.');
+    }
     await store.trustPeer(
-      deviceId: payload.serverDeviceId,
-      displayName: 'Sync server',
+      deviceId: result.deviceInfo.deviceId,
+      displayName: result.deviceInfo.displayName,
       baseUrl: payload.baseUrl,
       sharedSecret: payload.pairingSecret,
     );
-    final peer = await store.trustedPeer(payload.serverDeviceId);
+    await _storeAssignedDisplayName(result.assignedDisplayName);
+    final peer = await store.trustedPeer(result.deviceInfo.deviceId);
     if (peer == null) throw SyncClientException('Paired peer was not stored.');
     await syncWithPeer(peer.deviceId);
     return peer;
@@ -92,6 +100,7 @@ class LanSyncClient {
       baseUrl: baseUrl,
       sharedSecret: result.sharedSecret,
     );
+    await _storeAssignedDisplayName(result.assignedDisplayName);
     final peer = await store.trustedPeer(deviceInfo.deviceId);
     if (peer == null) throw SyncClientException('Paired peer was not stored.');
     await syncWithPeer(peer.deviceId);
@@ -194,6 +203,11 @@ class LanSyncClient {
       '$operation rejected ${result.rejected.length} event(s). '
       'First rejected event: ${first.eventId}.',
     );
+  }
+
+  Future<void> _storeAssignedDisplayName(String? displayName) async {
+    if (displayName == null) return;
+    await store.updateLocalDeviceDisplayName(displayName);
   }
 
   Future<TrustedPeer> _requiredPeer(String peerDeviceId) async {

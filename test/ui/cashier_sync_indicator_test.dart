@@ -40,7 +40,54 @@ void main() {
     }
   });
 
-  testWidgets('indicator breathes green while syncing then stays green', (
+  testWidgets('indicator breathes green for at least one second on fast sync', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {},
+            syncWithMainDevice: () async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-syncing')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-breathing')),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(milliseconds: 999));
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-syncing')),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-synced')),
+        findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
+  testWidgets('indicator keeps breathing while long sync is in progress', (
     tester,
   ) async {
     final repository = await createTestRepository();
@@ -68,8 +115,14 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.pump(const Duration(milliseconds: 1500));
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-syncing')),
+        findsOneWidget,
+      );
+
       syncCompleter.complete();
-      await tester.pump();
       await tester.pump();
 
       expect(

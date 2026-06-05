@@ -28,6 +28,7 @@ class CashierSyncIndicator extends StatefulWidget {
 class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     with SingleTickerProviderStateMixin {
   static const _size = 8.0;
+  static const _minimumSyncVisibleDuration = Duration(seconds: 1);
 
   late final AnimationController _breathing;
   late final Animation<double> _opacity;
@@ -97,12 +98,16 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     if (_refreshing) return;
     _timer?.cancel();
     _refreshing = true;
+    Future<void>? minimumSyncVisible;
     try {
       await _pingMainDevice();
       _setStatus(_CashierSyncIndicatorStatus.syncing);
+      minimumSyncVisible = Future<void>.delayed(_minimumSyncVisibleDuration);
       await _syncWithMainDevice();
+      await minimumSyncVisible;
       _setStatus(_CashierSyncIndicatorStatus.synced);
     } catch (_) {
+      await minimumSyncVisible;
       _setStatus(_CashierSyncIndicatorStatus.disconnected);
     } finally {
       _refreshing = false;

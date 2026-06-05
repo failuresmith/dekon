@@ -43,11 +43,13 @@ class DeviceRoleSettings {
     required this.role,
     required this.locked,
     required this.onboardingCompleted,
+    this.deviceDisplayName,
   });
 
   final DeviceRole role;
   final bool locked;
   final bool onboardingCompleted;
+  final String? deviceDisplayName;
 }
 
 class TransactionLineDraft {

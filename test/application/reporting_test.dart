@@ -1,6 +1,7 @@
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/domain/events/events.dart';
 import 'package:dekon/src/persistence/persistence.dart';
+import 'package:dekon/src/sync/sync.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -54,6 +55,61 @@ void main() {
   );
 
   test(
+    'report summary counts local events waiting for outbound sync',
+    () async {
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
+      final repository = await DekonRepository.open(database: db);
+      try {
+        await repository.completeDeviceOnboarding(DeviceRole.mainDevice);
+        final product = await repository.createProduct(
+          name: 'Sync Tea',
+          barcode: 'SYNC-TEA',
+          salePriceMinor: 400,
+          purchaseCostMinor: 150,
+        );
+        await repository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 2),
+        ]);
+
+        expect((await repository.reportSummary()).unsyncedEventCount, 0);
+
+        final syncStore = repository.createSyncStore();
+        await syncStore.trustPeer(
+          deviceId: _remoteCashierDeviceId,
+          displayName: 'Main Register',
+          sharedSecret: 'shared-secret',
+          baseUrl: 'http://main.local',
+        );
+
+        expect((await repository.reportSummary()).unsyncedEventCount, 2);
+
+        final events = await syncStore.fetchEventsAfter(null, limit: 100);
+        await syncStore.updatePushCursor(
+          _remoteCashierDeviceId,
+          SyncCursor.fromEvent(events.last),
+        );
+
+        expect((await repository.reportSummary()).unsyncedEventCount, 0);
+
+        await _appendRemoteTransactions(db, product.productId);
+
+        expect((await repository.reportSummary()).unsyncedEventCount, 0);
+
+        await repository.recordSale([
+          TransactionLineDraft(product: product, quantity: 1),
+        ]);
+
+        expect((await repository.reportSummary()).unsyncedEventCount, 1);
+      } finally {
+        await repository.close();
+      }
+    },
+  );
+
+  test(
     'local-device report scope excludes transactions from other devices',
     () async {
       final db = await CoreDatabase.open(
@@ -77,7 +133,7 @@ void main() {
         ]);
         await repository.createSyncStore().trustPeer(
           deviceId: _remoteCashierDeviceId,
-          displayName: 'Front Register',
+          displayName: 'Cashier-1',
           sharedSecret: 'shared-secret',
         );
         await _appendRemoteTransactions(db, product.productId);
@@ -119,7 +175,7 @@ void main() {
         expect(allSummary.grossMarginMinor, 750);
         expect(localSales, hasLength(1));
         expect(cashierFilters.single.deviceId, _remoteCashierDeviceId);
-        expect(cashierFilters.single.label, 'Front Register');
+        expect(cashierFilters.single.label, 'Cashier-1');
         expect(selectedCashierSummary.salesMinor, 800);
         expect(selectedCashierSummary.purchasesMinor, 600);
         expect(selectedCashierSummary.grossMarginMinor, 500);

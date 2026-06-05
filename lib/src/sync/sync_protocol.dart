@@ -200,16 +200,19 @@ class ManualPairingResult {
   const ManualPairingResult({
     required this.deviceInfo,
     required this.sharedSecret,
+    this.assignedDisplayName,
   });
 
   final SyncDeviceInfo deviceInfo;
   final String sharedSecret;
+  final String? assignedDisplayName;
 
   factory ManualPairingResult.fromJson(Object? value) {
     final map = _stringMap(value, 'manual pairing result');
     return ManualPairingResult(
       deviceInfo: SyncDeviceInfo.fromJson(map),
       sharedSecret: _stringField(map, 'shared_secret'),
+      assignedDisplayName: _optionalStringField(map, 'assigned_display_name'),
     );
   }
 }
@@ -270,6 +273,15 @@ Map<String, Object?> _stringMap(Object? value, String label) {
 
 String _stringField(Map<String, Object?> map, String field) {
   final value = map[field];
+  if (value is! String || value.trim().isEmpty) {
+    throw FormatException('$field must be a non-empty string.');
+  }
+  return value;
+}
+
+String? _optionalStringField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value == null) return null;
   if (value is! String || value.trim().isEmpty) {
     throw FormatException('$field must be a non-empty string.');
   }

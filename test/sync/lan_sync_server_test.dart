@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../helpers/event_fixtures.dart';
 
 const _peerDeviceId = '019e9239-1111-7000-8000-000000000001';
+const _secondPeerDeviceId = '019e9239-1111-7000-8000-000000000002';
 const _sharedSecret = 'test-shared-secret';
 final _now = DateTime.utc(2026, 6, 4, 12);
 
@@ -50,10 +51,43 @@ void main() {
         ),
       );
 
+      final body = await _json(response);
       final peer = await harness.store.trustedPeer(_peerDeviceId);
 
       expect(response.statusCode, 200);
-      expect(peer?.displayName, 'Counter phone');
+      expect(body['assigned_display_name'], 'Cashier-1');
+      expect(peer?.displayName, 'Cashier-1');
+    });
+  });
+
+  test('pairing assigns stable sequential cashier names', () async {
+    await _withHarness((harness) async {
+      final pairing = harness.server.createPairingPayload(
+        baseUrl: 'http://localhost',
+      );
+      Future<Map<String, Object?>> pair(String deviceId) async {
+        final response = await harness.server.handler(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/pair'),
+            body: jsonEncode({
+              'device_id': deviceId,
+              'display_name': 'Cashier Device',
+              'pairing_secret': pairing.pairingSecret,
+            }),
+          ),
+        );
+        expect(response.statusCode, 200);
+        return _json(response);
+      }
+
+      final first = await pair(_peerDeviceId);
+      final second = await pair(_secondPeerDeviceId);
+      final firstRetry = await pair(_peerDeviceId);
+
+      expect(first['assigned_display_name'], 'Cashier-1');
+      expect(second['assigned_display_name'], 'Cashier-2');
+      expect(firstRetry['assigned_display_name'], 'Cashier-1');
     });
   });
 
@@ -78,7 +112,9 @@ void main() {
 
       expect(response.statusCode, 200);
       expect(body['shared_secret'], pairing.pairingSecret);
+      expect(body['assigned_display_name'], 'Cashier-1');
       expect(peer?.sharedSecret, pairing.pairingSecret);
+      expect(peer?.displayName, 'Cashier-1');
     });
   });
 
@@ -109,6 +145,7 @@ void main() {
                 'device_id': _peerDeviceId,
                 'display_name': 'Main device',
                 'shared_secret': _sharedSecret,
+                'assigned_display_name': 'Cashier-1',
               }),
               200,
             );
@@ -133,9 +170,17 @@ void main() {
         displayName: 'Counter phone',
       );
       final peer = await harness.store.trustedPeer(_peerDeviceId);
+      final localDevice = await harness.db.query(
+        'devices',
+        columns: ['display_name'],
+        where: 'device_id = ?',
+        whereArgs: [harness.localDeviceId],
+        limit: 1,
+      );
 
       expect(peer?.baseUrl, baseUrl);
       expect(peer?.sharedSecret, _sharedSecret);
+      expect(localDevice.single['display_name'], 'Cashier-1');
     });
   });
 
@@ -265,7 +310,7 @@ void main() {
               (cashier) => cashier.deviceId == cashierStore.localDeviceId,
             )
             .label,
-        'Front Register',
+        'Cashier-1',
       );
     } finally {
       client.close();

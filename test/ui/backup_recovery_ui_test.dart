@@ -152,6 +152,9 @@ void main() {
           scanBarcode: (_) async => payload.toQrJson(),
           pairWithMainDevice: (payload) async {
             pairedPayload = payload;
+            await repository.createSyncStore().updateLocalDeviceDisplayName(
+              'Cashier-1',
+            );
           },
         ),
       );
@@ -168,7 +171,7 @@ void main() {
       expect(settings.locked, true);
       expect(settings.onboardingCompleted, true);
       expect(
-        find.text('Connected to a main device. This role cannot be changed.'),
+        find.text('Connected to Main device as Cashier-1'),
         findsOneWidget,
       );
     } finally {
@@ -193,6 +196,9 @@ void main() {
           syncServer: syncServer,
           pairWithMainDeviceAddress: (address) async {
             pairedAddress = address;
+            await repository.createSyncStore().updateLocalDeviceDisplayName(
+              'Cashier-1',
+            );
           },
         ),
       );
@@ -214,6 +220,10 @@ void main() {
       expect(settings.role, DeviceRole.cashierDevice);
       expect(settings.locked, true);
       expect(settings.onboardingCompleted, true);
+      expect(
+        find.text('Connected to Main device as Cashier-1'),
+        findsOneWidget,
+      );
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();

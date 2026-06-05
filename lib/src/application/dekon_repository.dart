@@ -78,10 +78,20 @@ class DekonRepository {
     final values = {
       for (final row in rows) row['key'] as String: row['value'] as String,
     };
+    final deviceRows = await _db.query(
+      'devices',
+      columns: ['display_name'],
+      where: 'device_id = ?',
+      whereArgs: [_deviceId],
+      limit: 1,
+    );
     return DeviceRoleSettings(
       role: DeviceRole.fromStorage(values['device_role']),
       locked: values['device_role_locked'] == 'true',
       onboardingCompleted: values['device_onboarding_completed'] == 'true',
+      deviceDisplayName: deviceRows.isEmpty
+          ? null
+          : deviceRows.single['display_name'] as String?,
     );
   }
 
@@ -350,7 +360,7 @@ class DekonRepository {
         deviceId,
       ),
       lowStockRows: stockRows.where((row) => row.quantity <= 0).toList(),
-      unsyncedEventCount: await _eventStore.count(),
+      unsyncedEventCount: await _unsyncedEventCount(),
       lastSyncAt: await _lastSyncAt(),
     );
   }
@@ -542,6 +552,55 @@ class DekonRepository {
     final value = rows.single['last_sync'] as String?;
     if (value == null) return null;
     return DateTime.parse(value);
+  }
+
+  Future<int> _unsyncedEventCount() async {
+    final peerRows = await _db.rawQuery('''
+      SELECT p.last_pushed_hlc
+      FROM sync_peers p
+      JOIN devices d ON d.device_id = p.peer_device_id
+      WHERE d.trust_status = 'trusted'
+        AND p.base_url IS NOT NULL
+        AND TRIM(p.base_url) <> ''
+      ''');
+    if (peerRows.isEmpty) return 0;
+
+    final cursors = [
+      for (final row in peerRows)
+        SyncCursor.parse(row['last_pushed_hlc'] as String?),
+    ];
+    if (cursors.any((cursor) => cursor == null)) {
+      return _localEventCountAfter(null);
+    }
+
+    final oldestCursor = cursors.cast<SyncCursor>().reduce(
+      (oldest, cursor) =>
+          _compareSyncCursor(oldest, cursor) <= 0 ? oldest : cursor,
+    );
+    return _localEventCountAfter(oldestCursor);
+  }
+
+  Future<int> _localEventCountAfter(SyncCursor? cursor) async {
+    final where = [
+      'device_id = ?',
+      if (cursor != null) '(hlc > ? OR (hlc = ? AND event_id > ?))',
+    ].join(' AND ');
+    final args = <Object?>[
+      _deviceId,
+      if (cursor != null) ...[cursor.hlc, cursor.hlc, cursor.eventId],
+    ];
+    final rows = await _db.rawQuery('''
+      SELECT COUNT(*) AS count
+      FROM events
+      WHERE $where
+      ''', args);
+    return rows.single['count'] as int;
+  }
+
+  int _compareSyncCursor(SyncCursor a, SyncCursor b) {
+    final hlc = a.hlc.compareTo(b.hlc);
+    if (hlc != 0) return hlc;
+    return a.eventId.compareTo(b.eventId);
   }
 
   Future<TransactionHistoryEntry> _historyFromRow(

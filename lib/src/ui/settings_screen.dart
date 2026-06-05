@@ -61,7 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 12),
-            _syncPanel(role, locked),
+            _syncPanel(settings, role, locked),
             const SizedBox(height: 12),
             _backupPanel(),
           ],
@@ -70,16 +70,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _syncPanel(DeviceRole role, bool locked) {
+  Widget _syncPanel(DeviceRoleSettings settings, DeviceRole role, bool locked) {
     final server = widget.syncServer;
     if (server == null) return const SizedBox.shrink();
     if (role == DeviceRole.cashierDevice) {
       return _panel(
         title: 'Main Device Connection',
         child: locked
-            ? const Text(
-                'Connected to a main device. This role cannot be changed.',
-              )
+            ? Text(_cashierConnectionText(settings.deviceDisplayName))
             : CashierPairingPanel(
                 repository: widget.repository,
                 scanBarcode: widget.scanBarcode,
@@ -129,6 +127,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  String _cashierConnectionText(String? displayName) {
+    final trimmed = displayName?.trim();
+    if (trimmed == null ||
+        trimmed.isEmpty ||
+        trimmed == 'This device' ||
+        trimmed == 'Dekon phone') {
+      return 'Connected to Main device.';
+    }
+    return 'Connected to Main device as $trimmed';
   }
 
   Widget _backupPanel() {
