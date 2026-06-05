@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'persian_date_range_picker.dart';
 import 'report_trend_page.dart';
 import 'ui_strings.dart';
 
@@ -541,13 +542,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Future<void> _pickCustomRange() async {
     final now = DateTime.now();
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(now.year - 5),
-      lastDate: DateTime(now.year + 1, 12, 31),
-      initialDateRange:
-          _customRange ?? DateTimeRange(start: _dayStart(now), end: now),
-    );
+    final firstDate = DateTime(now.year - 5);
+    final lastDate = DateTime(now.year + 1, 12, 31);
+    final initialDateRange =
+        _customRange ?? DateTimeRange(start: _dayStart(now), end: now);
+    final picked = context.strings.reportCalendar == ReportCalendar.persian
+        ? await showPersianDateRangePicker(
+            context: context,
+            firstDate: firstDate,
+            lastDate: lastDate,
+            initialDateRange: initialDateRange,
+          )
+        : await showDateRangePicker(
+            context: context,
+            firstDate: firstDate,
+            lastDate: lastDate,
+            initialDateRange: initialDateRange,
+          );
     if (picked == null || !mounted) return;
     setState(() {
       _period = _ReportPeriod.custom;

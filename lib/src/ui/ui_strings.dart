@@ -867,6 +867,24 @@ class UiStrings {
   String get month => _text(en: 'Month', fa: 'ماه');
   String get custom => _text(en: 'Custom', fa: 'دلخواه');
   String get year => _text(en: 'Year', fa: 'سال');
+  String get customDateRange {
+    return _text(en: 'Custom range', fa: 'بازه دلخواه');
+  }
+
+  String get startDate => _text(en: 'Start', fa: 'شروع');
+  String get endDate => _text(en: 'End', fa: 'پایان');
+  String get selectDate => _text(en: 'Select date', fa: 'انتخاب تاریخ');
+  String get applyDateRange => _text(en: 'Apply', fa: 'اعمال');
+  String get previousMonth => _text(en: 'Previous month', fa: 'ماه قبل');
+  String get nextMonth => _text(en: 'Next month', fa: 'ماه بعد');
+  List<String> get persianWeekdayShortNames {
+    return const ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
+  }
+
+  String dateRangeEndpoint({required String label, required String value}) {
+    return _text(en: '$label: $value', fa: '$label: $value');
+  }
+
   String previousPeriod(String unit) {
     return _text(en: 'Previous $unit', fa: '$unit قبلی');
   }

@@ -1,6 +1,6 @@
 # Package Selection
 
-Last checked: 2026-06-04.
+Last checked: 2026-06-05.
 
 Selection criteria:
 
@@ -22,6 +22,7 @@ Selection criteria:
 | HTTP client | `http` | `1.6.0` | Dart team package; reliable, small, and broadly used. |
 | Hash/HMAC | `crypto` | `3.0.7` | Dart team package for SHA and HMAC. |
 | Event IDs | `uuid` | `4.5.3` | Supports UUID v7; avoids custom ID generation. |
+| Persian calendar | `shamsi_date` | `1.1.1` | Pure Dart Jalali/Shamsi calendar package with DateTime conversion, formatting, month lengths, leap-year handling, and tests. Keeps Farsi date display and Persian report periods on one library. |
 | Barcode and QR scanning | `mobile_scanner` | `7.2.0` | Mature Flutter scanner using native CameraX/ML Kit on Android. Covers product barcodes and QR pairing scans. |
 | QR generation | `qr_flutter` | `4.1.0` | Lightweight Flutter QR rendering for server pairing codes. |
 
