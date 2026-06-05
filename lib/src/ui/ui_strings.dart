@@ -216,6 +216,10 @@ class UiStrings {
   String get settings => _text(en: 'Settings', fa: 'تنظیمات');
   String get about => _text(en: 'About', fa: 'درباره');
   String get aboutUrl => 'https://ble.ir/dekon';
+  String aboutVersion(String version) {
+    return _text(en: 'Version $version', fa: 'نسخه ${digits(version)}');
+  }
+
   String get aboutLinkError {
     return _text(
       en: 'Could not open the link. Try again.',

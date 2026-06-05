@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../application/application.dart';
+import '../app_config.dart';
 import '../backup/backup.dart';
 import '../platform/external_link_actions.dart';
 import '../sync/sync.dart';
@@ -262,24 +263,44 @@ class AboutScreen extends StatelessWidget {
     final strings = context.strings;
     return Scaffold(
       appBar: AppBar(title: Text(strings.about)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              key: const Key('about-link'),
-              style: TextButton.styleFrom(
-                minimumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
-              ),
-              onPressed: () {
-                _openLink(context);
-              },
-              child: Text(strings.aboutUrl),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  key: const Key('about-link'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    padding: EdgeInsets.zero,
+                  ),
+                  onPressed: () {
+                    _openLink(context);
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(strings.aboutUrl),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.chat_bubble_outline, size: 20),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  key: const Key('about-version'),
+                  strings.aboutVersion(AppConfig.appVersion),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dekon/src/app_config.dart';
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/backup/backup.dart';
 import 'package:dekon/src/sync/sync.dart';
@@ -127,6 +128,9 @@ void main() {
       expect(find.text('About'), findsOneWidget);
       expect(find.byKey(const Key('about-link')), findsOneWidget);
       expect(find.text('https://ble.ir/dekon'), findsOneWidget);
+      expect(find.byIcon(Icons.chat_bubble_outline), findsOneWidget);
+      expect(find.byKey(const Key('about-version')), findsOneWidget);
+      expect(find.text('Version ${AppConfig.appVersion}'), findsOneWidget);
       expect(find.text('Device Sync'), findsNothing);
       expect(find.text('Backup and Restore'), findsNothing);
     } finally {
