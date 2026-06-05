@@ -27,6 +27,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   var _anchorLocal = DateTime.now();
   String? _selectedCashierDeviceId;
   DateTimeRange? _customRange;
+  ReportCalendar? _reportCalendar;
   late Future<ReportSummary> _future = _loadSummary();
   late Future<List<CashierReportFilter>> _cashiersFuture = _loadCashiers();
   StreamSubscription<void>? _eventsChangedSubscription;
@@ -48,6 +49,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
       _cashiersFuture = _loadCashiers();
       _subscribeToRepository();
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final calendar = context.strings.reportCalendar;
+    if (_reportCalendar != null && _reportCalendar != calendar) {
+      _future = _loadSummary();
+    }
+    _reportCalendar = calendar;
   }
 
   @override
@@ -366,11 +377,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         _anchorLocal = switch (_period) {
           _ReportPeriod.day => _anchorLocal.add(Duration(days: direction)),
           _ReportPeriod.week => _anchorLocal.add(Duration(days: 7 * direction)),
-          _ReportPeriod.month => DateTime(
-            _anchorLocal.year,
-            _anchorLocal.month + direction,
-            1,
-          ),
+          _ReportPeriod.month => _shiftCalendarMonth(_anchorLocal, direction),
           _ReportPeriod.custom => _anchorLocal,
         };
       }
@@ -570,7 +577,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   ReportDateRange _weekRange(DateTime value) {
     final today = _dayStart(value);
-    final start = today.subtract(Duration(days: value.weekday - 1));
+    final start = today.subtract(Duration(days: _daysSinceWeekStart(value)));
     return ReportDateRange(
       startLocal: start,
       endLocalExclusive: start.add(const Duration(days: 7)),
@@ -578,6 +585,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   ReportDateRange _monthRange(DateTime value) {
+    if (context.strings.reportCalendar == ReportCalendar.persian) {
+      return PersianCalendar.monthRangeContaining(value);
+    }
     final start = DateTime(value.year, value.month);
     return ReportDateRange(
       startLocal: start,
@@ -595,6 +605,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   DateTime _dayStart(DateTime value) {
     return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime _shiftCalendarMonth(DateTime value, int direction) {
+    if (context.strings.reportCalendar == ReportCalendar.persian) {
+      final monthStart = PersianCalendar.monthRangeContaining(value).startLocal;
+      return PersianCalendar.addMonths(monthStart, direction);
+    }
+    return DateTime(value.year, value.month + direction, 1);
+  }
+
+  int _daysSinceWeekStart(DateTime value) {
+    if (context.strings.reportCalendar == ReportCalendar.persian) {
+      return (value.weekday + 1) % 7;
+    }
+    return value.weekday - 1;
   }
 
   String _rangeLabel(ReportDateRange range) {

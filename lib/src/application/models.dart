@@ -106,6 +106,8 @@ enum TransactionHistoryKind { sale, purchase }
 
 enum ReportScope { allDevices, localDevice }
 
+enum ReportCalendar { gregorian, persian }
+
 enum ReportTrendPeriod { day, week, month, year }
 
 class CashierReportFilter {

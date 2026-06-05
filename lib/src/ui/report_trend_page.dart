@@ -22,7 +22,20 @@ class ReportTrendPage extends StatefulWidget {
 
 class _ReportTrendPageState extends State<ReportTrendPage> {
   var _period = ReportTrendPeriod.day;
-  late Future<List<ReportTrendBucket>> _future = _loadTrend();
+  var _hasLoadedTrend = false;
+  var _calendar = ReportCalendar.gregorian;
+  late Future<List<ReportTrendBucket>> _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final calendar = context.strings.reportCalendar;
+    if (!_hasLoadedTrend || calendar != _calendar) {
+      _calendar = calendar;
+      _future = _loadTrend();
+      _hasLoadedTrend = true;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,6 +116,7 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
   Future<List<ReportTrendBucket>> _loadTrend() {
     return widget.repository.reportTrend(
       period: _period,
+      calendar: _calendar,
       scope: widget.scope,
       deviceId: widget.deviceId,
     );

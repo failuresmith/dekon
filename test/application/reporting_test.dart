@@ -78,6 +78,39 @@ void main() {
     },
   );
 
+  test('Persian report trends use Iranian calendar boundaries', () async {
+    final repository = await createTestRepository(onboarded: true);
+    final anchor = DateTime(2026, 6, 5);
+
+    final weekTrend = await repository.reportTrend(
+      period: ReportTrendPeriod.week,
+      calendar: ReportCalendar.persian,
+      anchorLocal: anchor,
+    );
+    final monthTrend = await repository.reportTrend(
+      period: ReportTrendPeriod.month,
+      calendar: ReportCalendar.persian,
+      anchorLocal: anchor,
+    );
+    final yearTrend = await repository.reportTrend(
+      period: ReportTrendPeriod.year,
+      calendar: ReportCalendar.persian,
+      anchorLocal: anchor,
+    );
+    final gregorianMonthTrend = await repository.reportTrend(
+      period: ReportTrendPeriod.month,
+      anchorLocal: anchor,
+    );
+
+    expect(weekTrend.last.range.startLocal, DateTime(2026, 5, 30));
+    expect(weekTrend.last.range.endLocalExclusive, DateTime(2026, 6, 6));
+    expect(monthTrend.last.range.startLocal, DateTime(2026, 5, 22));
+    expect(monthTrend.last.range.endLocalExclusive, DateTime(2026, 6, 22));
+    expect(yearTrend.last.range.startLocal, DateTime(2026, 3, 21));
+    expect(yearTrend.last.range.endLocalExclusive, DateTime(2027, 3, 21));
+    expect(gregorianMonthTrend.last.range.startLocal, DateTime(2026, 6));
+  });
+
   test(
     'report summary counts local events waiting for outbound sync',
     () async {

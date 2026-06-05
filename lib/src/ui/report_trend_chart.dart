@@ -109,8 +109,8 @@ class _ReportTrendChartState extends State<ReportTrendChart> {
     return switch (period) {
       ReportTrendPeriod.day => context.strings.shortNumericDate(start),
       ReportTrendPeriod.week => context.strings.shortNumericDate(start),
-      ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
-      ReportTrendPeriod.year => context.strings.yearNumber(start.year),
+      ReportTrendPeriod.month => context.strings.shortMonthNameForDate(start),
+      ReportTrendPeriod.year => context.strings.yearNumberForDate(start),
     };
   }
 }
@@ -317,8 +317,8 @@ class _BucketBars extends StatelessWidget {
     return switch (period) {
       ReportTrendPeriod.day => context.strings.shortNumericDate(start),
       ReportTrendPeriod.week => context.strings.shortNumericDate(start),
-      ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
-      ReportTrendPeriod.year => context.strings.yearNumber(start.year),
+      ReportTrendPeriod.month => context.strings.shortMonthNameForDate(start),
+      ReportTrendPeriod.year => context.strings.yearNumberForDate(start),
     };
   }
 }

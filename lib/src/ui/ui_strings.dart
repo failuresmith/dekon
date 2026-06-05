@@ -142,32 +142,67 @@ class UiStrings {
   }
 
   String timestamp(DateTime dateTime) {
-    return digits(dateTime.toLocal().toString().split('.').first);
-  }
-
-  String timeOfDay(DateTime dateTime) {
     final local = dateTime.toLocal();
+    if (language != AppLanguage.farsi) {
+      return digits(local.toString().split('.').first);
+    }
+    final date = PersianCalendar.fromGregorian(local);
     return digits(
-      [
-        local.hour,
-        local.minute,
-        local.second,
-      ].map((value) => value.toString().padLeft(2, '0')).join(':'),
+      '${date.year.toString().padLeft(4, '0')}/'
+      '${date.month.toString().padLeft(2, '0')}/'
+      '${date.day.toString().padLeft(2, '0')} '
+      '${_timeParts(local).join(':')}',
     );
   }
 
+  String timeOfDay(DateTime dateTime) {
+    return digits(_timeParts(dateTime.toLocal()).join(':'));
+  }
+
   String shortNumericDate(DateTime dateTime) {
+    if (language == AppLanguage.farsi) {
+      final date = PersianCalendar.fromGregorian(dateTime);
+      return digits('${date.month}/${date.day}');
+    }
     return digits('${dateTime.month}/${dateTime.day}');
   }
 
   String yearNumber(int year) => digits(year.toString());
 
+  String yearNumberForDate(DateTime dateTime) {
+    if (language == AppLanguage.farsi) {
+      return integer(PersianCalendar.fromGregorian(dateTime).year);
+    }
+    return yearNumber(dateTime.year);
+  }
+
   String humanDate(DateTime dateTime) {
+    if (language == AppLanguage.farsi) {
+      final date = PersianCalendar.fromGregorian(dateTime);
+      return '${integer(date.day)} ${monthName(date.month)} ${integer(date.year)}';
+    }
     return '${integer(dateTime.day)} ${monthName(dateTime.month)} ${yearNumber(dateTime.year)}';
   }
 
   String monthYear(DateTime dateTime) {
+    if (language == AppLanguage.farsi) {
+      final date = PersianCalendar.fromGregorian(dateTime);
+      return '${monthName(date.month)} ${integer(date.year)}';
+    }
     return '${monthName(dateTime.month)} ${yearNumber(dateTime.year)}';
+  }
+
+  String shortMonthNameForDate(DateTime dateTime) {
+    if (language == AppLanguage.farsi) {
+      return shortMonthName(PersianCalendar.fromGregorian(dateTime).month);
+    }
+    return shortMonthName(dateTime.month);
+  }
+
+  ReportCalendar get reportCalendar {
+    return language == AppLanguage.farsi
+        ? ReportCalendar.persian
+        : ReportCalendar.gregorian;
   }
 
   String get sell => _text(en: 'Sell', fa: 'فروش');
@@ -925,18 +960,18 @@ class UiStrings {
   String monthName(int month) {
     final names = language == AppLanguage.farsi
         ? const [
-            'ژانویه',
-            'فوریه',
-            'مارس',
-            'آوریل',
-            'مه',
-            'ژوئن',
-            'ژوئیه',
-            'اوت',
-            'سپتامبر',
-            'اکتبر',
-            'نوامبر',
-            'دسامبر',
+            'فروردین',
+            'اردیبهشت',
+            'خرداد',
+            'تیر',
+            'مرداد',
+            'شهریور',
+            'مهر',
+            'آبان',
+            'آذر',
+            'دی',
+            'بهمن',
+            'اسفند',
           ]
         : const [
             'January',
@@ -958,18 +993,18 @@ class UiStrings {
   String shortMonthName(int month) {
     final names = language == AppLanguage.farsi
         ? const [
-            'ژان',
-            'فور',
-            'مار',
-            'آور',
-            'مه',
-            'ژوئن',
-            'ژوئیه',
-            'اوت',
-            'سپت',
-            'اکت',
-            'نوام',
-            'دسام',
+            'فرو',
+            'ارد',
+            'خرد',
+            'تیر',
+            'مرد',
+            'شهر',
+            'مهر',
+            'آبا',
+            'آذر',
+            'دی',
+            'بهم',
+            'اسف',
           ]
         : const [
             'Jan',
@@ -1032,6 +1067,14 @@ class UiStrings {
   }
 
   String syncPeer(String peer) => _text(en: 'Peer $peer', fa: 'همتا $peer');
+
+  List<String> _timeParts(DateTime local) {
+    return [
+      local.hour,
+      local.minute,
+      local.second,
+    ].map((value) => value.toString().padLeft(2, '0')).toList();
+  }
 
   String _text({required String en, required String fa}) {
     return language == AppLanguage.farsi ? fa : en;

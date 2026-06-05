@@ -9,6 +9,7 @@ import '../persistence/persistence.dart';
 import '../platform/app_database_path.dart';
 import '../sync/sync.dart';
 import 'models.dart';
+import 'persian_calendar.dart';
 
 class DekonRepository {
   DekonRepository._(
@@ -449,11 +450,12 @@ class DekonRepository {
 
   Future<List<ReportTrendBucket>> reportTrend({
     ReportTrendPeriod period = ReportTrendPeriod.day,
+    ReportCalendar calendar = ReportCalendar.gregorian,
     ReportScope scope = ReportScope.allDevices,
     String? deviceId,
     DateTime? anchorLocal,
   }) async {
-    final ranges = _trendRanges(period, anchorLocal ?? _now());
+    final ranges = _trendRanges(period, anchorLocal ?? _now(), calendar);
     final buckets = <ReportTrendBucket>[];
     for (final range in ranges) {
       buckets.add(
@@ -594,12 +596,13 @@ class DekonRepository {
   List<ReportDateRange> _trendRanges(
     ReportTrendPeriod period,
     DateTime anchorLocal,
+    ReportCalendar calendar,
   ) {
     return switch (period) {
       ReportTrendPeriod.day => _dayTrendRanges(anchorLocal),
-      ReportTrendPeriod.week => _weekTrendRanges(anchorLocal),
-      ReportTrendPeriod.month => _monthTrendRanges(anchorLocal),
-      ReportTrendPeriod.year => _yearTrendRanges(anchorLocal),
+      ReportTrendPeriod.week => _weekTrendRanges(anchorLocal, calendar),
+      ReportTrendPeriod.month => _monthTrendRanges(anchorLocal, calendar),
+      ReportTrendPeriod.year => _yearTrendRanges(anchorLocal, calendar),
     };
   }
 
@@ -615,8 +618,11 @@ class DekonRepository {
     });
   }
 
-  List<ReportDateRange> _weekTrendRanges(DateTime anchorLocal) {
-    final current = _weekStart(anchorLocal);
+  List<ReportDateRange> _weekTrendRanges(
+    DateTime anchorLocal,
+    ReportCalendar calendar,
+  ) {
+    final current = _weekStart(anchorLocal, calendar);
     final first = current.subtract(const Duration(days: 49));
     return List.generate(8, (index) {
       final start = first.add(Duration(days: 7 * index));
@@ -627,7 +633,18 @@ class DekonRepository {
     });
   }
 
-  List<ReportDateRange> _monthTrendRanges(DateTime anchorLocal) {
+  List<ReportDateRange> _monthTrendRanges(
+    DateTime anchorLocal,
+    ReportCalendar calendar,
+  ) {
+    if (calendar == ReportCalendar.persian) {
+      final current = PersianCalendar.monthRangeContaining(anchorLocal);
+      final first = PersianCalendar.addMonths(current.startLocal, -11);
+      return List.generate(12, (index) {
+        final start = PersianCalendar.addMonths(first, index);
+        return PersianCalendar.monthRangeContaining(start);
+      });
+    }
     final first = DateTime(anchorLocal.year, anchorLocal.month - 11);
     return List.generate(12, (index) {
       final start = DateTime(first.year, first.month + index);
@@ -638,7 +655,25 @@ class DekonRepository {
     });
   }
 
-  List<ReportDateRange> _yearTrendRanges(DateTime anchorLocal) {
+  List<ReportDateRange> _yearTrendRanges(
+    DateTime anchorLocal,
+    ReportCalendar calendar,
+  ) {
+    if (calendar == ReportCalendar.persian) {
+      final current = PersianCalendar.yearRangeContaining(anchorLocal);
+      final currentYear = PersianCalendar.fromGregorian(
+        current.startLocal,
+      ).year;
+      return List.generate(5, (index) {
+        return PersianCalendar.yearRangeContaining(
+          PersianCalendar.toGregorianDate(
+            year: currentYear - 4 + index,
+            month: 1,
+            day: 1,
+          ),
+        );
+      });
+    }
     final firstYear = anchorLocal.year - 4;
     return List.generate(5, (index) {
       final year = firstYear + index;
@@ -653,9 +688,12 @@ class DekonRepository {
     return DateTime(value.year, value.month, value.day);
   }
 
-  DateTime _weekStart(DateTime value) {
+  DateTime _weekStart(DateTime value, ReportCalendar calendar) {
     final today = _dayStart(value);
-    return today.subtract(Duration(days: value.weekday - 1));
+    final daysSinceWeekStart = calendar == ReportCalendar.persian
+        ? (value.weekday + 1) % 7
+        : value.weekday - 1;
+    return today.subtract(Duration(days: daysSinceWeekStart));
   }
 
   Future<int> _rangeTotal(
