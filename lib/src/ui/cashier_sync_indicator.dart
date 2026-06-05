@@ -13,13 +13,17 @@ class CashierSyncIndicator extends StatefulWidget {
     required this.repository,
     this.pingMainDevice,
     this.syncWithMainDevice,
-    this.pollInterval = const Duration(seconds: 30),
+    this.syncTransfers,
+    this.pollInterval = const Duration(seconds: 1),
+    this.syncWaitTimeout = const Duration(seconds: 25),
   });
 
   final DekonRepository repository;
   final CashierSyncOperation? pingMainDevice;
   final CashierSyncOperation? syncWithMainDevice;
+  final Stream<SyncTransferActivity>? syncTransfers;
   final Duration? pollInterval;
+  final Duration syncWaitTimeout;
 
   @override
   State<CashierSyncIndicator> createState() => _CashierSyncIndicatorState();
@@ -33,9 +37,14 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   late final AnimationController _breathing;
   late final Animation<double> _opacity;
 
-  var _status = _CashierSyncIndicatorStatus.disconnected;
+  var _connected = false;
+  var _transferring = false;
   var _refreshing = false;
+  var _refreshAgain = false;
   Timer? _timer;
+  Timer? _transferHideTimer;
+  StreamSubscription<SyncTransferActivity>? _transferSubscription;
+  StreamSubscription<void>? _eventsChangedSubscription;
 
   @override
   void initState() {
@@ -51,6 +60,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_refresh());
     });
+    _subscribeToRepository();
   }
 
   @override
@@ -58,33 +68,43 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
       _timer?.cancel();
+      _transferSubscription?.cancel();
+      _eventsChangedSubscription?.cancel();
+      _subscribeToRepository();
       unawaited(_refresh());
+    } else if (oldWidget.syncTransfers != widget.syncTransfers) {
+      _transferSubscription?.cancel();
+      _subscribeToTransfers();
     }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _transferHideTimer?.cancel();
+    _transferSubscription?.cancel();
+    _eventsChangedSubscription?.cancel();
     _breathing.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (_status) {
+    final status = _status;
+    final color = switch (status) {
       _CashierSyncIndicatorStatus.disconnected => Colors.red.shade600,
       _CashierSyncIndicatorStatus.syncing => Colors.green.shade600,
       _CashierSyncIndicatorStatus.synced => Colors.green.shade600,
     };
     final circle = DecoratedBox(
-      key: Key('cashier-sync-indicator-${_status.name}'),
+      key: Key('cashier-sync-indicator-${status.name}'),
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
     return SizedBox(
       key: const Key('cashier-sync-indicator'),
       width: _size,
       height: _size,
-      child: _status == _CashierSyncIndicatorStatus.syncing
+      child: status == _CashierSyncIndicatorStatus.syncing
           ? FadeTransition(
               key: const Key('cashier-sync-indicator-breathing'),
               opacity: _opacity,
@@ -95,24 +115,54 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   }
 
   Future<void> _refresh() async {
-    if (_refreshing) return;
-    _timer?.cancel();
-    _refreshing = true;
-    Future<void>? minimumSyncVisible;
-    try {
-      await _pingMainDevice();
-      _setStatus(_CashierSyncIndicatorStatus.syncing);
-      minimumSyncVisible = Future<void>.delayed(_minimumSyncVisibleDuration);
-      await _syncWithMainDevice();
-      await minimumSyncVisible;
-      _setStatus(_CashierSyncIndicatorStatus.synced);
-    } catch (_) {
-      await minimumSyncVisible;
-      _setStatus(_CashierSyncIndicatorStatus.disconnected);
-    } finally {
-      _refreshing = false;
-      _scheduleNextRefresh();
+    if (_refreshing) {
+      _refreshAgain = true;
+      return;
     }
+    do {
+      _timer?.cancel();
+      _refreshing = true;
+      _refreshAgain = false;
+      try {
+        await _pingMainDevice();
+        _setConnected(true);
+        await _syncWithMainDevice();
+        _setConnected(true);
+      } catch (_) {
+        _setConnected(false);
+      } finally {
+        _refreshing = false;
+      }
+    } while (mounted && _refreshAgain);
+    _scheduleNextRefresh();
+  }
+
+  void _subscribeToRepository() {
+    _subscribeToTransfers();
+    _eventsChangedSubscription = widget.repository.eventsChanged.listen((_) {
+      if (mounted) unawaited(_refresh());
+    });
+  }
+
+  void _subscribeToTransfers() {
+    _transferSubscription =
+        (widget.syncTransfers ?? widget.repository.syncTransfers).listen(
+          _showTransferActivity,
+        );
+  }
+
+  void _showTransferActivity(SyncTransferActivity activity) {
+    if (!mounted || activity.eventCount <= 0) return;
+    _transferHideTimer?.cancel();
+    _connected = true;
+    if (!_transferring) {
+      setState(() => _transferring = true);
+      _breathing.repeat(reverse: true);
+    }
+    _transferHideTimer = Timer(
+      _minimumSyncVisibleDuration,
+      _hideTransferActivity,
+    );
   }
 
   Future<void> _pingMainDevice() {
@@ -124,7 +174,13 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   Future<void> _syncWithMainDevice() {
     final injected = widget.syncWithMainDevice;
     if (injected != null) return injected();
-    return _withMainPeer((client, peer) => client.syncWithPeer(peer.deviceId));
+    return _withMainPeer(
+      (client, peer) => client.syncWithPeer(
+        peer.deviceId,
+        waitForRemoteEvents: true,
+        waitTimeout: widget.syncWaitTimeout,
+      ),
+    );
   }
 
   Future<void> _withMainPeer(
@@ -150,15 +206,25 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     }
   }
 
-  void _setStatus(_CashierSyncIndicatorStatus status) {
-    if (!mounted || _status == status) return;
-    setState(() => _status = status);
-    if (status == _CashierSyncIndicatorStatus.syncing) {
-      _breathing.repeat(reverse: true);
-    } else {
-      _breathing.stop();
-      _breathing.value = 1;
-    }
+  _CashierSyncIndicatorStatus get _status {
+    if (_transferring) return _CashierSyncIndicatorStatus.syncing;
+    return _connected
+        ? _CashierSyncIndicatorStatus.synced
+        : _CashierSyncIndicatorStatus.disconnected;
+  }
+
+  void _setConnected(bool connected) {
+    if (!mounted || _connected == connected) return;
+    setState(() => _connected = connected);
+  }
+
+  void _hideTransferActivity() {
+    if (!mounted || !_transferring) return;
+    _transferHideTimer?.cancel();
+    _transferHideTimer = null;
+    _breathing.stop();
+    _breathing.value = 1;
+    setState(() => _transferring = false);
   }
 
   void _scheduleNextRefresh() {

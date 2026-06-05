@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import '../sync/sync.dart';
 
 typedef CashierConnectionCheck = Future<bool> Function();
 
@@ -11,11 +12,13 @@ class MainCashierConnectionIndicator extends StatefulWidget {
     super.key,
     required this.repository,
     this.isCashierConnected,
+    this.syncTransfers,
     this.pollInterval = const Duration(seconds: 15),
   });
 
   final DekonRepository repository;
   final CashierConnectionCheck? isCashierConnected;
+  final Stream<SyncTransferActivity>? syncTransfers;
   final Duration? pollInterval;
 
   @override
@@ -34,9 +37,12 @@ class _MainCashierConnectionIndicatorState
 
   var _refreshing = false;
   var _visible = false;
+  var _transferring = false;
   Timer? _timer;
   Timer? _hideTimer;
+  Timer? _transferHideTimer;
   DateTime? _visibleSince;
+  StreamSubscription<SyncTransferActivity>? _transferSubscription;
 
   @override
   void initState() {
@@ -52,6 +58,7 @@ class _MainCashierConnectionIndicatorState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_refresh());
     });
+    _subscribeToTransfers();
   }
 
   @override
@@ -59,7 +66,12 @@ class _MainCashierConnectionIndicatorState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
       _timer?.cancel();
+      _transferSubscription?.cancel();
+      _subscribeToTransfers();
       unawaited(_refresh());
+    } else if (oldWidget.syncTransfers != widget.syncTransfers) {
+      _transferSubscription?.cancel();
+      _subscribeToTransfers();
     }
   }
 
@@ -67,6 +79,8 @@ class _MainCashierConnectionIndicatorState
   void dispose() {
     _timer?.cancel();
     _hideTimer?.cancel();
+    _transferHideTimer?.cancel();
+    _transferSubscription?.cancel();
     _breathing.dispose();
     super.dispose();
   }
@@ -78,18 +92,47 @@ class _MainCashierConnectionIndicatorState
       key: const Key('main-cashier-connection-indicator'),
       width: _size,
       height: _size,
-      child: FadeTransition(
-        key: const Key('main-cashier-connection-indicator-breathing'),
-        opacity: _opacity,
-        child: DecoratedBox(
-          key: const Key('main-cashier-connection-indicator-connected'),
-          decoration: BoxDecoration(
-            color: Colors.green.shade600,
-            shape: BoxShape.circle,
-          ),
-        ),
+      child: _transferring
+          ? FadeTransition(
+              key: const Key('main-cashier-connection-indicator-breathing'),
+              opacity: _opacity,
+              child: _connectedCircle(),
+            )
+          : _connectedCircle(),
+    );
+  }
+
+  Widget _connectedCircle() {
+    return DecoratedBox(
+      key: const Key('main-cashier-connection-indicator-connected'),
+      decoration: BoxDecoration(
+        color: Colors.green.shade600,
+        shape: BoxShape.circle,
       ),
     );
+  }
+
+  void _subscribeToTransfers() {
+    _transferSubscription =
+        (widget.syncTransfers ?? widget.repository.syncTransfers).listen(
+          _showTransferActivity,
+        );
+  }
+
+  void _showTransferActivity(SyncTransferActivity activity) {
+    if (!mounted || activity.eventCount <= 0) return;
+    _showConnected();
+    _transferHideTimer?.cancel();
+    if (!_transferring) {
+      setState(() => _transferring = true);
+      _breathing.repeat(reverse: true);
+    }
+    _transferHideTimer = Timer(_minimumVisibleDuration, () {
+      if (!mounted || !_transferring) return;
+      _breathing.stop();
+      _breathing.value = 1;
+      setState(() => _transferring = false);
+    });
   }
 
   Future<void> _refresh() async {
@@ -123,7 +166,6 @@ class _MainCashierConnectionIndicatorState
       _visibleSince = DateTime.now();
       setState(() => _visible = true);
     }
-    if (!_breathing.isAnimating) _breathing.repeat(reverse: true);
   }
 
   void _hideConnected() {
@@ -145,6 +187,9 @@ class _MainCashierConnectionIndicatorState
     _hideTimer?.cancel();
     _hideTimer = null;
     _visibleSince = null;
+    _transferHideTimer?.cancel();
+    _transferHideTimer = null;
+    _transferring = false;
     _breathing.stop();
     _breathing.value = 1;
     setState(() => _visible = false);

@@ -28,6 +28,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
   DateTimeRange? _customRange;
   late Future<ReportSummary> _future = _loadSummary();
   late Future<List<CashierReportFilter>> _cashiersFuture = _loadCashiers();
+  StreamSubscription<void>? _eventsChangedSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToRepository();
+  }
+
+  @override
+  void didUpdateWidget(ReportsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      _eventsChangedSubscription?.cancel();
+      _future = _loadSummary();
+      _cashiersFuture = _loadCashiers();
+      _subscribeToRepository();
+    }
+  }
+
+  @override
+  void dispose() {
+    _eventsChangedSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -420,11 +444,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<void> _refresh() async {
+    _reload();
+    await _future;
+  }
+
+  void _subscribeToRepository() {
+    _eventsChangedSubscription = widget.repository.eventsChanged.listen((_) {
+      if (mounted) _reload();
+    });
+  }
+
+  void _reload() {
     setState(() {
       _future = _loadSummary();
       _cashiersFuture = _loadCashiers();
     });
-    await _future;
   }
 
   void _setCashierFilter(String? value) {

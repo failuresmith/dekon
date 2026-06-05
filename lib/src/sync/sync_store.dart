@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:sqflite/sqflite.dart';
 
 import '../domain/events/events.dart';
 import '../persistence/persistence.dart';
+import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
 
@@ -11,6 +14,7 @@ class SyncStore {
     required this.localDeviceId,
     EventStore? eventStore,
     DomainProjector? projector,
+    this.activityBus,
     DateTime Function()? now,
   }) : _db = database,
        _eventStore = eventStore ?? EventStore(database),
@@ -21,6 +25,7 @@ class SyncStore {
   final String localDeviceId;
   final EventStore _eventStore;
   final DomainProjector _projector;
+  final SyncActivityBus? activityBus;
   final DateTime Function() _now;
 
   SyncDeviceInfo deviceInfo() {
@@ -164,6 +169,33 @@ class SyncStore {
     );
   }
 
+  Future<void> waitForEventsAfter(
+    SyncCursor? cursor, {
+    required Duration timeout,
+  }) async {
+    final eventsChanged = activityBus?.eventsChanged;
+    if (eventsChanged == null || timeout <= Duration.zero) return;
+    final deadline = DateTime.now().add(timeout);
+
+    while (true) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) return;
+      final changed = Completer<void>();
+      final subscription = eventsChanged.listen((_) {
+        if (!changed.isCompleted) changed.complete();
+      });
+      try {
+        final events = await fetchEventsAfter(cursor, limit: 1);
+        if (events.isNotEmpty) return;
+        await changed.future.timeout(remaining);
+      } on TimeoutException {
+        return;
+      } finally {
+        await subscription.cancel();
+      }
+    }
+  }
+
   Future<PostEventsResult> importEvents(List<EventEnvelope> events) async {
     final accepted = <String>[];
     final duplicate = <String>[];
@@ -194,6 +226,10 @@ class SyncStore {
           EventRejection(eventId: event.eventId, reason: _safeReason(error)),
         );
       }
+    }
+
+    if (accepted.isNotEmpty || unsupported.isNotEmpty) {
+      activityBus?.notifyEventsChanged();
     }
 
     return PostEventsResult(
@@ -231,6 +267,12 @@ class SyncStore {
       unsupportedEventCount: unsupportedRows.single['count'] as int,
       trustedPeerCount: peerRows.single['count'] as int,
       lastSuccessfulSyncAt: lastSync == null ? null : DateTime.parse(lastSync),
+    );
+  }
+
+  void notifyTransfer(SyncTransferDirection direction, int eventCount) {
+    activityBus?.notifyTransfer(
+      SyncTransferActivity(direction: direction, eventCount: eventCount),
     );
   }
 

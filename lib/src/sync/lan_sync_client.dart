@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
 import 'sync_store.dart';
@@ -20,6 +21,9 @@ class LanSyncClient {
   final SyncAuthenticator _authenticator;
   final DateTime Function() _now;
   Duration _serverClockOffset = Duration.zero;
+
+  static const _defaultPullWaitTimeout = Duration(seconds: 25);
+  static const _maxPullWaitTimeout = Duration(seconds: 30);
 
   void close() => _client.close();
 
@@ -107,16 +111,26 @@ class LanSyncClient {
     return peer;
   }
 
-  Future<void> syncWithPeer(String peerDeviceId) async {
+  Future<void> syncWithPeer(
+    String peerDeviceId, {
+    bool waitForRemoteEvents = false,
+    Duration waitTimeout = _defaultPullWaitTimeout,
+  }) async {
     while (true) {
       final result = await pushToPeer(peerDeviceId);
       _throwIfRejected('Push', result);
       if (!result.hasEventOutcomes) break;
     }
+    var waitForNextPull = waitForRemoteEvents;
     while (true) {
-      final result = await pullFromPeer(peerDeviceId);
+      final result = await pullFromPeer(
+        peerDeviceId,
+        waitForEvents: waitForNextPull,
+        waitTimeout: waitTimeout,
+      );
       _throwIfRejected('Pull', result);
       if (!result.hasEventOutcomes) break;
+      waitForNextPull = false;
     }
   }
 
@@ -132,12 +146,20 @@ class LanSyncClient {
     await store.markPeerSuccess(peer.deviceId);
   }
 
-  Future<PostEventsResult> pullFromPeer(String peerDeviceId) async {
+  Future<PostEventsResult> pullFromPeer(
+    String peerDeviceId, {
+    bool waitForEvents = false,
+    Duration waitTimeout = _defaultPullWaitTimeout,
+  }) async {
     final peer = await _requiredPeer(peerDeviceId);
     final cursor = peer.lastPulledCursor;
     final query = {
       if (cursor != null) 'since': cursor.encode(),
       'limit': '100',
+      if (waitForEvents) ...{
+        'wait': 'true',
+        'wait_ms': _waitMilliseconds(waitTimeout).toString(),
+      },
     };
     final uri = Uri.parse(
       peer.baseUrl!,
@@ -153,6 +175,9 @@ class LanSyncClient {
     final events = [
       for (final raw in decoded['events'] as List) EventCodec.fromJson(raw),
     ];
+    if (events.isNotEmpty) {
+      store.notifyTransfer(SyncTransferDirection.received, events.length);
+    }
     final result = await store.importEvents(events);
     final nextCursor = SyncCursor.parse(decoded['next_cursor'] as String?);
     if (!result.hasRejected) {
@@ -186,6 +211,7 @@ class LanSyncClient {
       unsupported: _stringList(decoded['unsupported']),
       rejected: _rejections(decoded['rejected']),
     );
+    store.notifyTransfer(SyncTransferDirection.sent, events.length);
     if (!result.hasRejected) {
       await store.updatePushCursor(
         peer.deviceId,
@@ -286,6 +312,12 @@ class LanSyncClient {
   }
 
   DateTime _signedNow() => _now().toUtc().add(_serverClockOffset);
+
+  int _waitMilliseconds(Duration timeout) {
+    return timeout.inMilliseconds
+        .clamp(0, _maxPullWaitTimeout.inMilliseconds)
+        .toInt();
+  }
 
   bool _updateClockOffsetFromBody(String body) {
     try {

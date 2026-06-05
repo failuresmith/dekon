@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../domain/events/events.dart';
+import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
 import 'sync_store.dart';
@@ -14,6 +15,9 @@ class LanSyncServer {
   LanSyncServer({required this.store, DateTime Function()? now})
     : _authenticator = SyncAuthenticator(now: now),
       _now = now ?? DateTime.now;
+
+  static const _defaultEventsWaitTimeout = Duration(seconds: 25);
+  static const _maxEventsWaitTimeout = Duration(seconds: 30);
 
   final SyncStore store;
   final SyncAuthenticator _authenticator;
@@ -145,8 +149,18 @@ class LanSyncServer {
     final query = request.requestedUri.queryParameters;
     final limit = _limit(query['limit']);
     final cursor = SyncCursor.parse(query['since']);
-    final page = await store.fetchEventsAfter(cursor, limit: limit + 1);
+    var page = await store.fetchEventsAfter(cursor, limit: limit + 1);
+    if (page.isEmpty && _shouldWaitForEvents(query)) {
+      await store.waitForEventsAfter(
+        cursor,
+        timeout: _eventsWaitTimeout(query['wait_ms']),
+      );
+      page = await store.fetchEventsAfter(cursor, limit: limit + 1);
+    }
     final events = page.take(limit).toList(growable: false);
+    if (events.isNotEmpty) {
+      store.notifyTransfer(SyncTransferDirection.sent, events.length);
+    }
     await store.markPeerSuccess(peer.deviceId);
     return _json({
       'events': [for (final event in events) EventCodec.toJson(event)],
@@ -181,6 +195,9 @@ class LanSyncServer {
       }
     }
     final result = (await store.importEvents(events)).withRejected(malformed);
+    if (result.hasEventOutcomes) {
+      store.notifyTransfer(SyncTransferDirection.received, events.length);
+    }
     await store.markPeerSuccess(peer.deviceId);
     return _json(result.toJson());
   }
@@ -238,6 +255,17 @@ class LanSyncServer {
   int _limit(String? value) {
     final parsed = int.tryParse(value ?? '') ?? 100;
     return parsed.clamp(1, 500).toInt();
+  }
+
+  bool _shouldWaitForEvents(Map<String, String> query) {
+    return query['wait'] == 'true' || query['wait'] == '1';
+  }
+
+  Duration _eventsWaitTimeout(String? value) {
+    final parsed = int.tryParse(value ?? '');
+    if (parsed == null) return _defaultEventsWaitTimeout;
+    final clamped = parsed.clamp(0, _maxEventsWaitTimeout.inMilliseconds);
+    return Duration(milliseconds: clamped.toInt());
   }
 
   Future<String> _displayHost(HttpServer server) async {

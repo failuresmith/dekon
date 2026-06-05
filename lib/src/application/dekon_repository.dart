@@ -21,7 +21,8 @@ class DekonRepository {
   }) : _deviceId = deviceId,
        _clock = HybridLogicalClock(nodeId: deviceId),
        _now = now ?? DateTime.now,
-       _uuid = uuid ?? const Uuid();
+       _uuid = uuid ?? const Uuid(),
+       _syncActivityBus = SyncActivityBus();
 
   final Database _db;
   final EventStore _eventStore;
@@ -30,6 +31,7 @@ class DekonRepository {
   final HybridLogicalClock _clock;
   final DateTime Function() _now;
   final Uuid _uuid;
+  final SyncActivityBus _syncActivityBus;
 
   static Future<DekonRepository> open({Database? database}) async {
     final db = database ?? await AppDatabasePath.openCoreDatabase();
@@ -42,10 +44,20 @@ class DekonRepository {
     );
   }
 
-  Future<void> close() => _db.close();
+  Stream<void> get eventsChanged => _syncActivityBus.eventsChanged;
+  Stream<SyncTransferActivity> get syncTransfers => _syncActivityBus.transfers;
+
+  Future<void> close() async {
+    await _syncActivityBus.close();
+    await _db.close();
+  }
 
   SyncStore createSyncStore() {
-    return SyncStore(database: _db, localDeviceId: _deviceId);
+    return SyncStore(
+      database: _db,
+      localDeviceId: _deviceId,
+      activityBus: _syncActivityBus,
+    );
   }
 
   LanSyncServer createLanSyncServer() {
@@ -487,6 +499,7 @@ class DekonRepository {
     final write = await _eventStore.append(event);
     if (write.status == EventWriteStatus.duplicate) return;
     await _projector.apply(event);
+    _syncActivityBus.notifyEventsChanged();
   }
 
   Future<double> _stockFor(String productId) async {

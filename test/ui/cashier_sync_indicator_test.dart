@@ -40,19 +40,63 @@ void main() {
     }
   });
 
-  testWidgets('indicator breathes green for at least one second on fast sync', (
+  testWidgets(
+    'indicator is solid green when connected with no event transfer',
+    (tester) async {
+      final repository = await createTestRepository();
+      try {
+        await tester.pumpWidget(
+          _indicatorApp(
+            CashierSyncIndicator(
+              repository: repository,
+              pollInterval: null,
+              pingMainDevice: () async {},
+              syncWithMainDevice: () async {},
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-synced')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-breathing')),
+          findsNothing,
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await repository.close();
+      }
+    },
+  );
+
+  testWidgets('indicator breathes green for at least one second on transfer', (
     tester,
   ) async {
     final repository = await createTestRepository();
+    final transfers = StreamController<SyncTransferActivity>.broadcast();
     try {
       await tester.pumpWidget(
         _indicatorApp(
           CashierSyncIndicator(
             repository: repository,
             pollInterval: null,
+            syncTransfers: transfers.stream,
             pingMainDevice: () async {},
             syncWithMainDevice: () async {},
           ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      transfers.add(
+        const SyncTransferActivity(
+          direction: SyncTransferDirection.received,
+          eventCount: 1,
         ),
       );
       await tester.pump();
@@ -82,12 +126,13 @@ void main() {
         findsOneWidget,
       );
     } finally {
+      await transfers.close();
       await tester.pumpWidget(const SizedBox.shrink());
       await repository.close();
     }
   });
 
-  testWidgets('indicator keeps breathing while long sync is in progress', (
+  testWidgets('indicator does not breathe only because sync is in progress', (
     tester,
   ) async {
     final repository = await createTestRepository();
@@ -107,18 +152,18 @@ void main() {
       await tester.pump();
 
       expect(
-        find.byKey(const Key('cashier-sync-indicator-syncing')),
+        find.byKey(const Key('cashier-sync-indicator-synced')),
         findsOneWidget,
       );
       expect(
         find.byKey(const Key('cashier-sync-indicator-breathing')),
-        findsOneWidget,
+        findsNothing,
       );
 
       await tester.pump(const Duration(milliseconds: 1500));
 
       expect(
-        find.byKey(const Key('cashier-sync-indicator-syncing')),
+        find.byKey(const Key('cashier-sync-indicator-synced')),
         findsOneWidget,
       );
 

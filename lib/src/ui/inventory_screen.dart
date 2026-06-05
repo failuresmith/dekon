@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
@@ -14,6 +16,29 @@ class InventoryScreen extends StatefulWidget {
 
 class _InventoryScreenState extends State<InventoryScreen> {
   late Future<List<ProductSummary>> _future = widget.repository.products();
+  StreamSubscription<void>? _eventsChangedSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToRepository();
+  }
+
+  @override
+  void didUpdateWidget(InventoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      _eventsChangedSubscription?.cancel();
+      _future = widget.repository.products();
+      _subscribeToRepository();
+    }
+  }
+
+  @override
+  void dispose() {
+    _eventsChangedSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -82,10 +107,20 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _refresh() async {
+    _reload();
+    await _future;
+  }
+
+  void _subscribeToRepository() {
+    _eventsChangedSubscription = widget.repository.eventsChanged.listen((_) {
+      if (mounted) _reload();
+    });
+  }
+
+  void _reload() {
     setState(() {
       _future = widget.repository.products();
     });
-    await _future;
   }
 }
 

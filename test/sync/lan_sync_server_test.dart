@@ -320,6 +320,61 @@ void main() {
     }
   });
 
+  test('waiting cashier pull receives new main transactions', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = mainRepository.createLanSyncServer();
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Waiting Tea',
+        barcode: 'WAITING-TEA',
+        salePriceMinor: 400,
+        purchaseCostMinor: 150,
+      );
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(
+        pairing,
+        displayName: 'Front Register',
+      );
+
+      final waitingPull = client.pullFromPeer(
+        peer.deviceId,
+        waitForEvents: true,
+        waitTimeout: const Duration(seconds: 1),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 4),
+      ]);
+      final result = await waitingPull.timeout(const Duration(seconds: 2));
+      final cashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+
+      expect(result.accepted, isNotEmpty);
+      expect(cashierProduct?.quantity, 4);
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
   test('duplicate POST is idempotent and reports duplicate IDs', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
