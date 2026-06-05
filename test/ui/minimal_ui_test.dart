@@ -148,7 +148,7 @@ void main() {
     expect(await repository.products(), isEmpty);
   });
 
-  testWidgets('Buy creates product and Inventory adjusts purchased stock', (
+  testWidgets('Buy and Sell are the Inventory stock mutation path', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
@@ -175,10 +175,60 @@ void main() {
     expect(find.text('Dates'), findsOneWidget);
     expect(find.text('Stock 2'), findsOneWidget);
     final product = (await repository.products()).single;
-    await tester.tap(find.byKey(Key('stock-decrease-${product.productId}')));
+    expect(
+      find.byKey(Key('stock-decrease-${product.productId}')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(Key('stock-increase-${product.productId}')),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Sell'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'DATE-1');
+    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('finish-sale')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
     expect(find.text('Stock 1'), findsOneWidget);
+  });
+
+  testWidgets('Inventory delete is a soft delete for auditability', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Audit Beans',
+      barcode: 'AUDIT-1',
+      salePriceMinor: 250,
+      purchaseCostMinor: 125,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('edit-${product.productId}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('soft-delete-product')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete product?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirm-soft-delete-product')));
+    await tester.pumpAndSettle();
+
+    final retainedProduct = await repository.productById(product.productId);
+    expect(retainedProduct, isNotNull);
+    expect(retainedProduct!.active, false);
+    expect(await repository.productByBarcodeOrSku('AUDIT-1'), isNull);
+    expect((await repository.products()).single.productId, product.productId);
+    expect(find.text('Audit Beans'), findsNothing);
+    expect(find.text('No products'), findsOneWidget);
   });
 
   testWidgets('scanned known barcode adds item to Sell flow', (tester) async {

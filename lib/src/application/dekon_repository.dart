@@ -181,12 +181,12 @@ class DekonRepository {
     }
   }
 
-  Future<void> deactivateProduct(String productId) async {
+  Future<void> softDeleteProduct(String productId) async {
     await _commit(
       _event(
         type: EventTypes.productDeactivated,
         entityId: productId,
-        payload: const {'reason': 'manual'},
+        payload: const {'reason': 'soft_delete'},
       ),
     );
   }
@@ -316,28 +316,6 @@ class DekonRepository {
                 'quantity': line.quantity,
                 'unit_cost_minor': line.unitCostMinor,
               },
-          ],
-        },
-      ),
-    );
-  }
-
-  Future<void> recordInventoryAdjustment({
-    required ProductSummary product,
-    required double quantityDelta,
-  }) async {
-    if (!quantityDelta.isFinite || quantityDelta == 0) {
-      throw StateError('Quantity adjustment must be non-zero.');
-    }
-    await _commit(
-      _event(
-        type: EventTypes.inventoryAdjustmentRecorded,
-        entityId: _uuid.v7(),
-        payload: {
-          'occurred_at': _now().toUtc().toIso8601String(),
-          'reason': 'manual_inventory_adjustment',
-          'line_items': [
-            {'product_id': product.productId, 'quantity_delta': quantityDelta},
           ],
         },
       ),

@@ -118,9 +118,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       actions: [
         if (editing)
           TextButton.icon(
-            onPressed: _saving ? null : _deactivate,
-            icon: const Icon(Icons.block),
-            label: const Text('Deactivate'),
+            key: const Key('soft-delete-product'),
+            onPressed: _saving ? null : _softDelete,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
           ),
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
@@ -165,21 +166,54 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       if (existing != null) await widget.repository.updateProduct(product);
       if (mounted) Navigator.pop(context, product);
     } catch (error) {
-      if (mounted) _showError(error);
+      if (mounted) _showError('Product save failed', error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<void> _deactivate() async {
-    await widget.repository.deactivateProduct(widget.product!.productId);
-    if (mounted) Navigator.pop(context);
+  Future<void> _softDelete() async {
+    final confirmed = await _confirmSoftDelete();
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await widget.repository.softDeleteProduct(widget.product!.productId);
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) _showError('Product delete failed', error);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
-  void _showError(Object error) {
+  Future<bool?> _confirmSoftDelete() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete product?'),
+        content: const Text(
+          'This hides the item from Buy and Sell while keeping its history for reports.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            key: const Key('confirm-soft-delete-product'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showError(String message, Object error) {
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('Product save failed: $error')));
+    ).showSnackBar(SnackBar(content: Text('$message: $error')));
   }
 
   String? _required(String? value) {
