@@ -3,12 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'helpers/test_app.dart';
 
 void main() {
-  testWidgets('renders app name', (tester) async {
+  testWidgets('renders compact root shell title', (tester) async {
     final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
 
-    expect(find.text('Dekon'), findsOneWidget);
+    expect(find.text('Dekon'), findsNothing);
+    expect(find.text('Sell'), findsWidgets);
   });
 }

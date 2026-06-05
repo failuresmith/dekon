@@ -12,6 +12,9 @@ import 'main_cashier_connection_indicator.dart';
 import 'reports_screen.dart';
 import 'settings_screen.dart';
 import 'transaction_screen.dart';
+import 'ui_strings.dart';
+
+enum MainTab { sell, restock, inventory, reports }
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -81,17 +84,42 @@ class _AppShellState extends State<AppShell> {
   Widget _appScaffold(DeviceRoleSettings settings) {
     final items = _navigationItems(settings);
     final index = _index >= items.length ? items.length - 1 : _index;
+    final selectedItem = items[index];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dekon'),
-        actions: [_settingsAction(settings)],
+        title: Text(selectedItem.title),
+        actions: [
+          if (selectedItem.historyMode != null)
+            _historyAction(selectedItem.historyMode!),
+          _settingsAction(settings),
+        ],
       ),
-      body: items[index].screen,
+      body: IndexedStack(
+        index: index,
+        children: [
+          for (final item in items)
+            KeyedSubtree(key: ValueKey(item.tab), child: item.screen),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: [for (final item in items) item.destination],
       ),
+    );
+  }
+
+  Widget _historyAction(TransactionMode mode) {
+    final isSell = mode == TransactionMode.sell;
+    return IconButton(
+      key: Key(isSell ? 'sell-history' : 'restock-history'),
+      tooltip: isSell ? UiStrings.saleHistory : UiStrings.restockHistory,
+      onPressed: () => showTransactionHistoryDialog(
+        context: context,
+        repository: widget.repository,
+        mode: mode,
+      ),
+      icon: const Icon(Icons.history),
     );
   }
 
@@ -126,50 +154,73 @@ class _AppShellState extends State<AppShell> {
     final role = settings.role;
     final items = [
       _NavigationItem(
+        tab: MainTab.sell,
+        title: UiStrings.sell,
         screen: TransactionScreen(
+          key: const ValueKey('sell-screen'),
           repository: widget.repository,
           mode: TransactionMode.sell,
           scanBarcode: widget.scanBarcode,
         ),
+        historyMode: TransactionMode.sell,
         destination: const NavigationDestination(
-          icon: Icon(Icons.point_of_sale),
-          label: 'Sell',
+          icon: Icon(Icons.point_of_sale_outlined),
+          selectedIcon: Icon(Icons.point_of_sale),
+          label: UiStrings.sell,
         ),
       ),
       _NavigationItem(
+        tab: MainTab.restock,
+        title: UiStrings.restock,
         screen: TransactionScreen(
+          key: const ValueKey('restock-screen'),
           repository: widget.repository,
           mode: TransactionMode.buy,
           scanBarcode: widget.scanBarcode,
         ),
+        historyMode: TransactionMode.buy,
         destination: const NavigationDestination(
-          icon: Icon(Icons.add_business),
-          label: 'Buy',
+          icon: Icon(Icons.add_business_outlined),
+          selectedIcon: Icon(Icons.add_business),
+          label: UiStrings.restock,
         ),
       ),
     ];
     if (role == DeviceRole.mainDevice || settings.locked) {
       items.add(
         _NavigationItem(
-          screen: InventoryScreen(repository: widget.repository),
+          tab: MainTab.inventory,
+          title: UiStrings.inventory,
+          screen: InventoryScreen(
+            key: const ValueKey('inventory-screen'),
+            repository: widget.repository,
+          ),
           destination: const NavigationDestination(
-            icon: Icon(Icons.inventory_2),
-            label: 'Inventory',
+            icon: Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2),
+            label: UiStrings.inventory,
           ),
         ),
       );
     }
+    final reportScope = role == DeviceRole.cashierDevice
+        ? ReportScope.localDevice
+        : ReportScope.allDevices;
     items.add(
       _NavigationItem(
+        tab: MainTab.reports,
+        title: reportScope == ReportScope.localDevice
+            ? UiStrings.thisDeviceReports
+            : UiStrings.reports,
         screen: ReportsScreen(
+          key: const ValueKey('reports-screen'),
           repository: widget.repository,
-          scope: role == DeviceRole.cashierDevice
-              ? ReportScope.localDevice
-              : ReportScope.allDevices,
+          scope: reportScope,
         ),
         destination: const NavigationDestination(
-          icon: Icon(Icons.bar_chart),
-          label: 'Reports',
+          icon: Icon(Icons.bar_chart_outlined),
+          selectedIcon: Icon(Icons.bar_chart),
+          label: UiStrings.reports,
         ),
       ),
     );
@@ -187,7 +238,7 @@ class _AppShellState extends State<AppShell> {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Settings')),
+          appBar: AppBar(title: const Text(UiStrings.settings)),
           body: SettingsScreen(
             repository: widget.repository,
             syncServer: _syncServer,
@@ -202,8 +253,17 @@ class _AppShellState extends State<AppShell> {
 }
 
 class _NavigationItem {
-  const _NavigationItem({required this.screen, required this.destination});
+  const _NavigationItem({
+    required this.tab,
+    required this.title,
+    required this.screen,
+    required this.destination,
+    this.historyMode,
+  });
 
+  final MainTab tab;
+  final String title;
   final Widget screen;
   final NavigationDestination destination;
+  final TransactionMode? historyMode;
 }

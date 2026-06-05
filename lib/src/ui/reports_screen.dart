@@ -80,19 +80,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        _title,
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
                       if (widget.scope == ReportScope.localDevice) ...[
-                        const SizedBox(height: 4),
                         Text(
                           'Transactions recorded on this device',
                           key: const Key('local-device-report-scope'),
                           style: Theme.of(context).textTheme.bodySmall,
+                          textAlign: TextAlign.center,
                         ),
+                        const SizedBox(height: 12),
                       ],
-                      const SizedBox(height: 12),
                       _periodSelector(summary.range),
                       if (widget.scope == ReportScope.allDevices) ...[
                         const SizedBox(height: 12),
@@ -551,12 +547,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   String get _salesLabel {
     return _period == _ReportPeriod.day ? 'Daily Sales' : 'Sales';
-  }
-
-  String get _title {
-    return widget.scope == ReportScope.localDevice
-        ? 'This Device Reports'
-        : 'Reports';
   }
 
   String _rangeLabel(ReportDateRange range) {

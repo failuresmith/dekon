@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'product_form_dialog.dart';
+import 'ui_strings.dart';
 
 class ProductLookupField extends StatefulWidget {
   const ProductLookupField({
@@ -23,19 +26,18 @@ class ProductLookupField extends StatefulWidget {
 }
 
 class _ProductLookupFieldState extends State<ProductLookupField> {
-  final _barcodeController = TextEditingController();
-  final _searchController = TextEditingController();
-  final _searchFocus = FocusNode();
+  final _queryController = TextEditingController();
   var _matches = <ProductSummary>[];
   var _busy = false;
   var _searching = false;
-  var _showSearch = false;
+  String? _notFoundQuery;
+  String? _createBarcode;
+  Timer? _searchDebounce;
 
   @override
   void dispose() {
-    _barcodeController.dispose();
-    _searchController.dispose();
-    _searchFocus.dispose();
+    _searchDebounce?.cancel();
+    _queryController.dispose();
     super.dispose();
   }
 
@@ -49,157 +51,225 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
             Expanded(
               child: TextField(
                 key: const Key('barcode-entry'),
-                controller: _barcodeController,
+                controller: _queryController,
                 decoration: const InputDecoration(
-                  labelText: 'Scan or enter barcode',
+                  hintText: UiStrings.scanBarcodeOrSearchProduct,
+                  prefixIcon: Icon(Icons.search),
                 ),
-                onSubmitted: (_) => _lookup(),
+                textInputAction: TextInputAction.search,
+                onChanged: _onQueryChanged,
+                onSubmitted: (_) => _submitQuery(),
               ),
             ),
             const SizedBox(width: 8),
-            IconButton.filledTonal(
+            FilledButton.icon(
               key: const Key('scan-barcode'),
-              tooltip: 'Scan barcode',
               onPressed: _busy ? null : _scan,
               icon: const Icon(Icons.qr_code_scanner),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filledTonal(
-              key: const Key('lookup-barcode'),
-              tooltip: 'Add by barcode or internal code',
-              onPressed: _busy ? null : _lookup,
-              icon: const Icon(Icons.add_circle),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              key: const Key('lookup-product'),
-              tooltip: 'Search products',
-              onPressed: _busy ? null : _toggleSearch,
-              icon: const Icon(Icons.search),
+              label: const Text(UiStrings.scan),
             ),
           ],
         ),
-        if (_showSearch) ...[
+        if (_searching) ...[
           const SizedBox(height: 8),
-          TextField(
-            key: const Key('product-search-input'),
-            controller: _searchController,
-            focusNode: _searchFocus,
-            decoration: InputDecoration(
-              labelText: 'Search by product name',
-              suffixIcon: _searching
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : null,
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            onChanged: _searchByName,
           ),
-          if (_matches.isNotEmpty)
-            DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).dividerColor),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                children: [
-                  for (final product in _matches)
-                    ListTile(
-                      key: Key('product-search-result-${product.productId}'),
-                      title: Text(product.name),
-                      subtitle: Text('Stock ${product.quantity.g}'),
-                      onTap: () => _selectProduct(product),
-                    ),
-                ],
-              ),
-            )
-          else if (_searchController.text.trim().isNotEmpty && !_searching)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('No matching products'),
+        ],
+        if (_matches.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(8),
             ),
+            child: Column(
+              children: [
+                for (final product in _matches)
+                  ListTile(
+                    key: Key('product-search-result-${product.productId}'),
+                    title: Text(product.name),
+                    subtitle: Text('Stock ${product.quantity.g}'),
+                    onTap: () => _selectProduct(product),
+                  ),
+              ],
+            ),
+          ),
+        ] else if (_notFoundQuery != null && !_searching) ...[
+          const SizedBox(height: 8),
+          _notFoundPanel(_notFoundQuery!),
         ],
       ],
     );
-  }
-
-  void _toggleSearch() {
-    setState(() => _showSearch = !_showSearch);
-    if (_showSearch) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _searchFocus.requestFocus();
-      });
-    }
   }
 
   Future<void> _scan() async {
     try {
       final scanned = await widget.scanBarcode(context);
       if (!mounted || scanned == null || scanned.trim().isEmpty) return;
-      _barcodeController.text = scanned.trim();
-      await _lookup();
+      final query = scanned.trim();
+      _queryController.text = query;
+      await _lookupExact(query, barcodeForCreate: query);
     } catch (_) {
       if (mounted) _message('Scan unavailable. Enter barcode manually.');
     }
   }
 
-  Future<void> _lookup() async {
-    final query = _barcodeController.text.trim();
+  Future<void> _submitQuery() async {
+    final query = _queryController.text.trim();
     if (query.isEmpty) return;
     setState(() => _busy = true);
     try {
-      var product = await widget.repository.productByBarcodeOrSku(query);
-      if (product == null && !widget.allowCreateProduct) {
-        if (mounted) {
-          _message('Product not found. Buy it into inventory first.');
-        }
+      final exact = await widget.repository.productByBarcodeOrSku(query);
+      if (exact != null) {
+        _selectProduct(exact);
         return;
       }
-      if (product == null && mounted) {
-        product = await showProductFormDialog(
-          context: context,
-          repository: widget.repository,
-          initialBarcode: query,
-        );
+      final matches = await widget.repository.productsMatchingName(query);
+      if (matches.isNotEmpty) {
+        setState(() {
+          _matches = matches;
+          _searching = false;
+          _notFoundQuery = null;
+          _createBarcode = null;
+        });
+        return;
       }
-      if (product != null) {
-        widget.onProductSelected(product);
-        _barcodeController.clear();
-      }
+      _showNotFound(query, barcodeForCreate: query);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _searchByName(String input) async {
+  Future<void> _lookupExact(String query, {String? barcodeForCreate}) async {
+    setState(() => _busy = true);
+    try {
+      final product = await widget.repository.productByBarcodeOrSku(query);
+      if (product != null) {
+        _selectProduct(product);
+        return;
+      }
+      _showNotFound(query, barcodeForCreate: barcodeForCreate);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _onQueryChanged(String input) {
+    _searchDebounce?.cancel();
     final query = input.trim();
     if (query.isEmpty) {
       setState(() {
         _matches = const [];
         _searching = false;
+        _notFoundQuery = null;
+        _createBarcode = null;
       });
       return;
     }
-    setState(() => _searching = true);
-    final matches = await widget.repository.productsMatchingName(query);
-    if (!mounted || _searchController.text.trim() != query) return;
     setState(() {
-      _matches = matches;
-      _searching = false;
+      _searching = true;
+      _notFoundQuery = null;
+      _createBarcode = null;
+    });
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_searchByName(query));
     });
   }
 
+  Future<void> _searchByName(String query) async {
+    final matches = await widget.repository.productsMatchingName(query);
+    final exact = await widget.repository.productByBarcodeOrSku(query);
+    if (!mounted || _queryController.text.trim() != query) return;
+    final results = [
+      ?exact,
+      for (final match in matches)
+        if (exact == null || match.productId != exact.productId) match,
+    ];
+    setState(() {
+      _matches = results;
+      _searching = false;
+      _notFoundQuery = results.isEmpty ? query : null;
+    });
+  }
+
+  Widget _notFoundPanel(String query) {
+    final createBarcode = _createBarcode;
+    final isBarcodeMiss = createBarcode != null;
+    return DecoratedBox(
+      key: const Key('product-not-found-panel'),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isBarcodeMiss
+                  ? 'This barcode is not in your inventory.'
+                  : 'No products found for "$query".',
+            ),
+            if (!widget.allowCreateProduct) ...[
+              const SizedBox(height: 4),
+              const Text(UiStrings.productNotFoundRestockFirst),
+            ],
+            if (widget.allowCreateProduct) ...[
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                key: const Key('create-product-from-lookup'),
+                onPressed: _busy
+                    ? null
+                    : () => _createProduct(initialBarcode: createBarcode),
+                icon: const Icon(Icons.add),
+                label: const Text(UiStrings.createNewProduct),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showNotFound(String query, {String? barcodeForCreate}) {
+    if (!mounted) return;
+    setState(() {
+      _matches = const [];
+      _searching = false;
+      _notFoundQuery = query;
+      _createBarcode = barcodeForCreate;
+    });
+  }
+
+  Future<void> _createProduct({String? initialBarcode}) async {
+    setState(() => _busy = true);
+    try {
+      final product = await showProductFormDialog(
+        context: context,
+        repository: widget.repository,
+        initialBarcode: initialBarcode,
+      );
+      if (product != null) _selectProduct(product);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   void _selectProduct(ProductSummary product) {
+    FocusManager.instance.primaryFocus?.unfocus();
     widget.onProductSelected(product);
     setState(() {
-      _searchController.clear();
+      _queryController.clear();
       _matches = const [];
-      _showSearch = false;
       _searching = false;
+      _notFoundQuery = null;
+      _createBarcode = null;
     });
   }
 

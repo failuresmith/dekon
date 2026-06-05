@@ -59,11 +59,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(
-                'Inventory',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 12),
               if (products.isEmpty)
                 const Text('No products')
               else

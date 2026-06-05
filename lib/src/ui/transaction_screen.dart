@@ -4,6 +4,7 @@ import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'product_lookup_field.dart';
 import 'transaction_quantity_input.dart';
+import 'ui_strings.dart';
 
 enum TransactionMode { sell, buy }
 
@@ -29,7 +30,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
   var _saving = false;
 
   bool get _isSell => widget.mode == TransactionMode.sell;
-  String get _title => _isSell ? 'Sell' : 'Buy';
+  String get _emptyStateText =>
+      _isSell ? UiStrings.sellEmptyState : UiStrings.restockEmptyState;
   int get _totalMinor => _lines.fold(
     0,
     (sum, line) =>
@@ -38,46 +40,68 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
           children: [
-            Expanded(
-              child: Text(
-                _title,
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
+            ProductLookupField(
+              repository: widget.repository,
+              onProductSelected: _addProduct,
+              scanBarcode: widget.scanBarcode,
+              allowCreateProduct: !_isSell,
             ),
-            IconButton(
-              key: Key(_isSell ? 'sell-history' : 'buy-history'),
-              tooltip: 'History',
-              onPressed: _showHistory,
-              icon: const Icon(Icons.history),
+            const SizedBox(height: 16),
+            Expanded(
+              child: _lines.isEmpty
+                  ? _emptyState()
+                  : ListView.separated(
+                      itemCount: _lines.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) =>
+                          _lineTile(index, _lines[index]),
+                    ),
+            ),
+            const SizedBox(height: 12),
+            _summaryPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _isSell
+                  ? Icons.shopping_cart_outlined
+                  : Icons.inventory_2_outlined,
+              size: 40,
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              UiStrings.noProductsAddedYet,
+              key: Key(_isSell ? 'sell-empty-title' : 'restock-empty-title'),
+              style: Theme.of(context).textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _emptyStateText,
+              key: Key(_isSell ? 'sell-empty-help' : 'restock-empty-help'),
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        ProductLookupField(
-          repository: widget.repository,
-          onProductSelected: _addProduct,
-          scanBarcode: widget.scanBarcode,
-          allowCreateProduct: !_isSell,
-        ),
-        const SizedBox(height: 16),
-        if (_lines.isEmpty)
-          const Text('No items')
-        else
-          ..._lines.indexed.map((entry) => _lineTile(entry.$1, entry.$2)),
-        if (_lines.isNotEmpty) ...[const SizedBox(height: 12), _totalPanel()],
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
-          onPressed: _saving || _lines.isEmpty ? null : _finish,
-          icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),
-          label: Text(_saving ? 'Saving' : 'Save $_title'),
-        ),
-      ],
+      ),
     );
   }
 
@@ -85,55 +109,79 @@ class _TransactionScreenState extends State<TransactionScreen> {
     final amount = _isSell ? line.saleTotalMinor : line.purchaseTotalMinor;
     final isNegative = _negativeProductIds.contains(line.product.productId);
     final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: DecoratedBox(
-        key: Key('transaction-line-${line.product.productId}'),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isNegative ? colors.error : Theme.of(context).dividerColor,
-            width: isNegative ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(8),
+    return DecoratedBox(
+      key: Key('transaction-line-${line.product.productId}'),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isNegative ? colors.error : Theme.of(context).dividerColor,
+          width: isNegative ? 2 : 1,
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        line.product.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        _isSell
+                            ? '${formatMoney(line.unitPriceMinor)} each'
+                            : 'Current stock: ${line.product.quantity.g}',
+                      ),
+                      if (!_isSell)
                         Text(
-                          line.product.name,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          'Purchase cost: ${formatMoney(line.unitCostMinor)} each',
                         ),
-                        Text(formatMoney(amount)),
-                      ],
-                    ),
-                  ),
-                  _quantityControls(index, line),
-                  IconButton(
-                    tooltip: 'Remove item',
-                    onPressed: () => _removeLine(index),
-                    icon: const Icon(Icons.delete),
-                  ),
-                ],
-              ),
-              if (isNegative)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    'Not enough stock: ${line.product.quantity.g} available.',
-                    key: Key('negative-warning-${line.product.productId}'),
-                    style: TextStyle(color: colors.error),
+                    ],
                   ),
                 ),
-            ],
-          ),
+                _quantityControls(index, line),
+                IconButton(
+                  key: Key('remove-line-$index'),
+                  tooltip: 'Remove product',
+                  onPressed: () => _removeLine(index),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                formatMoney(amount),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            if (isNegative)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber, color: colors.error, size: 20),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Only ${line.product.quantity.g} is available in stock. '
+                        'The sale needs confirmation before completion.',
+                        key: Key('negative-warning-${line.product.productId}'),
+                        style: TextStyle(color: colors.error),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -173,7 +221,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
     );
   }
 
-  Widget _totalPanel() {
+  Widget _summaryPanel() {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -181,18 +229,36 @@ class _TransactionScreenState extends State<TransactionScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Text(
-                _isSell ? 'Total sale amount' : 'Total purchase amount',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Items: ${_lines.length}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Text(
+                  formatMoney(_totalMinor),
+                  key: Key(_isSell ? 'sale-total' : 'purchase-total'),
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ],
             ),
-            Text(
-              formatMoney(_totalMinor),
-              key: Key(_isSell ? 'sale-total' : 'purchase-total'),
-              style: Theme.of(context).textTheme.titleLarge,
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
+              onPressed: _saving || _lines.isEmpty ? null : _finish,
+              icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),
+              label: Text(
+                _saving
+                    ? 'Saving'
+                    : _isSell
+                    ? UiStrings.completeSale
+                    : UiStrings.addToInventory,
+              ),
             ),
           ],
         ),
@@ -201,6 +267,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   void _addProduct(ProductSummary product) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     setState(() {
       _negativeProductIds.clear();
       final index = _lines.indexWhere(
@@ -249,29 +316,30 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   Future<void> _finish() async {
-    if (_isSell) {
-      final negativeProductIds = await widget.repository
-          .negativeStockProductIds(_lines);
-      if (negativeProductIds.isNotEmpty) {
-        setState(() {
-          _negativeProductIds
-            ..clear()
-            ..addAll(negativeProductIds);
-        });
-        final proceed = await _confirmNegativeStock(negativeProductIds);
-        if (proceed != true) return;
-      } else {
-        setState(_negativeProductIds.clear);
-      }
-    }
+    if (_saving) return;
     setState(() => _saving = true);
     try {
       if (_isSell) {
+        final negativeProductIds = await widget.repository
+            .negativeStockProductIds(_lines);
+        if (negativeProductIds.isNotEmpty) {
+          setState(() {
+            _negativeProductIds
+              ..clear()
+              ..addAll(negativeProductIds);
+          });
+          final proceed = await _confirmNegativeStock(negativeProductIds);
+          if (proceed != true) return;
+        } else {
+          setState(_negativeProductIds.clear);
+        }
+      }
+      if (_isSell) {
         await widget.repository.recordSale(_lines);
-        _message('Sale saved');
+        _message(UiStrings.saleCompleted);
       } else {
         await widget.repository.recordPurchase(_lines);
-        _message('Purchase saved');
+        _message(UiStrings.inventoryUpdated);
       }
       setState(() {
         _lines.clear();
@@ -312,59 +380,64 @@ class _TransactionScreenState extends State<TransactionScreen> {
     );
   }
 
-  Future<void> _showHistory() async {
-    final kind = _isSell
-        ? TransactionHistoryKind.sale
-        : TransactionHistoryKind.purchase;
-    final history = await widget.repository.transactionHistory(kind);
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(_isSell ? 'Sale History' : 'Buy History'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: history.isEmpty
-              ? const Text('No previous transactions')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: history.length,
-                  itemBuilder: (context, index) {
-                    final entry = history[index];
-                    return ListTile(
-                      title: Text(formatMoney(entry.totalMinor)),
-                      subtitle: Text(
-                        '${_timestamp(entry.occurredAt)}\n'
-                        '${_historyLineSummary(entry)}',
-                      ),
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _historyLineSummary(TransactionHistoryEntry entry) {
-    if (entry.lines.isEmpty) return 'No line details';
-    return entry.lines
-        .map((line) => '${line.productName} x${line.quantity.g}')
-        .join(', ');
-  }
-
-  String _timestamp(DateTime dateTime) {
-    return dateTime.toLocal().toString().split('.').first;
-  }
-
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
+}
+
+Future<void> showTransactionHistoryDialog({
+  required BuildContext context,
+  required DekonRepository repository,
+  required TransactionMode mode,
+}) async {
+  final isSell = mode == TransactionMode.sell;
+  final kind = isSell
+      ? TransactionHistoryKind.sale
+      : TransactionHistoryKind.purchase;
+  final history = await repository.transactionHistory(kind);
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(isSell ? UiStrings.saleHistory : UiStrings.restockHistory),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: history.isEmpty
+            ? const Text('No previous transactions')
+            : ListView.builder(
+                shrinkWrap: true,
+                itemCount: history.length,
+                itemBuilder: (context, index) {
+                  final entry = history[index];
+                  return ListTile(
+                    title: Text(formatMoney(entry.totalMinor)),
+                    subtitle: Text(
+                      '${_timestamp(entry.occurredAt)}\n'
+                      '${_historyLineSummary(entry)}',
+                    ),
+                  );
+                },
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
+String _historyLineSummary(TransactionHistoryEntry entry) {
+  if (entry.lines.isEmpty) return 'No line details';
+  return entry.lines
+      .map((line) => '${line.productName} x${line.quantity.g}')
+      .join(', ');
+}
+
+String _timestamp(DateTime dateTime) {
+  return dateTime.toLocal().toString().split('.').first;
 }
 
 extension on double {

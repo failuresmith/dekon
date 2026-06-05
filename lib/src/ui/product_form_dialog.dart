@@ -192,7 +192,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete product?'),
         content: const Text(
-          'This hides the item from Buy and Sell while keeping its history for reports.',
+          'This hides the item from Restock and Sell while keeping its history for reports.',
         ),
         actions: [
           TextButton(

@@ -78,11 +78,55 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sell'), findsWidgets);
-    expect(find.text('Buy'), findsOneWidget);
+    expect(find.text('Restock'), findsOneWidget);
+    expect(find.text('Buy'), findsNothing);
     expect(find.text('Add'), findsNothing);
     expect(find.text('Inventory'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
+    expect(find.byKey(const Key('sell-history')), findsOneWidget);
+    expect(find.byKey(const Key('restock-history')), findsNothing);
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
+    expect(find.byKey(const Key('sell-empty-title')), findsOneWidget);
+    expect(find.byKey(const Key('sell-empty-help')), findsOneWidget);
+    expect(_filledButton(find.byKey(const Key('finish-sale'))).onPressed, null);
+
+    await tester.tap(find.text('Restock'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sell-history')), findsNothing);
+    expect(find.byKey(const Key('restock-history')), findsOneWidget);
+    expect(find.byKey(const Key('restock-empty-title')), findsOneWidget);
+    expect(find.byKey(const Key('restock-empty-help')), findsOneWidget);
+    expect(
+      _filledButton(find.byKey(const Key('finish-purchase'))).onPressed,
+      null,
+    );
+
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sell-history')), findsNothing);
+    expect(find.byKey(const Key('restock-history')), findsNothing);
+  });
+
+  testWidgets('root tab state is preserved while switching screens', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'STATE-1');
+
+    await tester.tap(find.text('Reports'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sell'));
+    await tester.pumpAndSettle();
+
+    final barcodeField = tester.widget<TextField>(
+      find.byKey(const Key('barcode-entry')),
+    );
+    expect(barcodeField.controller?.text, 'STATE-1');
   });
 
   testWidgets('main shell shows green indicator for connected cashier', (
@@ -133,7 +177,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sell'), findsWidgets);
-    expect(find.text('Buy'), findsOneWidget);
+    expect(find.text('Restock'), findsOneWidget);
     expect(find.text('Inventory'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.byKey(const Key('cashier-sync-indicator')), findsOneWidget);
@@ -163,10 +207,12 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'ABC-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'ABC-1');
+    await tester.pumpAndSettle();
+    expect(find.text('This barcode is not in your inventory.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Beans');
     await tester.enterText(find.byKey(const Key('product-sale-price')), '2.50');
@@ -194,12 +240,8 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('lookup-product')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('product-search-input')),
-      'tea',
-    );
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'tea');
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
 
     expect(find.text('Green Tea'), findsOneWidget);
@@ -211,19 +253,18 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'MISS-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'MISS-1');
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Product not found. Buy it into inventory first.'),
+      find.text('Product not found. Restock it into inventory first.'),
       findsOneWidget,
     );
     expect(find.byKey(const Key('product-name')), findsNothing);
     expect(await repository.products(), isEmpty);
   });
 
-  testWidgets('Buy quantity count supports numeric replacement', (
+  testWidgets('Restock quantity count supports numeric replacement', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
@@ -236,10 +277,9 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'BULK-RICE');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'BULK-RICE');
     await tester.pumpAndSettle();
 
     final quantityFinder = find.byKey(const Key('line-quantity-0'));
@@ -273,17 +313,18 @@ void main() {
     expect(find.text('Stock 125'), findsOneWidget);
   });
 
-  testWidgets('Buy and Sell are the Inventory stock mutation path', (
+  testWidgets('Restock and Sell are the Inventory stock mutation path', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'DATE-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'DATE-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Dates');
     await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
@@ -311,8 +352,7 @@ void main() {
 
     await tester.tap(find.text('Sell'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'DATE-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'DATE-1');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('finish-sale')));
     await tester.pumpAndSettle();
@@ -375,7 +415,9 @@ void main() {
     expect(find.text('Scan Tea'), findsOneWidget);
   });
 
-  testWidgets('scanned known barcode adds item to Buy flow', (tester) async {
+  testWidgets('scanned known barcode adds item to Restock flow', (
+    tester,
+  ) async {
     final repository = await createTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Sugar',
@@ -388,7 +430,7 @@ void main() {
       testApp(repository, scanBarcode: (_) async => 'SUGAR-1'),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scan-barcode')));
     await tester.pumpAndSettle();
@@ -423,8 +465,7 @@ void main() {
       find.text('Scan unavailable. Enter barcode manually.'),
       findsOneWidget,
     );
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'SALT-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'SALT-1');
     await tester.pumpAndSettle();
 
     expect(find.text('Salt'), findsOneWidget);
@@ -439,11 +480,14 @@ void main() {
       testApp(repository, scanBarcode: (_) async => 'SCAN-1'),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scan-barcode')));
     await tester.pumpAndSettle();
 
+    expect(find.text('This barcode is not in your inventory.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('create-product-from-lookup')));
+    await tester.pumpAndSettle();
     final barcodeField = tester.widget<TextFormField>(
       find.byKey(const Key('product-barcode')),
     );
@@ -457,15 +501,18 @@ void main() {
     expect(find.text('Beans'), findsOneWidget);
   });
 
-  testWidgets('Buy persists purchase and Reports show totals', (tester) async {
+  testWidgets('Restock persists purchase and Reports show totals', (
+    tester,
+  ) async {
     final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Buy'));
+    await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'FLOUR-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'FLOUR-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Flour');
     await tester.enterText(find.byKey(const Key('product-cost')), '1.50');
@@ -474,7 +521,7 @@ void main() {
     await tester.tap(find.byKey(const Key('finish-purchase')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Purchase saved'), findsOneWidget);
+    expect(find.text('Inventory updated'), findsOneWidget);
     await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
@@ -692,17 +739,16 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'TEA-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'TEA-1');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('finish-sale')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sale saved'), findsOneWidget);
+    expect(find.text('Sale completed'), findsOneWidget);
     await tester.tap(find.byKey(const Key('sell-history')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sale History'), findsOneWidget);
+    expect(find.text('Sale history'), findsOneWidget);
     expect(find.textContaining('Tea x1'), findsOneWidget);
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
@@ -724,19 +770,33 @@ void main() {
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('barcode-entry')), 'RICE-1');
-    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await _submitLookup(tester, 'RICE-1');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('finish-sale')));
     await tester.pumpAndSettle();
 
     expect(find.text('Negative stock warning'), findsOneWidget);
-    expect(find.text('Not enough stock: 0 available.'), findsOneWidget);
+    expect(
+      find.textContaining('Only 0 is available in stock.'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('confirm-negative-stock')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sale saved'), findsOneWidget);
+    expect(find.text('Sale completed'), findsOneWidget);
   });
+}
+
+FilledButton _filledButton(Finder finder) {
+  return finder.evaluate().single.widget as FilledButton;
+}
+
+Future<void> _submitLookup(WidgetTester tester, String query) async {
+  final field = find.byKey(const Key('barcode-entry'));
+  await tester.tap(field);
+  await tester.enterText(field, query);
+  await tester.testTextInput.receiveAction(TextInputAction.search);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {

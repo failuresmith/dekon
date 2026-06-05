@@ -59,8 +59,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 12),
             _syncPanel(settings, role, locked),
             const SizedBox(height: 12),
             _backupPanel(),
