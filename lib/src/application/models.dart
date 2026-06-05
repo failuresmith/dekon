@@ -98,6 +98,19 @@ class TransactionHistoryEntry {
   final List<TransactionHistoryLine> lines;
 }
 
+class ReportDateRange {
+  const ReportDateRange({
+    required this.startLocal,
+    required this.endLocalExclusive,
+  });
+
+  final DateTime startLocal;
+  final DateTime endLocalExclusive;
+
+  DateTime get startUtc => startLocal.toUtc();
+  DateTime get endUtcExclusive => endLocalExclusive.toUtc();
+}
+
 class StockReportRow {
   const StockReportRow({
     required this.productId,
@@ -112,20 +125,25 @@ class StockReportRow {
 
 class ReportSummary {
   const ReportSummary({
+    required this.range,
     required this.stockRows,
-    required this.dailySalesMinor,
-    required this.dailyPurchasesMinor,
+    required this.salesMinor,
+    required this.purchasesMinor,
     required this.grossMarginMinor,
     required this.lowStockRows,
     required this.unsyncedEventCount,
     required this.lastSyncAt,
   });
 
+  final ReportDateRange range;
   final List<StockReportRow> stockRows;
-  final int dailySalesMinor;
-  final int dailyPurchasesMinor;
+  final int salesMinor;
+  final int purchasesMinor;
   final int grossMarginMinor;
   final List<StockReportRow> lowStockRows;
   final int unsyncedEventCount;
   final DateTime? lastSyncAt;
+
+  int get dailySalesMinor => salesMinor;
+  int get dailyPurchasesMinor => purchasesMinor;
 }

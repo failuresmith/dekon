@@ -412,6 +412,73 @@ void main() {
     expect(find.textContaining('Stock 1'), findsOneWidget);
   });
 
+  testWidgets('Reports use summary tiles and drill-down modals', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final tea = await repository.createProduct(
+      name: 'Report Tea',
+      barcode: 'REPORT-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.createProduct(
+      name: 'Empty Soda',
+      barcode: 'EMPTY-SODA',
+      salePriceMinor: 250,
+      purchaseCostMinor: 100,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: tea, quantity: 3),
+    ]);
+    await repository.recordSale([
+      TransactionLineDraft(product: tea, quantity: 1),
+    ]);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reports'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('report-period-day')), findsOneWidget);
+    expect(find.byKey(const Key('report-period-week')), findsOneWidget);
+    expect(find.byKey(const Key('report-period-month')), findsOneWidget);
+    expect(find.byKey(const Key('report-period-custom')), findsOneWidget);
+    expect(find.text('Daily Sales'), findsOneWidget);
+    expect(find.text('4.00'), findsOneWidget);
+    expect(find.text('Low Stock'), findsOneWidget);
+    expect(find.text('Empty Soda'), findsNothing);
+    expect(find.textContaining('Unsynced events:'), findsOneWidget);
+    expect(find.textContaining('Last sync:'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('sync-status'))).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const Key('sales-report-metric'))).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('sales-report-metric')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Report Tea x1'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('low-stock-report-metric')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Empty Soda'), findsOneWidget);
+    expect(find.text('Qty 0'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('report-period-week')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sales'), findsOneWidget);
+    expect(find.text('Daily Sales'), findsNothing);
+  });
+
   testWidgets('Sell persists sale after stock check', (tester) async {
     final repository = await createTestRepository(onboarded: true);
     final product = await repository.createProduct(

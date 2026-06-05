@@ -322,13 +322,18 @@ class DekonRepository {
     );
   }
 
-  Future<ReportSummary> reportSummary() async {
+  Future<ReportSummary> reportSummary({ReportDateRange? range}) async {
+    final reportRange = range ?? _localDayRange(_now());
     final stockRows = await _stockRows();
     return ReportSummary(
+      range: reportRange,
       stockRows: stockRows,
-      dailySalesMinor: await _dailyTotal('sales_projection'),
-      dailyPurchasesMinor: await _dailyTotal('purchase_projection'),
-      grossMarginMinor: await _grossMarginEstimate(),
+      salesMinor: await _rangeTotal(TransactionHistoryKind.sale, reportRange),
+      purchasesMinor: await _rangeTotal(
+        TransactionHistoryKind.purchase,
+        reportRange,
+      ),
+      grossMarginMinor: await _grossMarginEstimate(reportRange),
       lowStockRows: stockRows.where((row) => row.quantity <= 0).toList(),
       unsyncedEventCount: await _eventStore.count(),
       lastSyncAt: await _lastSyncAt(),
@@ -337,16 +342,29 @@ class DekonRepository {
 
   Future<List<TransactionHistoryEntry>> transactionHistory(
     TransactionHistoryKind kind, {
-    int limit = 20,
+    ReportDateRange? range,
+    int? limit = 20,
   }) async {
-    final rows = await _db.query(
-      'events',
-      columns: ['entity_id', 'payload_json', 'created_at'],
-      where: 'type = ?',
-      whereArgs: [_transactionType(kind)],
-      orderBy: 'created_at DESC',
-      limit: limit.clamp(1, 100),
-    );
+    final source = _transactionSource(kind);
+    final where = ['e.type = ?', '${source.alias}.${source.statusColumn} = 0'];
+    final args = <Object?>[_transactionType(kind)];
+    if (range != null) {
+      where.add('${source.alias}.occurred_at >= ?');
+      where.add('${source.alias}.occurred_at < ?');
+      args
+        ..add(range.startUtc.toIso8601String())
+        ..add(range.endUtcExclusive.toIso8601String());
+    }
+    final sqlLimit = limit == null ? '' : 'LIMIT ${limit.clamp(1, 500)}';
+    final rows = await _db.rawQuery('''
+      SELECT e.entity_id, e.payload_json, e.created_at
+      FROM events e
+      JOIN ${source.table} ${source.alias}
+        ON ${source.alias}.${source.idColumn} = e.entity_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${source.alias}.occurred_at DESC, e.created_at DESC
+      $sqlLimit
+      ''', args);
     final entries = <TransactionHistoryEntry>[];
     for (final row in rows) {
       entries.add(await _historyFromRow(kind, row));
@@ -406,27 +424,51 @@ class DekonRepository {
     ];
   }
 
-  Future<int> _dailyTotal(String table) async {
-    final start = DateTime(_now().year, _now().month, _now().day).toUtc();
-    final end = start.add(const Duration(days: 1));
+  ReportDateRange _localDayRange(DateTime value) {
+    final start = DateTime(value.year, value.month, value.day);
+    return ReportDateRange(
+      startLocal: start,
+      endLocalExclusive: start.add(const Duration(days: 1)),
+    );
+  }
+
+  Future<int> _rangeTotal(
+    TransactionHistoryKind kind,
+    ReportDateRange range,
+  ) async {
+    final source = _transactionSource(kind);
     final rows = await _db.rawQuery(
       '''
       SELECT COALESCE(SUM(total_minor), 0) AS total
-      FROM $table
-      WHERE occurred_at >= ? AND occurred_at < ?
+      FROM ${source.table}
+      WHERE occurred_at >= ?
+        AND occurred_at < ?
+        AND ${source.statusColumn} = 0
       ''',
-      [start.toIso8601String(), end.toIso8601String()],
+      [
+        range.startUtc.toIso8601String(),
+        range.endUtcExclusive.toIso8601String(),
+      ],
     );
     return rows.single['total'] as int;
   }
 
-  Future<int> _grossMarginEstimate() async {
-    final start = DateTime(_now().year, _now().month, _now().day).toUtc();
-    final rows = await _db.query(
-      'events',
-      columns: ['payload_json'],
-      where: 'type = ? AND created_at >= ?',
-      whereArgs: [EventTypes.inventorySaleRecorded, start.toIso8601String()],
+  Future<int> _grossMarginEstimate(ReportDateRange range) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT e.payload_json
+      FROM events e
+      JOIN sales_projection s ON s.sale_id = e.entity_id
+      WHERE e.type = ?
+        AND s.voided = 0
+        AND s.occurred_at >= ?
+        AND s.occurred_at < ?
+      ''',
+      [
+        EventTypes.inventorySaleRecorded,
+        range.startUtc.toIso8601String(),
+        range.endUtcExclusive.toIso8601String(),
+      ],
     );
     var margin = 0;
     for (final row in rows) {
@@ -515,6 +557,23 @@ class DekonRepository {
     };
   }
 
+  _TransactionSource _transactionSource(TransactionHistoryKind kind) {
+    return switch (kind) {
+      TransactionHistoryKind.sale => const _TransactionSource(
+        table: 'sales_projection',
+        alias: 's',
+        idColumn: 'sale_id',
+        statusColumn: 'voided',
+      ),
+      TransactionHistoryKind.purchase => const _TransactionSource(
+        table: 'purchase_projection',
+        alias: 'p',
+        idColumn: 'purchase_id',
+        statusColumn: 'corrected',
+      ),
+    };
+  }
+
   DateTime? _optionalDateTime(Map<String, Object?> payload, String key) {
     final value = payload[key];
     if (value is String) return DateTime.tryParse(value);
@@ -565,4 +624,18 @@ class DekonRepository {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
+}
+
+class _TransactionSource {
+  const _TransactionSource({
+    required this.table,
+    required this.alias,
+    required this.idColumn,
+    required this.statusColumn,
+  });
+
+  final String table;
+  final String alias;
+  final String idColumn;
+  final String statusColumn;
 }
