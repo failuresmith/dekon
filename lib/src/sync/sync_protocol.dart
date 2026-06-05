@@ -105,6 +105,11 @@ class PostEventsResult {
   final List<EventRejection> rejected;
 
   bool get hasRejected => rejected.isNotEmpty;
+  bool get hasEventOutcomes =>
+      accepted.isNotEmpty ||
+      duplicate.isNotEmpty ||
+      unsupported.isNotEmpty ||
+      rejected.isNotEmpty;
 
   PostEventsResult withRejected(List<EventRejection> extra) {
     return PostEventsResult(

@@ -145,7 +145,9 @@ class SyncStore {
     final unsupported = <String>[];
     final rejected = <EventRejection>[];
 
-    for (final event in events) {
+    final orderedEvents = events.toList(growable: false)
+      ..sort(_compareEventCreation);
+    for (final event in orderedEvents) {
       try {
         final status = await _db.transaction((txn) async {
           final write = await _eventStore.appendInTransaction(txn, event);
@@ -175,6 +177,14 @@ class SyncStore {
       unsupported: unsupported,
       rejected: rejected,
     );
+  }
+
+  int _compareEventCreation(EventEnvelope a, EventEnvelope b) {
+    final created = a.createdAt.compareTo(b.createdAt);
+    if (created != 0) return created;
+    final hlc = a.hlc.compareTo(b.hlc);
+    if (hlc != 0) return hlc;
+    return a.eventId.compareTo(b.eventId);
   }
 
   Future<SyncState> state() async {

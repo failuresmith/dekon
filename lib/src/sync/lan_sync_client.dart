@@ -46,6 +46,7 @@ class LanSyncClient {
     );
     final peer = await store.trustedPeer(payload.serverDeviceId);
     if (peer == null) throw SyncClientException('Paired peer was not stored.');
+    await syncWithPeer(peer.deviceId);
     return peer;
   }
 
@@ -87,7 +88,21 @@ class LanSyncClient {
     );
     final peer = await store.trustedPeer(deviceInfo.deviceId);
     if (peer == null) throw SyncClientException('Paired peer was not stored.');
+    await syncWithPeer(peer.deviceId);
     return peer;
+  }
+
+  Future<void> syncWithPeer(String peerDeviceId) async {
+    while (true) {
+      final result = await pushToPeer(peerDeviceId);
+      _throwIfRejected('Push', result);
+      if (!result.hasEventOutcomes) break;
+    }
+    while (true) {
+      final result = await pullFromPeer(peerDeviceId);
+      _throwIfRejected('Pull', result);
+      if (!result.hasEventOutcomes) break;
+    }
   }
 
   Future<PostEventsResult> pullFromPeer(String peerDeviceId) async {
@@ -116,8 +131,10 @@ class LanSyncClient {
     ];
     final result = await store.importEvents(events);
     final nextCursor = SyncCursor.parse(decoded['next_cursor'] as String?);
-    await store.updatePullCursor(peer.deviceId, nextCursor);
-    await store.markPeerSuccess(peer.deviceId);
+    if (!result.hasRejected) {
+      await store.updatePullCursor(peer.deviceId, nextCursor);
+      await store.markPeerSuccess(peer.deviceId);
+    }
     return result;
   }
 
@@ -157,9 +174,18 @@ class LanSyncClient {
         peer.deviceId,
         SyncCursor.fromEvent(events.last),
       );
+      await store.markPeerSuccess(peer.deviceId);
     }
-    await store.markPeerSuccess(peer.deviceId);
     return result;
+  }
+
+  void _throwIfRejected(String operation, PostEventsResult result) {
+    if (!result.hasRejected) return;
+    final first = result.rejected.first;
+    throw SyncClientException(
+      '$operation rejected ${result.rejected.length} event(s). '
+      'First rejected event: ${first.eventId}.',
+    );
   }
 
   Future<TrustedPeer> _requiredPeer(String peerDeviceId) async {

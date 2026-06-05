@@ -85,20 +85,18 @@ void main() {
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
   });
 
-  testWidgets('cashier shell hides Inventory and scopes Reports to device', (
+  testWidgets('cashier shell shows Inventory and scopes Reports to device', (
     tester,
   ) async {
-    final repository = await createTestRepository(
-      onboarded: true,
-      role: DeviceRole.cashierDevice,
-    );
+    final repository = await createTestRepository();
+    await repository.lockDeviceRole(DeviceRole.cashierDevice);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
 
     expect(find.text('Sell'), findsWidgets);
     expect(find.text('Buy'), findsOneWidget);
-    expect(find.text('Inventory'), findsNothing);
+    expect(find.text('Inventory'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
 
     await tester.tap(find.text('Reports'));

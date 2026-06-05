@@ -71,13 +71,13 @@ class _AppShellState extends State<AppShell> {
             onCompleted: _reloadRoleSettings,
           );
         }
-        return _appScaffold(settings.role);
+        return _appScaffold(settings);
       },
     );
   }
 
-  Widget _appScaffold(DeviceRole role) {
-    final items = _navigationItems(role);
+  Widget _appScaffold(DeviceRoleSettings settings) {
+    final items = _navigationItems(settings);
     final index = _index >= items.length ? items.length - 1 : _index;
     return Scaffold(
       appBar: AppBar(
@@ -100,7 +100,8 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  List<_NavigationItem> _navigationItems(DeviceRole role) {
+  List<_NavigationItem> _navigationItems(DeviceRoleSettings settings) {
+    final role = settings.role;
     final items = [
       _NavigationItem(
         screen: TransactionScreen(
@@ -125,7 +126,7 @@ class _AppShellState extends State<AppShell> {
         ),
       ),
     ];
-    if (role == DeviceRole.mainDevice) {
+    if (role == DeviceRole.mainDevice || settings.locked) {
       items.add(
         _NavigationItem(
           screen: InventoryScreen(repository: widget.repository),
