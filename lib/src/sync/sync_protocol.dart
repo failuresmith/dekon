@@ -152,6 +152,26 @@ class SyncPairingPayload {
   final String pairingSecret;
   final DateTime expiresAt;
 
+  factory SyncPairingPayload.fromQrJson(String contents) {
+    final decoded = jsonDecode(contents);
+    final map = _stringMap(decoded, 'pairing payload');
+    final version = _intField(map, 'protocol_version');
+    if (version != syncProtocolVersion) {
+      throw FormatException('Unsupported sync protocol version: $version.');
+    }
+    final baseUrl = _stringField(map, 'base_url');
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      throw const FormatException('base_url must be a valid URL.');
+    }
+    return SyncPairingPayload(
+      baseUrl: baseUrl,
+      serverDeviceId: _stringField(map, 'server_device_id'),
+      pairingSecret: _stringField(map, 'pairing_secret'),
+      expiresAt: DateTime.parse(_stringField(map, 'expires_at')),
+    );
+  }
+
   Map<String, Object?> toJson() => {
     'protocol_version': syncProtocolVersion,
     'base_url': baseUrl,

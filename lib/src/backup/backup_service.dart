@@ -84,9 +84,15 @@ class BackupService implements BackupRunner {
         eventCount: written,
         exportedAt: exportedAt,
       );
+    } on FileSystemException {
+      await sink?.close();
+      await _deleteTempFile(temp);
+      throw BackupException(
+        'Storage access was denied. Choose a backup folder and try again.',
+      );
     } on Object catch (error) {
       await sink?.close();
-      if (await temp.exists()) await temp.delete();
+      await _deleteTempFile(temp);
       if (error is BackupException) rethrow;
       throw BackupException('Backup could not be saved.');
     }
@@ -223,6 +229,14 @@ class BackupService implements BackupRunner {
         .split('.')
         .first;
     return 'dekon-backup-$stamp.json';
+  }
+
+  Future<void> _deleteTempFile(File temp) async {
+    try {
+      if (await temp.exists()) await temp.delete();
+    } on FileSystemException {
+      // Keep the original backup failure visible to the user.
+    }
   }
 
   String _string(Map<String, Object?> map, String key) {

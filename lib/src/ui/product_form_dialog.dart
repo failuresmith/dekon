@@ -93,7 +93,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               ),
               TextFormField(
                 controller: _sku,
-                decoration: const InputDecoration(labelText: 'SKU'),
+                decoration: const InputDecoration(
+                  labelText: 'SKU - Internal Product Code',
+                ),
               ),
               TextFormField(
                 key: const Key('product-sale-price'),

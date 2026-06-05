@@ -15,7 +15,7 @@ class CoreMigration {
 }
 
 abstract final class CoreMigrations {
-  static const currentVersion = 3;
+  static const currentVersion = 4;
 
   static final List<CoreMigration> migrations = [
     CoreMigration(
@@ -33,6 +33,7 @@ abstract final class CoreMigrations {
       name: 'lan_sync_peer_secret',
       apply: _lanSyncPeerSecret,
     ),
+    CoreMigration(version: 4, name: 'app_settings', apply: _appSettings),
   ];
 
   static Future<void> apply(
@@ -234,5 +235,15 @@ abstract final class CoreMigrations {
 
   static Future<void> _lanSyncPeerSecret(DatabaseExecutor db) async {
     await db.execute('ALTER TABLE sync_peers ADD COLUMN shared_secret TEXT');
+  }
+
+  static Future<void> _appSettings(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
   }
 }

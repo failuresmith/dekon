@@ -22,6 +22,29 @@ class ProductSummary {
   final double quantity;
 }
 
+enum DeviceRole {
+  mainDevice('main_device'),
+  cashierDevice('cashier_device');
+
+  const DeviceRole(this.storageValue);
+
+  final String storageValue;
+
+  static DeviceRole fromStorage(String? value) {
+    return DeviceRole.values.firstWhere(
+      (role) => role.storageValue == value,
+      orElse: () => DeviceRole.mainDevice,
+    );
+  }
+}
+
+class DeviceRoleSettings {
+  const DeviceRoleSettings({required this.role, required this.locked});
+
+  final DeviceRole role;
+  final bool locked;
+}
+
 class TransactionLineDraft {
   TransactionLineDraft({
     required this.product,
@@ -38,6 +61,36 @@ class TransactionLineDraft {
 
   int get saleTotalMinor => (quantity * unitPriceMinor).round();
   int get purchaseTotalMinor => (quantity * unitCostMinor).round();
+}
+
+enum TransactionHistoryKind { sale, purchase }
+
+class TransactionHistoryLine {
+  const TransactionHistoryLine({
+    required this.productName,
+    required this.quantity,
+    required this.lineTotalMinor,
+  });
+
+  final String productName;
+  final double quantity;
+  final int lineTotalMinor;
+}
+
+class TransactionHistoryEntry {
+  const TransactionHistoryEntry({
+    required this.id,
+    required this.kind,
+    required this.occurredAt,
+    required this.totalMinor,
+    required this.lines,
+  });
+
+  final String id;
+  final TransactionHistoryKind kind;
+  final DateTime occurredAt;
+  final int totalMinor;
+  final List<TransactionHistoryLine> lines;
 }
 
 class StockReportRow {

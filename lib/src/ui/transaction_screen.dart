@@ -23,52 +23,51 @@ class TransactionScreen extends StatefulWidget {
 }
 
 class _TransactionScreenState extends State<TransactionScreen> {
-  final _quantityController = TextEditingController(text: '1');
   final _lines = <TransactionLineDraft>[];
+  final _negativeProductIds = <String>{};
   var _saving = false;
 
   bool get _isSell => widget.mode == TransactionMode.sell;
   String get _title => _isSell ? 'Sell' : 'Buy';
-
-  @override
-  void dispose() {
-    _quantityController.dispose();
-    super.dispose();
-  }
+  int get _totalMinor => _lines.fold(
+    0,
+    (sum, line) =>
+        sum + (_isSell ? line.saleTotalMinor : line.purchaseTotalMinor),
+  );
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(_title, style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 12),
         Row(
           children: [
-            SizedBox(
-              width: 96,
-              child: TextField(
-                key: Key('${_title.toLowerCase()}-quantity'),
-                controller: _quantityController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Qty'),
+            Expanded(
+              child: Text(
+                _title,
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ProductLookupField(
-                repository: widget.repository,
-                onProductSelected: _addProduct,
-                scanBarcode: widget.scanBarcode,
-              ),
+            IconButton(
+              key: Key(_isSell ? 'sell-history' : 'buy-history'),
+              tooltip: 'History',
+              onPressed: _showHistory,
+              icon: const Icon(Icons.history),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        ProductLookupField(
+          repository: widget.repository,
+          onProductSelected: _addProduct,
+          scanBarcode: widget.scanBarcode,
         ),
         const SizedBox(height: 16),
         if (_lines.isEmpty)
           const Text('No items')
         else
           ..._lines.indexed.map((entry) => _lineTile(entry.$1, entry.$2)),
+        if (_lines.isNotEmpty) ...[const SizedBox(height: 12), _totalPanel()],
         const SizedBox(height: 16),
         FilledButton.icon(
           key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
@@ -82,34 +81,177 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   Widget _lineTile(int index, TransactionLineDraft line) {
     final amount = _isSell ? line.saleTotalMinor : line.purchaseTotalMinor;
-    return ListTile(
-      dense: true,
-      title: Text(line.product.name),
-      subtitle: Text('Qty ${line.quantity.g} - ${formatMoney(amount)}'),
-      trailing: IconButton(
-        tooltip: 'Remove item',
-        onPressed: () => setState(() => _lines.removeAt(index)),
-        icon: const Icon(Icons.delete),
+    final isNegative = _negativeProductIds.contains(line.product.productId);
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DecoratedBox(
+        key: Key('transaction-line-${line.product.productId}'),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: isNegative ? colors.error : Theme.of(context).dividerColor,
+            width: isNegative ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          line.product.name,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(formatMoney(amount)),
+                      ],
+                    ),
+                  ),
+                  _quantityControls(index, line),
+                  IconButton(
+                    tooltip: 'Remove item',
+                    onPressed: () => _removeLine(index),
+                    icon: const Icon(Icons.delete),
+                  ),
+                ],
+              ),
+              if (isNegative)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Not enough stock: ${line.product.quantity.g} available.',
+                    key: Key('negative-warning-${line.product.productId}'),
+                    style: TextStyle(color: colors.error),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quantityControls(int index, TransactionLineDraft line) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: Key('decrease-line-$index'),
+          tooltip: 'Decrease quantity',
+          onPressed: line.quantity <= 1
+              ? null
+              : () => _changeQuantity(index, -1),
+          icon: const Icon(Icons.remove_circle_outline),
+        ),
+        SizedBox(
+          width: 36,
+          child: Text(
+            line.quantity.g,
+            key: Key('line-quantity-$index'),
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        IconButton(
+          key: Key('increase-line-$index'),
+          tooltip: 'Increase quantity',
+          onPressed: () => _changeQuantity(index, 1),
+          icon: const Icon(Icons.add_circle_outline),
+        ),
+      ],
+    );
+  }
+
+  Widget _totalPanel() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _isSell ? 'Total sale amount' : 'Total purchase amount',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            Text(
+              formatMoney(_totalMinor),
+              key: Key(_isSell ? 'sale-total' : 'purchase-total'),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   void _addProduct(ProductSummary product) {
-    final quantity = double.tryParse(_quantityController.text.trim()) ?? 0;
-    if (quantity <= 0) {
-      _message('Quantity must be positive');
-      return;
-    }
     setState(() {
-      _lines.add(TransactionLineDraft(product: product, quantity: quantity));
-      _quantityController.text = '1';
+      _negativeProductIds.clear();
+      final index = _lines.indexWhere(
+        (line) => line.product.productId == product.productId,
+      );
+      if (index == -1) {
+        _lines.add(TransactionLineDraft(product: product, quantity: 1));
+        return;
+      }
+      final current = _lines[index];
+      _lines[index] = TransactionLineDraft(
+        product: current.product,
+        quantity: current.quantity + 1,
+        unitPriceMinor: current.unitPriceMinor,
+        unitCostMinor: current.unitCostMinor,
+      );
+    });
+  }
+
+  void _changeQuantity(int index, double delta) {
+    final current = _lines[index];
+    final nextQuantity = current.quantity + delta;
+    if (nextQuantity <= 0) return;
+    setState(() {
+      _negativeProductIds.clear();
+      _lines[index] = TransactionLineDraft(
+        product: current.product,
+        quantity: nextQuantity,
+        unitPriceMinor: current.unitPriceMinor,
+        unitCostMinor: current.unitCostMinor,
+      );
+    });
+  }
+
+  void _removeLine(int index) {
+    setState(() {
+      _negativeProductIds.clear();
+      _lines.removeAt(index);
     });
   }
 
   Future<void> _finish() async {
-    if (_isSell && await widget.repository.saleWouldMakeNegative(_lines)) {
-      final proceed = await _confirmNegativeStock();
-      if (proceed != true) return;
+    if (_isSell) {
+      final negativeProductIds = await widget.repository
+          .negativeStockProductIds(_lines);
+      if (negativeProductIds.isNotEmpty) {
+        setState(() {
+          _negativeProductIds
+            ..clear()
+            ..addAll(negativeProductIds);
+        });
+        final proceed = await _confirmNegativeStock(negativeProductIds);
+        if (proceed != true) return;
+      } else {
+        setState(_negativeProductIds.clear);
+      }
     }
     setState(() => _saving = true);
     try {
@@ -120,7 +262,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
         await widget.repository.recordPurchase(_lines);
         _message('Purchase saved');
       }
-      setState(_lines.clear);
+      setState(() {
+        _lines.clear();
+        _negativeProductIds.clear();
+      });
     } catch (error) {
       _message('Save failed: $error');
     } finally {
@@ -128,13 +273,18 @@ class _TransactionScreenState extends State<TransactionScreen> {
     }
   }
 
-  Future<bool?> _confirmNegativeStock() {
+  Future<bool?> _confirmNegativeStock(Set<String> productIds) {
+    final names = _lines
+        .where((line) => productIds.contains(line.product.productId))
+        .map((line) => line.product.name)
+        .join(', ');
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Negative stock warning'),
-        content: const Text(
-          'This sale will make one or more products negative.',
+        content: Text(
+          'This sale will make stock negative for: $names.\n'
+          'The affected row is highlighted.',
         ),
         actions: [
           TextButton(
@@ -149,6 +299,56 @@ class _TransactionScreenState extends State<TransactionScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showHistory() async {
+    final kind = _isSell
+        ? TransactionHistoryKind.sale
+        : TransactionHistoryKind.purchase;
+    final history = await widget.repository.transactionHistory(kind);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_isSell ? 'Sale History' : 'Buy History'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: history.isEmpty
+              ? const Text('No previous transactions')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: history.length,
+                  itemBuilder: (context, index) {
+                    final entry = history[index];
+                    return ListTile(
+                      title: Text(formatMoney(entry.totalMinor)),
+                      subtitle: Text(
+                        '${_timestamp(entry.occurredAt)}\n'
+                        '${_historyLineSummary(entry)}',
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _historyLineSummary(TransactionHistoryEntry entry) {
+    if (entry.lines.isEmpty) return 'No line details';
+    return entry.lines
+        .map((line) => '${line.productName} x${line.quantity.g}')
+        .join(', ');
+  }
+
+  String _timestamp(DateTime dateTime) {
+    return dateTime.toLocal().toString().split('.').first;
   }
 
   void _message(String text) {

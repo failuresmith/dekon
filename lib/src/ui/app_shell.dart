@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'add_product_screen.dart';
 import 'barcode_scanner_dialog.dart';
+import 'inventory_screen.dart';
 import 'reports_screen.dart';
+import 'settings_screen.dart';
 import 'transaction_screen.dart';
 
 class AppShell extends StatefulWidget {
@@ -44,10 +47,22 @@ class _AppShellState extends State<AppShell> {
         mode: TransactionMode.buy,
         scanBarcode: widget.scanBarcode,
       ),
-      ReportsScreen(repository: widget.repository, syncServer: _syncServer),
+      AddProductScreen(repository: widget.repository),
+      InventoryScreen(repository: widget.repository),
+      ReportsScreen(repository: widget.repository),
     ];
     return Scaffold(
-      appBar: AppBar(title: const Text('Dekon')),
+      appBar: AppBar(
+        title: const Text('Dekon'),
+        actions: [
+          IconButton(
+            key: const Key('open-settings'),
+            tooltip: 'Settings',
+            onPressed: _openSettings,
+            icon: const Icon(Icons.settings),
+          ),
+        ],
+      ),
       body: screens[_index],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
@@ -55,8 +70,28 @@ class _AppShellState extends State<AppShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.point_of_sale), label: 'Sell'),
           NavigationDestination(icon: Icon(Icons.add_business), label: 'Buy'),
+          NavigationDestination(icon: Icon(Icons.add_box), label: 'Add'),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2),
+            label: 'Inventory',
+          ),
           NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Reports'),
         ],
+      ),
+    );
+  }
+
+  Future<void> _openSettings() {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Settings')),
+          body: SettingsScreen(
+            repository: widget.repository,
+            syncServer: _syncServer,
+            scanBarcode: widget.scanBarcode,
+          ),
+        ),
       ),
     );
   }

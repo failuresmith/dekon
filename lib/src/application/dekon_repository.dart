@@ -60,6 +60,50 @@ class DekonRepository {
     return BackupService(database: _db);
   }
 
+  Future<DeviceRole> deviceRole() async {
+    return (await deviceRoleSettings()).role;
+  }
+
+  Future<DeviceRoleSettings> deviceRoleSettings() async {
+    final rows = await _db.query(
+      'app_settings',
+      columns: ['key', 'value'],
+      where: 'key IN (?, ?)',
+      whereArgs: const ['device_role', 'device_role_locked'],
+    );
+    final values = {
+      for (final row in rows) row['key'] as String: row['value'] as String,
+    };
+    return DeviceRoleSettings(
+      role: DeviceRole.fromStorage(values['device_role']),
+      locked: values['device_role_locked'] == 'true',
+    );
+  }
+
+  Future<void> setDeviceRole(DeviceRole role) async {
+    final settings = await deviceRoleSettings();
+    if (settings.locked && settings.role != role) {
+      throw StateError('Device role is locked after pairing.');
+    }
+    await _setAppSetting('device_role', role.storageValue);
+  }
+
+  Future<void> lockDeviceRole(DeviceRole role) async {
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      await txn.insert('app_settings', {
+        'key': 'device_role',
+        'value': role.storageValue,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': 'device_role_locked',
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
   Future<ProductSummary> createProduct({
     required String name,
     String? barcode,
@@ -134,6 +178,23 @@ class DekonRepository {
     return _productFromRow(rows.single);
   }
 
+  Future<List<ProductSummary>> productsMatchingName(String query) async {
+    final value = query.trim().toLowerCase();
+    if (value.isEmpty) return const [];
+    final rows = await _db.rawQuery(
+      '''
+      SELECT p.*, COALESCE(i.quantity, 0) AS quantity
+      FROM products_projection p
+      LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      WHERE p.active = 1 AND LOWER(p.name) LIKE ? ESCAPE '\\'
+      ORDER BY p.name ASC
+      LIMIT 20
+      ''',
+      ['%${_escapeLike(value)}%'],
+    );
+    return rows.map(_productFromRow).toList(growable: false);
+  }
+
   Future<ProductSummary?> productById(String productId) async {
     final rows = await _db.rawQuery(
       '''
@@ -159,17 +220,24 @@ class DekonRepository {
     return rows.map(_productFromRow).toList(growable: false);
   }
 
-  Future<bool> saleWouldMakeNegative(List<TransactionLineDraft> lines) async {
+  Future<Set<String>> negativeStockProductIds(
+    List<TransactionLineDraft> lines,
+  ) async {
     final stock = <String, double>{};
     for (final line in lines) {
       stock[line.product.productId] = await _stockFor(line.product.productId);
     }
+    final negativeProductIds = <String>{};
     for (final line in lines) {
       final next = (stock[line.product.productId] ?? 0) - line.quantity;
-      if (next < 0) return true;
+      if (next < 0) negativeProductIds.add(line.product.productId);
       stock[line.product.productId] = next;
     }
-    return false;
+    return negativeProductIds;
+  }
+
+  Future<bool> saleWouldMakeNegative(List<TransactionLineDraft> lines) async {
+    return (await negativeStockProductIds(lines)).isNotEmpty;
   }
 
   Future<void> recordSale(List<TransactionLineDraft> lines) async {
@@ -224,6 +292,28 @@ class DekonRepository {
     );
   }
 
+  Future<void> recordInventoryAdjustment({
+    required ProductSummary product,
+    required double quantityDelta,
+  }) async {
+    if (!quantityDelta.isFinite || quantityDelta == 0) {
+      throw StateError('Quantity adjustment must be non-zero.');
+    }
+    await _commit(
+      _event(
+        type: EventTypes.inventoryAdjustmentRecorded,
+        entityId: _uuid.v7(),
+        payload: {
+          'occurred_at': _now().toUtc().toIso8601String(),
+          'reason': 'manual_inventory_adjustment',
+          'line_items': [
+            {'product_id': product.productId, 'quantity_delta': quantityDelta},
+          ],
+        },
+      ),
+    );
+  }
+
   Future<ReportSummary> reportSummary() async {
     final stockRows = await _stockRows();
     return ReportSummary(
@@ -235,6 +325,25 @@ class DekonRepository {
       unsyncedEventCount: await _eventStore.count(),
       lastSyncAt: await _lastSyncAt(),
     );
+  }
+
+  Future<List<TransactionHistoryEntry>> transactionHistory(
+    TransactionHistoryKind kind, {
+    int limit = 20,
+  }) async {
+    final rows = await _db.query(
+      'events',
+      columns: ['entity_id', 'payload_json', 'created_at'],
+      where: 'type = ?',
+      whereArgs: [_transactionType(kind)],
+      orderBy: 'created_at DESC',
+      limit: limit.clamp(1, 100),
+    );
+    final entries = <TransactionHistoryEntry>[];
+    for (final row in rows) {
+      entries.add(await _historyFromRow(kind, row));
+    }
+    return entries;
   }
 
   EventEnvelope _event({
@@ -333,6 +442,101 @@ class DekonRepository {
     final value = rows.single['last_sync'] as String?;
     if (value == null) return null;
     return DateTime.parse(value);
+  }
+
+  Future<TransactionHistoryEntry> _historyFromRow(
+    TransactionHistoryKind kind,
+    Map<String, Object?> row,
+  ) async {
+    final payload = _decodePayload(row['payload_json'] as String);
+    final createdAt = DateTime.parse(row['created_at'] as String);
+    final lines = await _historyLines(kind, payload);
+    final totalMinor =
+        _optionalInt(payload, 'total_minor') ??
+        lines.fold<int>(0, (sum, line) => sum + line.lineTotalMinor);
+    return TransactionHistoryEntry(
+      id: row['entity_id'] as String,
+      kind: kind,
+      occurredAt: _optionalDateTime(payload, 'occurred_at') ?? createdAt,
+      totalMinor: totalMinor,
+      lines: lines,
+    );
+  }
+
+  Future<List<TransactionHistoryLine>> _historyLines(
+    TransactionHistoryKind kind,
+    Map<String, Object?> payload,
+  ) async {
+    final rawLines = payload['line_items'];
+    if (rawLines is! List) return const [];
+    final lines = <TransactionHistoryLine>[];
+    for (final raw in rawLines) {
+      if (raw is! Map) continue;
+      final line = Map<String, Object?>.from(raw);
+      final productId = line['product_id'];
+      if (productId is! String) continue;
+      final quantity = _optionalNumber(line, 'quantity') ?? 0;
+      final unitMinor = switch (kind) {
+        TransactionHistoryKind.sale =>
+          _optionalInt(line, 'unit_price_minor') ?? 0,
+        TransactionHistoryKind.purchase =>
+          _optionalInt(line, 'unit_cost_minor') ?? 0,
+      };
+      final product = await productById(productId);
+      lines.add(
+        TransactionHistoryLine(
+          productName: product?.name ?? 'Unknown product',
+          quantity: quantity,
+          lineTotalMinor: (quantity * unitMinor).round(),
+        ),
+      );
+    }
+    return lines;
+  }
+
+  Map<String, Object?> _decodePayload(String payloadJson) {
+    final decoded = jsonDecode(payloadJson);
+    if (decoded is Map) return Map<String, Object?>.from(decoded);
+    return const {};
+  }
+
+  String _transactionType(TransactionHistoryKind kind) {
+    return switch (kind) {
+      TransactionHistoryKind.sale => EventTypes.inventorySaleRecorded,
+      TransactionHistoryKind.purchase => EventTypes.inventoryPurchaseRecorded,
+    };
+  }
+
+  DateTime? _optionalDateTime(Map<String, Object?> payload, String key) {
+    final value = payload[key];
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  int? _optionalInt(Map<String, Object?> payload, String key) {
+    final value = payload[key];
+    return value is int ? value : null;
+  }
+
+  double? _optionalNumber(Map<String, Object?> payload, String key) {
+    final value = payload[key];
+    if (value is num && value.isFinite) return value.toDouble();
+    return null;
+  }
+
+  String _escapeLike(String value) {
+    return value
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+  }
+
+  Future<void> _setAppSetting(String key, String value) {
+    return _db.insert('app_settings', {
+      'key': key,
+      'value': value,
+      'updated_at': _now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   ProductSummary _productFromRow(Map<String, Object?> row) {
