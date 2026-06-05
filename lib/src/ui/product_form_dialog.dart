@@ -91,6 +91,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     super.dispose();
   }
 
+  void _selectAll(TextEditingController controller) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: controller.text.length,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final editing = widget.product != null;
@@ -126,6 +136,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
+                onTap: () => _selectAll(_salePrice),
                 decoration: InputDecoration(
                   labelText:
                       '${strings.salePrice} (${strings.moneyUnitLabel(strings.moneyUnit)})',
@@ -138,6 +149,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
+                onTap: () => _selectAll(_cost),
                 decoration: InputDecoration(
                   labelText:
                       '${strings.purchaseCost} (${strings.moneyUnitLabel(strings.moneyUnit)})',

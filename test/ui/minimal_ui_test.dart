@@ -196,6 +196,58 @@ void main() {
     expect(created.single.purchaseCostMinor, 7500);
   });
 
+  testWidgets('product money fields select current value for replacement', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Price Tea',
+      barcode: 'PRICE-TEA',
+      salePriceMinor: 1200,
+      purchaseCostMinor: 700,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('inventory-product-${product.productId}')));
+    await tester.pumpAndSettle();
+
+    final salePriceFinder = find.byKey(const Key('product-sale-price'));
+    await tester.tap(salePriceFinder);
+    await tester.pump();
+
+    final salePriceField = tester.widget<TextFormField>(salePriceFinder);
+    expect(salePriceField.controller?.text, '1,200');
+    expect(
+      salePriceField.controller?.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 5),
+    );
+
+    await tester.enterText(salePriceFinder, '1500');
+    await tester.pump();
+
+    final costFinder = find.byKey(const Key('product-cost'));
+    await tester.tap(costFinder);
+    await tester.pump();
+
+    final costField = tester.widget<TextFormField>(costFinder);
+    expect(costField.controller?.text, '700');
+    expect(
+      costField.controller?.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 3),
+    );
+
+    await tester.enterText(costFinder, '800');
+    await tester.tap(find.byKey(const Key('save-product')));
+    await tester.pumpAndSettle();
+
+    final updated = await repository.productById(product.productId);
+    expect(updated?.salePriceMinor, 1500);
+    expect(updated?.purchaseCostMinor, 800);
+  });
+
   testWidgets('Farsi language renders app numbers with readable Persian font', (
     tester,
   ) async {
