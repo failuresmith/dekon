@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
-import 'add_product_screen.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
 import 'device_onboarding_screen.dart';
@@ -89,7 +88,6 @@ class _AppShellState extends State<AppShell> {
         mode: TransactionMode.buy,
         scanBarcode: widget.scanBarcode,
       ),
-      AddProductScreen(repository: widget.repository),
       InventoryScreen(repository: widget.repository),
       ReportsScreen(repository: widget.repository),
     ];
@@ -112,7 +110,6 @@ class _AppShellState extends State<AppShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.point_of_sale), label: 'Sell'),
           NavigationDestination(icon: Icon(Icons.add_business), label: 'Buy'),
-          NavigationDestination(icon: Icon(Icons.add_box), label: 'Add'),
           NavigationDestination(
             icon: Icon(Icons.inventory_2),
             label: 'Inventory',

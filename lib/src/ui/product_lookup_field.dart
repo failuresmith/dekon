@@ -10,11 +10,13 @@ class ProductLookupField extends StatefulWidget {
     required this.repository,
     required this.onProductSelected,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.allowCreateProduct = true,
   });
 
   final DekonRepository repository;
   final ValueChanged<ProductSummary> onProductSelected;
   final BarcodeScanLauncher scanBarcode;
+  final bool allowCreateProduct;
 
   @override
   State<ProductLookupField> createState() => _ProductLookupFieldState();
@@ -151,6 +153,12 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
     setState(() => _busy = true);
     try {
       var product = await widget.repository.productByBarcodeOrSku(query);
+      if (product == null && !widget.allowCreateProduct) {
+        if (mounted) {
+          _message('Product not found. Buy it into inventory first.');
+        }
+        return;
+      }
       if (product == null && mounted) {
         product = await showProductFormDialog(
           context: context,

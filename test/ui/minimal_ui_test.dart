@@ -75,7 +75,7 @@ void main() {
 
     expect(find.text('Sell'), findsWidgets);
     expect(find.text('Buy'), findsOneWidget);
-    expect(find.text('Add'), findsOneWidget);
+    expect(find.text('Add'), findsNothing);
     expect(find.text('Inventory'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
@@ -87,6 +87,8 @@ void main() {
     final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buy'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('barcode-entry')), 'ABC-1');
     await tester.tap(find.byKey(const Key('lookup-barcode')));
@@ -129,28 +131,44 @@ void main() {
     expect(find.text('Coffee'), findsNothing);
   });
 
-  testWidgets('Add Product creates initial stock and Inventory adjusts it', (
+  testWidgets('Sell does not create unknown products', (tester) async {
+    final repository = await createTestRepository(onboarded: true);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'MISS-1');
+    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Product not found. Buy it into inventory first.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('product-name')), findsNothing);
+    expect(await repository.products(), isEmpty);
+  });
+
+  testWidgets('Buy creates product and Inventory adjusts purchased stock', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add'));
+    await tester.tap(find.text('Buy'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('add-product-name')), 'Dates');
-    await tester.enterText(
-      find.byKey(const Key('add-product-barcode')),
-      'DATE-1',
-    );
-    await tester.enterText(
-      find.byKey(const Key('add-product-initial-stock')),
-      '2',
-    );
-    await tester.tap(find.byKey(const Key('create-product')));
+    await tester.enterText(find.byKey(const Key('barcode-entry')), 'DATE-1');
+    await tester.tap(find.byKey(const Key('lookup-barcode')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('product-name')), 'Dates');
+    await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
+    await tester.tap(find.byKey(const Key('save-product')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('increase-line-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('finish-purchase')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Product saved'), findsOneWidget);
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
@@ -245,6 +263,8 @@ void main() {
     await tester.pumpWidget(
       testApp(repository, scanBarcode: (_) async => 'SCAN-1'),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buy'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scan-barcode')));
     await tester.pumpAndSettle();

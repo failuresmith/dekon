@@ -61,6 +61,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
           repository: widget.repository,
           onProductSelected: _addProduct,
           scanBarcode: widget.scanBarcode,
+          allowCreateProduct: !_isSell,
         ),
         const SizedBox(height: 16),
         if (_lines.isEmpty)
