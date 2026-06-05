@@ -10,23 +10,27 @@ void main() {
     );
   });
 
-  test('scanner permission and camera failures get actionable messages', () {
-    expect(
-      scannerStatusMessageFor(
-        const MobileScannerException(
-          errorCode: MobileScannerErrorCode.permissionDenied,
-        ),
+  test('scanner permission and camera failures include diagnostics', () {
+    final permissionMessage = scannerStatusMessageFor(
+      const MobileScannerException(
+        errorCode: MobileScannerErrorCode.permissionDenied,
       ),
-      'Camera permission denied. Use manual entry.',
     );
+    expect(
+      permissionMessage,
+      contains('Camera permission denied. Enter barcode manually.'),
+    );
+    expect(permissionMessage, contains('Scanner error: permissionDenied'));
 
-    expect(
-      scannerStatusMessageFor(
-        const MobileScannerException(
-          errorCode: MobileScannerErrorCode.genericError,
-        ),
+    final cameraMessage = scannerStatusMessageFor(
+      const MobileScannerException(
+        errorCode: MobileScannerErrorCode.genericError,
       ),
-      'Camera unavailable. Use manual entry.',
     );
+    expect(
+      cameraMessage,
+      contains('Camera unavailable. Enter barcode manually.'),
+    );
+    expect(cameraMessage, contains('Scanner error: genericError'));
   });
 }

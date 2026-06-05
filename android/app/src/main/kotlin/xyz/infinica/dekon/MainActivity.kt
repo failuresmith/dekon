@@ -3,6 +3,8 @@ package xyz.infinica.dekon
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
+import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -13,6 +15,11 @@ import java.io.IOException
 
 class MainActivity : FlutterActivity() {
     private var pendingBackupSave: PendingBackupSave? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        initializeMlKitIfAvailable()
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -108,7 +115,18 @@ class MainActivity : FlutterActivity() {
         val result: MethodChannel.Result,
     )
 
+    private fun initializeMlKitIfAvailable() {
+        try {
+            val mlKit = Class.forName("com.google.mlkit.common.MlKit")
+            val initialize = mlKit.getMethod("initialize", android.content.Context::class.java)
+            initialize.invoke(null, applicationContext)
+        } catch (error: Exception) {
+            Log.w(TAG, "ML Kit pre-initialization was unavailable.", error)
+        }
+    }
+
     private companion object {
+        const val TAG = "DekonMainActivity"
         const val BACKUP_FILES_CHANNEL = "xyz.infinica.dekon/backup_files"
         const val SAVE_BACKUP_REQUEST_CODE = 9101
     }

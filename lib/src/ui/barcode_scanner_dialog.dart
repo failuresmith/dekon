@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -19,45 +17,9 @@ class BarcodeScannerDialog extends StatefulWidget {
   State<BarcodeScannerDialog> createState() => _BarcodeScannerDialogState();
 }
 
-class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
-    with WidgetsBindingObserver {
-  final _controller = MobileScannerController(autoStart: false);
+class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
   var _closing = false;
-  var _disposed = false;
   String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_startScanner());
-    });
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    WidgetsBinding.instance.removeObserver(this);
-    unawaited(_disposeController());
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_disposed || _closing) return;
-    if (!_controller.value.hasCameraPermission) return;
-    switch (state) {
-      case AppLifecycleState.resumed:
-        unawaited(_startScanner());
-      case AppLifecycleState.inactive:
-        unawaited(_pauseScanner());
-      case AppLifecycleState.paused:
-      case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
-        unawaited(_stopScanner());
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,33 +34,19 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
             fit: StackFit.expand,
             children: [
               MobileScanner(
-                controller: _controller,
                 onDetect: _handleDetect,
                 onDetectError: _handleError,
                 errorBuilder: (context, error) {
                   return _ScannerMessage(
                     scannerStatusMessageFor(error) ??
-                        'Camera unavailable. Use manual entry.',
+                        'Camera unavailable. Enter barcode manually.',
                   );
                 },
                 placeholderBuilder: (context) {
                   return const _ScannerMessage('Starting camera...');
                 },
               ),
-              ValueListenableBuilder<MobileScannerState>(
-                valueListenable: _controller,
-                builder: (context, state, _) {
-                  if (state.error?.errorCode ==
-                      MobileScannerErrorCode.permissionDenied) {
-                    return const _ScannerMessage(
-                      'Camera permission denied. Use manual entry.',
-                    );
-                  }
-                  final error = _error;
-                  if (error != null) return _ScannerMessage(error);
-                  return const SizedBox.shrink();
-                },
-              ),
+              if (_error != null) _ScannerMessage(_error!),
             ],
           ),
         ),
@@ -118,7 +66,6 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
     final value = capture.barcodes.firstOrNull?.rawValue?.trim();
     if (value == null || value.isEmpty) return;
     _closing = true;
-    unawaited(_stopScanner());
     Navigator.pop(context, value);
   }
 
@@ -127,54 +74,42 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
     if (message == null) return;
     if (mounted && _error != message) setState(() => _error = message);
   }
-
-  Future<void> _startScanner() async {
-    if (_disposed ||
-        _closing ||
-        _controller.value.isRunning ||
-        _controller.value.isStarting) {
-      return;
-    }
-    try {
-      await _controller.start();
-      if (mounted && _error != null) setState(() => _error = null);
-    } catch (error) {
-      _handleError(error, StackTrace.current);
-    }
-  }
-
-  Future<void> _pauseScanner() async {
-    if (!_controller.value.isRunning) return;
-    try {
-      await _controller.pause();
-    } catch (_) {
-      // Pausing is best-effort while the app is moving between lifecycle states.
-    }
-  }
-
-  Future<void> _stopScanner() async {
-    if (!_controller.value.isRunning) return;
-    try {
-      await _controller.stop();
-    } catch (_) {
-      // Stopping is best-effort while closing or backgrounding the dialog.
-    }
-  }
-
-  Future<void> _disposeController() async {
-    await _stopScanner();
-    await _controller.dispose();
-  }
 }
 
 @visibleForTesting
 String? scannerStatusMessageFor(Object error) {
   if (error is MobileScannerBarcodeException) return null;
-  if (error is MobileScannerException &&
-      error.errorCode == MobileScannerErrorCode.permissionDenied) {
-    return 'Camera permission denied. Use manual entry.';
+
+  if (error is MobileScannerException) {
+    final action = error.errorCode == MobileScannerErrorCode.permissionDenied
+        ? 'Camera permission denied. Enter barcode manually.'
+        : 'Camera unavailable. Enter barcode manually.';
+    return '$action\n\n${_scannerDebugDetails(error)}';
   }
-  return 'Camera unavailable. Use manual entry.';
+
+  return 'Camera unavailable. Enter barcode manually.\n\n'
+      'Scanner error: ${error.runtimeType}';
+}
+
+String _scannerDebugDetails(MobileScannerException error) {
+  final details = error.errorDetails;
+  final lines = <String>[
+    'Scanner error: ${error.errorCode.name}',
+    if (_displayValue(details?.code) case final code?) 'Platform code: $code',
+    if (_displayValue(details?.message) case final message?)
+      'Platform message: $message',
+    if (_displayValue(details?.details) case final platformDetails?)
+      'Platform details: $platformDetails',
+  ];
+  return lines.join('\n');
+}
+
+String? _displayValue(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return null;
+  const maxLength = 240;
+  if (text.length <= maxLength) return text;
+  return '${text.substring(0, maxLength)}...';
 }
 
 class _ScannerMessage extends StatelessWidget {
