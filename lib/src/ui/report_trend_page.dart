@@ -139,9 +139,9 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
     final net = revenue - purchases;
     return context.strings.trendSummary(
       window: _windowLabel,
-      revenueAmount: formatMoney(revenue),
-      purchasesAmount: formatMoney(purchases),
-      netAmount: formatMoney(net),
+      revenueAmount: context.strings.money(revenue),
+      purchasesAmount: context.strings.money(purchases),
+      netAmount: context.strings.money(net),
     );
   }
 

@@ -18,7 +18,13 @@ void main() {
     final repository = await createTestRepository();
     final directory = await Directory.systemTemp.createTemp('dekon_backup_');
     try {
-      await repository.createProduct(name: 'Coffee', barcode: 'COF-1');
+      await repository.setAppMoneyUnit(MoneyUnit.toman);
+      await repository.createProduct(
+        name: 'Coffee',
+        barcode: 'COF-1',
+        salePriceMinor: 15000,
+        purchaseCostMinor: 7500,
+      );
 
       final result = await repository.createBackupService().exportToDirectory(
         directory.path,
@@ -37,6 +43,10 @@ void main() {
       expect(decoded['database_schema_version'], CoreDatabase.schemaVersion);
       expect(decoded['event_count'], 1);
       expect(decoded['events'], hasLength(1));
+      final event = (decoded['events'] as List).single as Map;
+      final payload = event['payload'] as Map;
+      expect(payload['sale_price_minor'], 15000);
+      expect(payload['purchase_cost_minor'], 7500);
     } finally {
       await repository.close();
       await directory.delete(recursive: true);

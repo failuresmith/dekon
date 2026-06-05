@@ -183,7 +183,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               _metric(
                 key: const Key('sales-report-metric'),
                 label: context.strings.revenue,
-                value: formatMoney(summary.salesMinor),
+                value: context.strings.money(summary.salesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.sale,
@@ -195,7 +195,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               _metric(
                 key: const Key('purchases-report-metric'),
                 label: context.strings.purchases,
-                value: formatMoney(summary.purchasesMinor),
+                value: context.strings.money(summary.purchasesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.purchase,
@@ -207,14 +207,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
               _metric(
                 key: const Key('gross-margin-report-metric'),
                 label: context.strings.grossProfit,
-                value: formatMoney(summary.grossMarginMinor),
+                value: context.strings.money(summary.grossMarginMinor),
                 width: width,
               ),
               if (showInventorySignals)
                 _metric(
                   key: const Key('low-stock-report-metric'),
                   label: context.strings.lowStockItems,
-                  value: summary.lowStockRows.length.toString(),
+                  value: context.strings.integer(summary.lowStockRows.length),
                   width: width,
                   onTap: () => _showLowStock(summary.lowStockRows),
                 ),
@@ -404,7 +404,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     return ListTile(
                       title: Text(row.name),
                       trailing: Text(
-                        context.strings.quantityShort(row.quantity.g),
+                        context.strings.quantityShort(
+                          context.strings.quantity(row.quantity),
+                        ),
                       ),
                     );
                   },
@@ -448,9 +450,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   itemBuilder: (context, index) {
                     final entry = entries[index];
                     return ListTile(
-                      title: Text(formatMoney(entry.totalMinor)),
+                      title: Text(context.strings.money(entry.totalMinor)),
                       subtitle: Text(
-                        '${_timestamp(entry.occurredAt)}\n'
+                        '${context.strings.timestamp(entry.occurredAt)}\n'
                         '${_lineSummary(entry)}',
                       ),
                     );
@@ -606,31 +608,26 @@ class _ReportsScreenState extends State<ReportsScreen> {
       return _humanDate(range.startLocal);
     }
     if (_period == _ReportPeriod.month) {
-      return '${context.strings.monthName(range.startLocal.month)} ${range.startLocal.year}';
+      return context.strings.monthYear(range.startLocal);
     }
-    return '${_humanDate(range.startLocal)} - ${_humanDate(endInclusive)}';
+    return '${context.strings.humanDate(range.startLocal)} - ${context.strings.humanDate(endInclusive)}';
   }
 
   String _lineSummary(TransactionHistoryEntry entry) {
     if (entry.lines.isEmpty) return context.strings.noLineDetails;
     return entry.lines
-        .map((line) => '${line.productName} x${line.quantity.g}')
+        .map(
+          (line) =>
+              '${line.productName} x${context.strings.quantity(line.quantity)}',
+        )
         .join(', ');
   }
 
-  String _timestamp(DateTime dateTime) {
-    return dateTime.toLocal().toString().split('.').first;
-  }
-
   String _humanDate(DateTime dateTime) {
-    return '${dateTime.day} ${context.strings.monthName(dateTime.month)} ${dateTime.year}';
+    return context.strings.humanDate(dateTime);
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
-}
-
-extension on double {
-  String get g => this == roundToDouble() ? toInt().toString() : toString();
 }

@@ -161,12 +161,7 @@ class _SyncPeerMessagesDialogState extends State<SyncPeerMessagesDialog> {
   }
 
   String _timeLabel(DateTime timestamp) {
-    final local = timestamp.toLocal();
-    return [
-      local.hour,
-      local.minute,
-      local.second,
-    ].map((value) => value.toString().padLeft(2, '0')).join(':');
+    return context.strings.timeOfDay(timestamp);
   }
 
   String _shortPeer(String peerDeviceId) {

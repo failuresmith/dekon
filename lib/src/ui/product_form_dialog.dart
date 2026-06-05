@@ -41,6 +41,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _sku;
   late final TextEditingController _salePrice;
   late final TextEditingController _cost;
+  AppLanguage? _priceLanguage;
+  MoneyUnit? _priceMoneyUnit;
   var _saving = false;
 
   @override
@@ -52,11 +54,30 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       text: product?.barcode ?? widget.initialBarcode ?? '',
     );
     _sku = TextEditingController(text: product?.sku ?? '');
-    _salePrice = TextEditingController(
-      text: product == null ? '0.00' : formatMoney(product.salePriceMinor),
+    _salePrice = TextEditingController();
+    _cost = TextEditingController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final strings = context.strings;
+    final previousUnit = _priceMoneyUnit;
+    if (_priceLanguage == strings.language &&
+        previousUnit == strings.moneyUnit) {
+      return;
+    }
+    _priceLanguage = strings.language;
+    _priceMoneyUnit = strings.moneyUnit;
+    _syncPriceController(
+      _salePrice,
+      fallbackRialValue: widget.product?.salePriceMinor ?? 0,
+      previousUnit: previousUnit,
     );
-    _cost = TextEditingController(
-      text: product == null ? '0.00' : formatMoney(product.purchaseCostMinor),
+    _syncPriceController(
+      _cost,
+      fallbackRialValue: widget.product?.purchaseCostMinor ?? 0,
+      previousUnit: previousUnit,
     );
   }
 
@@ -102,15 +123,25 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               TextFormField(
                 key: const Key('product-sale-price'),
                 controller: _salePrice,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: strings.salePrice),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText:
+                      '${strings.salePrice} (${strings.moneyUnitLabel(strings.moneyUnit)})',
+                ),
                 validator: _money,
               ),
               TextFormField(
                 key: const Key('product-cost'),
                 controller: _cost,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: strings.purchaseCost),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText:
+                      '${strings.purchaseCost} (${strings.moneyUnitLabel(strings.moneyUnit)})',
+                ),
                 validator: _money,
               ),
             ],
@@ -141,6 +172,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    final moneyUnit = context.strings.moneyUnit;
     setState(() => _saving = true);
     try {
       final existing = widget.product;
@@ -149,8 +181,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               name: _name.text,
               barcode: _barcode.text,
               sku: _sku.text,
-              salePriceMinor: parseMoneyMinor(_salePrice.text),
-              purchaseCostMinor: parseMoneyMinor(_cost.text),
+              salePriceMinor: parseMoneyRial(_salePrice.text, unit: moneyUnit),
+              purchaseCostMinor: parseMoneyRial(_cost.text, unit: moneyUnit),
             )
           : ProductSummary(
               productId: existing.productId,
@@ -160,8 +192,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                   : _barcode.text.trim(),
               sku: _sku.text.trim().isEmpty ? null : _sku.text.trim(),
               unit: existing.unit,
-              salePriceMinor: parseMoneyMinor(_salePrice.text),
-              purchaseCostMinor: parseMoneyMinor(_cost.text),
+              salePriceMinor: parseMoneyRial(_salePrice.text, unit: moneyUnit),
+              purchaseCostMinor: parseMoneyRial(_cost.text, unit: moneyUnit),
               active: existing.active,
               quantity: existing.quantity,
             );
@@ -171,6 +203,29 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       if (mounted) _showError(context.strings.productSaveFailed(error));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _syncPriceController(
+    TextEditingController controller, {
+    required int fallbackRialValue,
+    required MoneyUnit? previousUnit,
+  }) {
+    final rialValue = previousUnit == null
+        ? fallbackRialValue
+        : _tryParseRial(controller.text, previousUnit) ?? fallbackRialValue;
+    final text = context.strings.moneyInput(rialValue);
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  int? _tryParseRial(String input, MoneyUnit unit) {
+    try {
+      return parseMoneyRial(input, unit: unit);
+    } on FormatException {
+      return null;
     }
   }
 
@@ -224,7 +279,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   String? _money(String? value) {
     try {
-      parseMoneyMinor(value ?? '');
+      parseMoneyRial(value ?? '', unit: context.strings.moneyUnit);
       return null;
     } on FormatException catch (error) {
       return error.message;

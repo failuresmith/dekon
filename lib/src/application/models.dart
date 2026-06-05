@@ -68,6 +68,22 @@ enum AppLanguage {
   }
 }
 
+enum MoneyUnit {
+  rial('rial'),
+  toman('toman');
+
+  const MoneyUnit(this.storageValue);
+
+  final String storageValue;
+
+  static MoneyUnit fromStorage(String? value) {
+    return MoneyUnit.values.firstWhere(
+      (unit) => unit.storageValue == value,
+      orElse: () => MoneyUnit.rial,
+    );
+  }
+}
+
 class TransactionLineDraft {
   TransactionLineDraft({
     required this.product,

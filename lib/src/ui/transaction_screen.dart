@@ -137,16 +137,16 @@ class _TransactionScreenState extends State<TransactionScreen> {
                       Text(
                         _isSell
                             ? context.strings.eachPrice(
-                                formatMoney(line.unitPriceMinor),
+                                context.strings.money(line.unitPriceMinor),
                               )
                             : context.strings.currentStock(
-                                line.product.quantity.g,
+                                context.strings.quantity(line.product.quantity),
                               ),
                       ),
                       if (!_isSell)
                         Text(
                           context.strings.purchaseCostEach(
-                            formatMoney(line.unitCostMinor),
+                            context.strings.money(line.unitCostMinor),
                           ),
                         ),
                     ],
@@ -165,7 +165,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
             Align(
               alignment: Alignment.centerRight,
               child: Text(
-                formatMoney(amount),
+                context.strings.money(amount),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -180,7 +180,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
                     Expanded(
                       child: Text(
                         context.strings.availableStockWarning(
-                          line.product.quantity.g,
+                          context.strings.quantity(line.product.quantity),
                         ),
                         key: Key('negative-warning-${line.product.productId}'),
                         style: TextStyle(color: colors.error),
@@ -249,7 +249,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
                   ),
                 ),
                 Text(
-                  formatMoney(_totalMinor),
+                  context.strings.money(_totalMinor),
                   key: Key(_isSell ? 'sale-total' : 'purchase-total'),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
@@ -422,9 +422,9 @@ Future<void> showTransactionHistoryDialog({
                 itemBuilder: (context, index) {
                   final entry = history[index];
                   return ListTile(
-                    title: Text(formatMoney(entry.totalMinor)),
+                    title: Text(strings.money(entry.totalMinor)),
                     subtitle: Text(
-                      '${_timestamp(entry.occurredAt)}\n'
+                      '${strings.timestamp(entry.occurredAt)}\n'
                       '${_historyLineSummary(entry, strings)}',
                     ),
                   );
@@ -444,14 +444,6 @@ Future<void> showTransactionHistoryDialog({
 String _historyLineSummary(TransactionHistoryEntry entry, UiStrings strings) {
   if (entry.lines.isEmpty) return strings.noLineDetails;
   return entry.lines
-      .map((line) => '${line.productName} x${line.quantity.g}')
+      .map((line) => '${line.productName} x${strings.quantity(line.quantity)}')
       .join(', ');
-}
-
-String _timestamp(DateTime dateTime) {
-  return dateTime.toLocal().toString().split('.').first;
-}
-
-extension on double {
-  String get g => this == roundToDouble() ? toInt().toString() : toString();
 }

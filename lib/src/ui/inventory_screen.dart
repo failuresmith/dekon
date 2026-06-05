@@ -227,14 +227,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
       button: true,
       label: context.strings.inventoryProductSemantics(
         name: product.name,
-        quantity: product.quantity.g,
+        quantity: context.strings.quantity(product.quantity),
       ),
       child: ListTile(
         key: Key('inventory-product-${product.productId}'),
         minVerticalPadding: 12,
         contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         title: Text(product.name),
-        subtitle: Text(context.strings.stockLabel(product.quantity.g)),
+        subtitle: Text(
+          context.strings.stockLabel(
+            context.strings.quantity(product.quantity),
+          ),
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -351,8 +355,4 @@ class _InventoryScreenState extends State<InventoryScreen> {
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
-}
-
-extension on double {
-  String get g => this == roundToDouble() ? toInt().toString() : toString();
 }

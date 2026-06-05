@@ -5,14 +5,21 @@ import '../application/application.dart';
 class AppLanguageController extends ChangeNotifier {
   AppLanguageController({
     required AppLanguage initialLanguage,
+    required MoneyUnit initialMoneyUnit,
     required this.saveLanguage,
-  }) : _language = initialLanguage;
+    required this.saveMoneyUnit,
+  }) : _language = initialLanguage,
+       _moneyUnit = initialMoneyUnit;
 
   final Future<void> Function(AppLanguage language) saveLanguage;
+  final Future<void> Function(MoneyUnit unit) saveMoneyUnit;
   AppLanguage _language;
+  MoneyUnit _moneyUnit;
 
   AppLanguage get language => _language;
-  UiStrings get strings => UiStrings.forLanguage(_language);
+  MoneyUnit get moneyUnit => _moneyUnit;
+  UiStrings get strings =>
+      UiStrings.forPreferences(language: _language, moneyUnit: _moneyUnit);
 
   Future<void> setLanguage(AppLanguage language) async {
     if (language == _language) return;
@@ -23,6 +30,20 @@ class AppLanguageController extends ChangeNotifier {
       await saveLanguage(language);
     } catch (_) {
       _language = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> setMoneyUnit(MoneyUnit unit) async {
+    if (unit == _moneyUnit) return;
+    final previous = _moneyUnit;
+    _moneyUnit = unit;
+    notifyListeners();
+    try {
+      await saveMoneyUnit(unit);
+    } catch (_) {
+      _moneyUnit = previous;
       notifyListeners();
       rethrow;
     }
@@ -53,17 +74,39 @@ extension UiStringsBuildContext on BuildContext {
 }
 
 class UiStrings {
-  const UiStrings._(this.language);
+  const UiStrings._(this.language, this.moneyUnit);
 
-  static const _english = UiStrings._(AppLanguage.english);
-  static const _farsi = UiStrings._(AppLanguage.farsi);
+  static final _asciiDigitPattern = RegExp('[0-9]');
+  static const _farsiDigits = [
+    '۰',
+    '۱',
+    '۲',
+    '۳',
+    '۴',
+    '۵',
+    '۶',
+    '۷',
+    '۸',
+    '۹',
+  ];
 
   final AppLanguage language;
+  final MoneyUnit moneyUnit;
 
   static UiStrings forLanguage(AppLanguage language) {
+    return UiStrings.forPreferences(
+      language: language,
+      moneyUnit: MoneyUnit.rial,
+    );
+  }
+
+  static UiStrings forPreferences({
+    required AppLanguage language,
+    required MoneyUnit moneyUnit,
+  }) {
     return switch (language) {
-      AppLanguage.english => _english,
-      AppLanguage.farsi => _farsi,
+      AppLanguage.english => UiStrings._(AppLanguage.english, moneyUnit),
+      AppLanguage.farsi => UiStrings._(AppLanguage.farsi, moneyUnit),
     };
   }
 
@@ -71,6 +114,60 @@ class UiStrings {
     return language == AppLanguage.farsi
         ? TextDirection.rtl
         : TextDirection.ltr;
+  }
+
+  String digits(String value) {
+    if (language != AppLanguage.farsi) return value;
+    return value.replaceAllMapped(_asciiDigitPattern, (match) {
+      return _farsiDigits[int.parse(match[0]!)];
+    });
+  }
+
+  String integer(int value) => digits(value.toString());
+
+  String money(int rialValue) {
+    final value = digits(formatMoneyForUnit(rialValue, unit: moneyUnit));
+    return '$value ${moneyUnitLabel(moneyUnit)}';
+  }
+
+  String moneyInput(int rialValue) {
+    return digits(formatMoneyForUnit(rialValue, unit: moneyUnit));
+  }
+
+  String quantity(double value) {
+    final formatted = value == value.roundToDouble()
+        ? value.toInt().toString()
+        : value.toString();
+    return digits(formatted);
+  }
+
+  String timestamp(DateTime dateTime) {
+    return digits(dateTime.toLocal().toString().split('.').first);
+  }
+
+  String timeOfDay(DateTime dateTime) {
+    final local = dateTime.toLocal();
+    return digits(
+      [
+        local.hour,
+        local.minute,
+        local.second,
+      ].map((value) => value.toString().padLeft(2, '0')).join(':'),
+    );
+  }
+
+  String shortNumericDate(DateTime dateTime) {
+    return digits('${dateTime.month}/${dateTime.day}');
+  }
+
+  String yearNumber(int year) => digits(year.toString());
+
+  String humanDate(DateTime dateTime) {
+    return '${integer(dateTime.day)} ${monthName(dateTime.month)} ${yearNumber(dateTime.year)}';
+  }
+
+  String monthYear(DateTime dateTime) {
+    return '${monthName(dateTime.month)} ${yearNumber(dateTime.year)}';
   }
 
   String get sell => _text(en: 'Sell', fa: 'فروش');
@@ -99,6 +196,10 @@ class UiStrings {
   }
 
   String get languageLabel => _text(en: 'Language', fa: 'زبان');
+  String get moneyUnitLabelTitle {
+    return _text(en: 'Money unit', fa: 'واحد پول');
+  }
+
   String get deviceSync => _text(en: 'Device Sync', fa: 'همگام سازی دستگاه');
   String get backupAndRestore {
     return _text(en: 'Backup and Restore', fa: 'پشتیبان گیری و بازیابی');
@@ -114,7 +215,7 @@ class UiStrings {
   String get scanBarcodeOrSearchProduct {
     return _text(
       en: 'Scan barcode or search product',
-      fa: 'بارکد را اسکن کنید یا کالا را جستجو کنید',
+      fa: 'جستجوی کالا یا اسکن بارکد',
     );
   }
 
@@ -248,6 +349,38 @@ class UiStrings {
     };
   }
 
+  String moneyUnitSubtitle(MoneyUnit selected) {
+    return _text(
+      en: 'Displayed as ${moneyUnitLabel(selected)}. Stored as Rial.',
+      fa: 'نمایش با ${moneyUnitLabel(selected)}. ذخیره همیشه ریال است.',
+    );
+  }
+
+  String moneyUnitLabel(MoneyUnit option) {
+    return switch (option) {
+      MoneyUnit.rial => _text(en: 'Rial', fa: 'ریال'),
+      MoneyUnit.toman => _text(en: 'Toman', fa: 'تومان'),
+    };
+  }
+
+  String get chooseMoneyUnit {
+    return _text(
+      en: 'Choose how money is shown. Stored values always remain Rial.',
+      fa: 'انتخاب کنید مبلغ ها چطور نمایش داده شوند. مقدار ذخیره شده همیشه ریال است.',
+    );
+  }
+
+  String get moneyUnitSaved {
+    return _text(en: 'Money unit updated', fa: 'واحد پول به روز شد');
+  }
+
+  String get moneyUnitSaveFailed {
+    return _text(
+      en: 'Money unit could not be saved. Try again.',
+      fa: 'واحد پول ذخیره نشد. دوباره تلاش کنید.',
+    );
+  }
+
   String get chooseLanguage {
     return _text(
       en: 'Choose the app language.',
@@ -325,7 +458,7 @@ class UiStrings {
   }
 
   String connectedDeviceCount(int count) {
-    if (language == AppLanguage.farsi) return '$count دستگاه متصل';
+    if (language == AppLanguage.farsi) return '${integer(count)} دستگاه متصل';
     return count == 1 ? '1 device connected' : '$count devices connected';
   }
 
@@ -407,6 +540,7 @@ class UiStrings {
     required int recordCount,
     required String exportedAt,
   }) {
+    final displayRecordCount = integer(recordCount);
     return _text(
       en:
           'Current store data may be replaced by the selected backup file.\n\n'
@@ -416,7 +550,7 @@ class UiStrings {
       fa:
           'ممکن است داده فعلی فروشگاه با فایل پشتیبان انتخاب شده جایگزین شود.\n\n'
           '$fileName\n'
-          '$recordCount رکورد\n'
+          '$displayRecordCount رکورد\n'
           'ساخته شده در $exportedAt',
     );
   }
@@ -438,9 +572,10 @@ class UiStrings {
   }
 
   String backupRestoredWithSkippedDuplicates(int duplicateCount) {
+    final displayDuplicateCount = integer(duplicateCount);
     return _text(
       en: '$backupRestoredSuccessfully. Skipped $duplicateCount duplicate records.',
-      fa: '$backupRestoredSuccessfully. $duplicateCount رکورد تکراری نادیده گرفته شد.',
+      fa: '$backupRestoredSuccessfully. $displayDuplicateCount رکورد تکراری نادیده گرفته شد.',
     );
   }
 
@@ -569,20 +704,23 @@ class UiStrings {
   }
 
   String stockLabel(String quantity) {
-    return _text(en: 'Stock: $quantity', fa: 'موجودی: $quantity');
+    final displayQuantity = digits(quantity);
+    return _text(en: 'Stock: $quantity', fa: 'موجودی: $displayQuantity');
   }
 
   String stockInline(String quantity) {
-    return _text(en: 'Stock $quantity', fa: 'موجودی $quantity');
+    final displayQuantity = digits(quantity);
+    return _text(en: 'Stock $quantity', fa: 'موجودی $displayQuantity');
   }
 
   String inventoryProductSemantics({
     required String name,
     required String quantity,
   }) {
+    final displayQuantity = digits(quantity);
     return _text(
       en: '$name. Stock $quantity. Open product details.',
-      fa: '$name. موجودی $quantity. باز کردن جزئیات کالا.',
+      fa: '$name. موجودی $displayQuantity. باز کردن جزئیات کالا.',
     );
   }
 
@@ -615,15 +753,19 @@ class UiStrings {
   }
 
   String eachPrice(String amount) =>
-      _text(en: '$amount each', fa: 'هر عدد $amount');
+      _text(en: '$amount each', fa: 'هر عدد ${digits(amount)}');
   String currentStock(String quantity) {
-    return _text(en: 'Current stock: $quantity', fa: 'موجودی فعلی: $quantity');
+    final displayQuantity = digits(quantity);
+    return _text(
+      en: 'Current stock: $quantity',
+      fa: 'موجودی فعلی: $displayQuantity',
+    );
   }
 
   String purchaseCostEach(String amount) {
     return _text(
       en: 'Purchase cost: $amount each',
-      fa: 'قیمت خرید هر عدد: $amount',
+      fa: 'قیمت خرید هر عدد: ${digits(amount)}',
     );
   }
 
@@ -637,14 +779,15 @@ class UiStrings {
   }
 
   String availableStockWarning(String quantity) {
+    final displayQuantity = digits(quantity);
     return _text(
       en: 'Only $quantity is available in stock. The sale needs confirmation before completion.',
-      fa: 'فقط $quantity عدد در موجودی است. فروش پیش از تکمیل نیاز به تایید دارد.',
+      fa: 'فقط $displayQuantity عدد در موجودی است. فروش پیش از تکمیل نیاز به تایید دارد.',
     );
   }
 
   String itemsCount(int count) =>
-      _text(en: 'Items: $count', fa: 'تعداد کالا: $count');
+      _text(en: 'Items: $count', fa: 'تعداد کالا: ${integer(count)}');
   String saveFailed(Object error) {
     return _text(en: 'Save failed: $error', fa: 'ذخیره ناموفق بود: $error');
   }
@@ -707,12 +850,12 @@ class UiStrings {
   String unsyncedTransactionsWarning(int count) {
     return _text(
       en: '$count transactions have not synced yet. Check Device Sync in Settings.',
-      fa: '$count تراکنش هنوز همگام نشده است. همگام سازی دستگاه را در تنظیمات بررسی کنید.',
+      fa: '${integer(count)} تراکنش هنوز همگام نشده است. همگام سازی دستگاه را در تنظیمات بررسی کنید.',
     );
   }
 
   String quantityShort(String quantity) =>
-      _text(en: 'Qty $quantity', fa: 'تعداد $quantity');
+      _text(en: 'Qty $quantity', fa: 'تعداد ${digits(quantity)}');
   String get noTransactions {
     return _text(en: 'No transactions', fa: 'تراکنشی وجود ندارد');
   }
@@ -742,9 +885,12 @@ class UiStrings {
     required String revenueAmount,
     required String purchasesAmount,
   }) {
+    final displayLabel = digits(label);
+    final displayRevenueAmount = digits(revenueAmount);
+    final displayPurchasesAmount = digits(purchasesAmount);
     return _text(
       en: '$label revenue $revenueAmount purchases $purchasesAmount',
-      fa: '$label درآمد $revenueAmount خرید $purchasesAmount',
+      fa: '$displayLabel درآمد $displayRevenueAmount خرید $displayPurchasesAmount',
     );
   }
 
@@ -766,9 +912,13 @@ class UiStrings {
     required String purchasesAmount,
     required String netAmount,
   }) {
+    final displayWindow = digits(window);
+    final displayRevenueAmount = digits(revenueAmount);
+    final displayPurchasesAmount = digits(purchasesAmount);
+    final displayNetAmount = digits(netAmount);
     return _text(
       en: 'Sales trend for $window. Revenue: $revenueAmount. Purchases: $purchasesAmount. Net: $netAmount.',
-      fa: 'روند فروش برای $window. درآمد: $revenueAmount. خریدها: $purchasesAmount. خالص: $netAmount.',
+      fa: 'روند فروش برای $displayWindow. درآمد: $displayRevenueAmount. خریدها: $displayPurchasesAmount. خالص: $displayNetAmount.',
     );
   }
 

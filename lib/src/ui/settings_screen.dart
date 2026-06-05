@@ -48,6 +48,14 @@ class SettingsScreen extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _SettingsSectionTile(
+          key: const Key('settings-money-unit-tile'),
+          title: strings.moneyUnitLabelTitle,
+          subtitle: strings.moneyUnitSubtitle(languageController.moneyUnit),
+          icon: Icons.payments_outlined,
+          onTap: () => _openMoneyUnit(context),
+        ),
+        const SizedBox(height: 12),
+        _SettingsSectionTile(
           key: const Key('settings-device-sync-tile'),
           title: strings.deviceSync,
           subtitle: strings.settingsDeviceSyncSubtitle,
@@ -76,6 +84,12 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _openLanguage(BuildContext context) {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (context) => const LanguageScreen()),
+    );
+  }
+
+  Future<void> _openMoneyUnit(BuildContext context) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (context) => const MoneyUnitScreen()),
     );
   }
 
@@ -168,6 +182,67 @@ class _LanguageScreenState extends State<LanguageScreen> {
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.languageSaveFailed)),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class MoneyUnitScreen extends StatefulWidget {
+  const MoneyUnitScreen({super.key});
+
+  @override
+  State<MoneyUnitScreen> createState() => _MoneyUnitScreenState();
+}
+
+class _MoneyUnitScreenState extends State<MoneyUnitScreen> {
+  var _saving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    final controller = AppLanguageScope.controllerOf(context);
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.moneyUnitLabelTitle)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(strings.chooseMoneyUnit),
+          const SizedBox(height: 8),
+          for (final unit in MoneyUnit.values)
+            ListTile(
+              key: Key('money-unit-option-${unit.storageValue}'),
+              title: Text(strings.moneyUnitLabel(unit)),
+              leading: Icon(
+                controller.moneyUnit == unit
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+              ),
+              selected: controller.moneyUnit == unit,
+              enabled: !_saving,
+              onTap: _saving ? null : () => _setMoneyUnit(unit),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setMoneyUnit(MoneyUnit? unit) async {
+    if (unit == null) return;
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
+    try {
+      await AppLanguageScope.controllerOf(context).setMoneyUnit(unit);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.strings.moneyUnitSaved)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.moneyUnitSaveFailed)),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -671,7 +746,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
           strings.restoreBackupPreview(
             fileName: file.name,
             recordCount: preview.eventCount,
-            exportedAt: _timestamp(preview.exportedAt),
+            exportedAt: strings.timestamp(preview.exportedAt),
           ),
         ),
         actions: [
@@ -692,16 +767,12 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   String get _lastBackupText {
     final lastBackup = _lastSuccessfulBackupAt;
     if (lastBackup == null) return context.strings.noBackupSavedInThisSession;
-    return _timestamp(lastBackup);
+    return context.strings.timestamp(lastBackup);
   }
 
   void _markBackupFailed(UiStrings strings) {
     _backupNeedsRetry = true;
     _backupStatus = strings.couldNotSaveBackup;
-  }
-
-  String _timestamp(DateTime dateTime) {
-    return dateTime.toLocal().toString().split('.').first;
   }
 
   void _message(ScaffoldMessengerState messenger, String text) {

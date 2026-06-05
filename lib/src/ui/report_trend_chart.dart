@@ -107,10 +107,10 @@ class _ReportTrendChartState extends State<ReportTrendChart> {
 
   String _bucketLabel(DateTime start, ReportTrendPeriod period) {
     return switch (period) {
-      ReportTrendPeriod.day => '${start.month}/${start.day}',
-      ReportTrendPeriod.week => '${start.month}/${start.day}',
+      ReportTrendPeriod.day => context.strings.shortNumericDate(start),
+      ReportTrendPeriod.week => context.strings.shortNumericDate(start),
       ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
-      ReportTrendPeriod.year => start.year.toString(),
+      ReportTrendPeriod.year => context.strings.yearNumber(start.year),
     };
   }
 }
@@ -143,15 +143,15 @@ class _SelectedBucketSummary extends StatelessWidget {
               _SummaryText(label: context.strings.period, value: label),
               _SummaryText(
                 label: context.strings.revenue,
-                value: formatMoney(bucket.salesMinor),
+                value: context.strings.money(bucket.salesMinor),
               ),
               _SummaryText(
                 label: context.strings.purchases,
-                value: formatMoney(bucket.purchasesMinor),
+                value: context.strings.money(bucket.purchasesMinor),
               ),
               _SummaryText(
                 label: context.strings.net,
-                value: formatMoney(netMinor),
+                value: context.strings.money(netMinor),
               ),
             ],
           ),
@@ -247,8 +247,8 @@ class _BucketBars extends StatelessWidget {
       selected: selected,
       label: context.strings.reportTrendBucketSemantics(
         label: label,
-        revenueAmount: formatMoney(bucket.salesMinor),
-        purchasesAmount: formatMoney(bucket.purchasesMinor),
+        revenueAmount: context.strings.money(bucket.salesMinor),
+        purchasesAmount: context.strings.money(bucket.purchasesMinor),
       ),
       child: Material(
         color: selected
@@ -315,10 +315,10 @@ class _BucketBars extends StatelessWidget {
     ReportTrendPeriod period,
   ) {
     return switch (period) {
-      ReportTrendPeriod.day => '${start.month}/${start.day}',
-      ReportTrendPeriod.week => '${start.month}/${start.day}',
+      ReportTrendPeriod.day => context.strings.shortNumericDate(start),
+      ReportTrendPeriod.week => context.strings.shortNumericDate(start),
       ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
-      ReportTrendPeriod.year => start.year.toString(),
+      ReportTrendPeriod.year => context.strings.yearNumber(start.year),
     };
   }
 }

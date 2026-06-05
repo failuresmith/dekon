@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../application/application.dart';
+import 'ui_strings.dart';
+
 class TransactionQuantityInput extends StatefulWidget {
   const TransactionQuantityInput({
     super.key,
@@ -20,12 +23,22 @@ class TransactionQuantityInput extends StatefulWidget {
 class _TransactionQuantityInputState extends State<TransactionQuantityInput> {
   late final TextEditingController _controller;
   late final FocusNode _focusNode;
+  AppLanguage? _language;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.value.g);
     _focusNode = FocusNode()..addListener(_handleFocusChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final language = context.strings.language;
+    if (_language == language) return;
+    _language = language;
+    if (!_focusNode.hasFocus) _syncText(widget.value);
   }
 
   @override
@@ -105,7 +118,7 @@ class _TransactionQuantityInputState extends State<TransactionQuantityInput> {
   bool _tracksValue(double value) => _parseQuantity(_controller.text) == value;
 
   void _syncText(double value) {
-    final text = value.g;
+    final text = context.strings.digits(value.g);
     _controller.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),
@@ -113,7 +126,9 @@ class _TransactionQuantityInputState extends State<TransactionQuantityInput> {
   }
 
   double? _parseQuantity(String input) {
-    final quantity = double.tryParse(input.trim().replaceAll(',', '.'));
+    final quantity = double.tryParse(
+      normalizeNumberInput(input).replaceAll(',', '.'),
+    );
     if (quantity == null || !quantity.isFinite || quantity <= 0) return null;
     return quantity;
   }

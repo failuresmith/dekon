@@ -429,7 +429,9 @@ class _TestLanguageHost extends StatefulWidget {
 class _TestLanguageHostState extends State<_TestLanguageHost> {
   late final AppLanguageController _languageController = AppLanguageController(
     initialLanguage: AppLanguage.english,
+    initialMoneyUnit: MoneyUnit.rial,
     saveLanguage: (_) async {},
+    saveMoneyUnit: (_) async {},
   );
 
   @override

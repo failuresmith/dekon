@@ -110,6 +110,23 @@ class DekonRepository {
     return _setAppSetting('language_code', language.storageValue);
   }
 
+  Future<MoneyUnit> appMoneyUnit() async {
+    final rows = await _db.query(
+      'app_settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: const ['money_unit'],
+      limit: 1,
+    );
+    return MoneyUnit.fromStorage(
+      rows.isEmpty ? null : rows.single['value'] as String?,
+    );
+  }
+
+  Future<void> setAppMoneyUnit(MoneyUnit unit) {
+    return _setAppSetting('money_unit', unit.storageValue);
+  }
+
   Future<DeviceRoleSettings> deviceRoleSettings() async {
     final rows = await _db.query(
       'app_settings',

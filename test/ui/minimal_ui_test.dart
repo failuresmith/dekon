@@ -139,6 +139,117 @@ void main() {
     expect(find.text('تنظیمات'), findsNothing);
   });
 
+  testWidgets('Settings money unit changes display while storing Rial', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    await repository.createProduct(
+      name: 'Toman Tea',
+      barcode: 'TOMAN-TEA',
+      salePriceMinor: 10000,
+      purchaseCostMinor: 5000,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('settings-money-unit-tile')), findsOneWidget);
+    expect(find.text('Displayed as Rial. Stored as Rial.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('settings-money-unit-tile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('money-unit-option-toman')));
+    await tester.pumpAndSettle();
+
+    expect(await repository.appMoneyUnit(), MoneyUnit.toman);
+    expect(find.text('Money unit updated'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await _submitLookup(tester, 'TOMAN-TEA');
+    await tester.pumpAndSettle();
+
+    expect(find.text('1,000 Toman each'), findsOneWidget);
+    final saleTotal = tester.widget<Text>(find.byKey(const Key('sale-total')));
+    expect(saleTotal.data, '1,000 Toman');
+
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('inventory-add-product')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('product-name')), 'Saffron');
+    await tester.enterText(
+      find.byKey(const Key('product-sale-price')),
+      '1,500',
+    );
+    await tester.enterText(find.byKey(const Key('product-cost')), '750');
+    await tester.tap(find.byKey(const Key('save-product')));
+    await tester.pumpAndSettle();
+
+    final created = await repository.productsMatchingName('Saffron');
+    expect(created.single.salePriceMinor, 15000);
+    expect(created.single.purchaseCostMinor, 7500);
+  });
+
+  testWidgets('Farsi language renders app numbers with readable Persian font', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    await repository.setAppLanguage(AppLanguage.farsi);
+    final product = await repository.createProduct(
+      name: 'Tea',
+      barcode: 'FA-TEA-1',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 3),
+    ]);
+    await repository.recordSale([
+      TransactionLineDraft(product: product, quantity: 1),
+    ]);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await _submitLookup(tester, 'FA-TEA-1');
+    await tester.pumpAndSettle();
+
+    expect(find.text('تعداد کالا: ۱'), findsOneWidget);
+    expect(find.text('هر عدد ۴۰۰ ریال'), findsOneWidget);
+    final theme = Theme.of(
+      tester.element(find.byKey(const Key('finish-sale'))),
+    );
+    expect(theme.textTheme.bodyMedium?.fontFamily, 'Vazirmatn');
+    expect(
+      theme.textTheme.bodyMedium?.fontFamilyFallback,
+      contains('Noto Sans Arabic'),
+    );
+    expect(find.text('4.00'), findsNothing);
+
+    final quantityField = tester.widget<TextField>(
+      find.byKey(const Key('line-quantity-0')),
+    );
+    expect(quantityField.controller?.text, '۱');
+
+    await tester.enterText(find.byKey(const Key('line-quantity-0')), '۲');
+    await tester.pumpAndSettle();
+
+    final saleTotal = tester.widget<Text>(find.byKey(const Key('sale-total')));
+    expect(saleTotal.data, '۸۰۰ ریال');
+    expect(find.text('8.00'), findsNothing);
+
+    await tester.tap(find.text('گزارش ها'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('درآمد'), findsOneWidget);
+    expect(find.text('۴۰۰ ریال'), findsOneWidget);
+  });
+
   testWidgets('root tab state is preserved while switching screens', (
     tester,
   ) async {
@@ -245,8 +356,8 @@ void main() {
     await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Beans');
-    await tester.enterText(find.byKey(const Key('product-sale-price')), '2.50');
-    await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
+    await tester.enterText(find.byKey(const Key('product-sale-price')), '250');
+    await tester.enterText(find.byKey(const Key('product-cost')), '125');
     await tester.tap(find.byKey(const Key('save-product')));
     await tester.pumpAndSettle();
 
@@ -332,7 +443,7 @@ void main() {
     final editedField = tester.widget<TextField>(quantityFinder);
     expect(editedField.controller?.text, '125');
     final total = tester.widget<Text>(find.byKey(const Key('purchase-total')));
-    expect(total.data, '125.00');
+    expect(total.data, '12,500 Rial');
 
     await tester.tap(find.byKey(const Key('finish-purchase')));
     await tester.pumpAndSettle();
@@ -357,7 +468,7 @@ void main() {
     await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Dates');
-    await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
+    await tester.enterText(find.byKey(const Key('product-cost')), '125');
     await tester.tap(find.byKey(const Key('save-product')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('increase-line-0')));
@@ -582,8 +693,8 @@ void main() {
     );
     expect(barcodeField.controller?.text, 'SCAN-1');
     await tester.enterText(find.byKey(const Key('product-name')), 'Beans');
-    await tester.enterText(find.byKey(const Key('product-sale-price')), '2.50');
-    await tester.enterText(find.byKey(const Key('product-cost')), '1.25');
+    await tester.enterText(find.byKey(const Key('product-sale-price')), '250');
+    await tester.enterText(find.byKey(const Key('product-cost')), '125');
     await tester.tap(find.byKey(const Key('save-product')));
     await tester.pumpAndSettle();
 
@@ -604,7 +715,7 @@ void main() {
     await tester.tap(find.byKey(const Key('create-product-from-lookup')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('product-name')), 'Flour');
-    await tester.enterText(find.byKey(const Key('product-cost')), '1.50');
+    await tester.enterText(find.byKey(const Key('product-cost')), '150');
     await tester.tap(find.byKey(const Key('save-product')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('finish-purchase')));
@@ -615,7 +726,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Purchases'), findsOneWidget);
-    expect(find.text('1.50'), findsOneWidget);
+    expect(find.text('150 Rial'), findsOneWidget);
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
@@ -656,7 +767,7 @@ void main() {
     expect(find.byKey(const Key('report-period-month')), findsOneWidget);
     expect(find.byKey(const Key('report-period-custom')), findsOneWidget);
     expect(find.text('Revenue'), findsOneWidget);
-    expect(find.text('4.00'), findsOneWidget);
+    expect(find.text('400 Rial'), findsOneWidget);
     expect(find.text('Low-stock Items'), findsOneWidget);
     expect(find.byKey(const Key('reports-view-trend-button')), findsOneWidget);
     expect(find.text('Empty Soda'), findsNothing);
@@ -794,7 +905,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('cashier-report-filter')), findsOneWidget);
-    expect(find.text('12.00'), findsOneWidget);
+    expect(find.text('1,200 Rial'), findsOneWidget);
     expect(find.byKey(const Key('low-stock-report-metric')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('cashier-report-filter')));
@@ -802,8 +913,8 @@ void main() {
     await tester.tap(find.text('Cashier-1').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('8.00'), findsOneWidget);
-    expect(find.text('12.00'), findsNothing);
+    expect(find.text('800 Rial'), findsOneWidget);
+    expect(find.text('1,200 Rial'), findsNothing);
     expect(find.byKey(const Key('low-stock-report-metric')), findsNothing);
 
     await tester.tap(find.byKey(const Key('sales-report-metric')));
@@ -844,7 +955,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Revenue'), findsOneWidget);
-    expect(find.text('4.00'), findsOneWidget);
+    expect(find.text('400 Rial'), findsOneWidget);
   });
 
   testWidgets('Sell warns before allowing negative stock', (tester) async {

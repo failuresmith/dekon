@@ -78,7 +78,7 @@ class _MainAppState extends State<MainApp> {
             final strings = startup.languageController.strings;
             return MaterialApp(
               title: AppConfig.appName,
-              theme: _theme(),
+              theme: _theme(language: strings.language),
               builder: (context, child) => AppLanguageScope(
                 controller: startup.languageController,
                 child: Directionality(
@@ -103,9 +103,12 @@ class _MainAppState extends State<MainApp> {
     final repository =
         await (widget.repositoryFactory ?? DekonRepository.open)();
     final language = await repository.appLanguage();
+    final moneyUnit = await repository.appMoneyUnit();
     final languageController = AppLanguageController(
       initialLanguage: language,
+      initialMoneyUnit: moneyUnit,
       saveLanguage: repository.setAppLanguage,
+      saveMoneyUnit: repository.setAppMoneyUnit,
     );
     return _AppStartup(
       repository: repository,
@@ -113,9 +116,11 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  ThemeData _theme() {
+  ThemeData _theme({AppLanguage language = AppLanguage.english}) {
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
+      fontFamily: language == AppLanguage.farsi ? 'Vazirmatn' : null,
+      fontFamilyFallback: const ['Vazirmatn', 'Noto Sans Arabic', 'Roboto'],
       useMaterial3: true,
     );
   }

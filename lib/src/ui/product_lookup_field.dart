@@ -94,7 +94,9 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
                     key: Key('product-search-result-${product.productId}'),
                     title: Text(product.name),
                     subtitle: Text(
-                      context.strings.stockInline(product.quantity.g),
+                      context.strings.stockInline(
+                        context.strings.quantity(product.quantity),
+                      ),
                     ),
                     onTap: () => _selectProduct(product),
                   ),
@@ -280,8 +282,4 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
-}
-
-extension on double {
-  String get g => this == roundToDouble() ? toInt().toString() : toString();
 }
