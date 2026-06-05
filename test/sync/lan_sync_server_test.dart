@@ -139,6 +139,51 @@ void main() {
     });
   });
 
+  test('manual address pairing syncs when cashier clock is ahead', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = LanSyncServer(
+      store: mainRepository.createSyncStore(),
+      now: () => _now,
+    )..createPairingPayload(baseUrl: 'http://main.local:4321');
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+      now: () => _now.add(const Duration(hours: 1)),
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Clock Skew Tea',
+        barcode: 'CLOCK-SKEW-TEA',
+      );
+
+      await client.pairWithManualAddress(
+        'main.local:4321',
+        displayName: 'Clock Skew Register',
+      );
+      final syncedProduct = await cashierRepository.productById(
+        product.productId,
+      );
+
+      expect(syncedProduct?.name, 'Clock Skew Tea');
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
   test('pairing pushes cashier events and pulls main inventory', () async {
     final mainDb = await CoreDatabase.open(
       path: inMemoryDatabasePath,

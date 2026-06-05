@@ -130,7 +130,9 @@ void main() {
     }
   });
 
-  testWidgets('Settings pairs cashier device and locks role', (tester) async {
+  testWidgets('Settings lets main device validate scanned QR and locks role', (
+    tester,
+  ) async {
     final repository = await createTestRepository();
     await repository.setDeviceRole(DeviceRole.cashierDevice);
     final syncServer = repository.createLanSyncServer();
@@ -138,7 +140,7 @@ void main() {
       baseUrl: 'http://192.168.1.10:1234',
       serverDeviceId: '019e9239-1111-7000-8000-000000000001',
       pairingSecret: 'pairing-secret',
-      expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
+      expiresAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
     );
     SyncPairingPayload? pairedPayload;
     try {
@@ -161,6 +163,7 @@ void main() {
       final settings = await repository.deviceRoleSettings();
 
       expect(pairedPayload?.serverDeviceId, payload.serverDeviceId);
+      expect(find.textContaining('Pairing failed'), findsNothing);
       expect(settings.role, DeviceRole.cashierDevice);
       expect(settings.locked, true);
       expect(settings.onboardingCompleted, true);

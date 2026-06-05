@@ -110,7 +110,10 @@ class LanSyncServer {
     });
   }
 
-  Response _device() => _json(store.deviceInfo().toJson());
+  Response _device() => _json({
+    ...store.deviceInfo().toJson(),
+    'server_time': _now().toUtc().toIso8601String(),
+  });
 
   Future<Response> _pair(String body) async {
     final payload = _pairingPayload;
@@ -134,6 +137,7 @@ class LanSyncServer {
     return _json({
       ...store.deviceInfo().toJson(),
       'shared_secret': payload.pairingSecret,
+      'server_time': _now().toUtc().toIso8601String(),
     });
   }
 
@@ -200,7 +204,10 @@ class LanSyncServer {
   }
 
   Response _unauthorized() {
-    return _json({'error': 'unauthorized'}, status: HttpStatus.unauthorized);
+    return _json({
+      'error': 'unauthorized',
+      'server_time': _now().toUtc().toIso8601String(),
+    }, status: HttpStatus.unauthorized);
   }
 
   Response _json(Object body, {int status = HttpStatus.ok}) {

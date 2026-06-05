@@ -74,9 +74,6 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
       final scanned = await widget.scanBarcode(context);
       if (!mounted || scanned == null || scanned.trim().isEmpty) return;
       final payload = SyncPairingPayload.fromQrJson(scanned.trim());
-      if (payload.expiresAt.isBefore(DateTime.now().toUtc())) {
-        throw const FormatException('Pairing code has expired.');
-      }
       await _pairWithMainDevice(payload);
       await _completePairing();
     } catch (error) {
