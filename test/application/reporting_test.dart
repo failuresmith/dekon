@@ -1,9 +1,15 @@
 import 'package:dekon/src/application/application.dart';
+import 'package:dekon/src/domain/events/events.dart';
+import 'package:dekon/src/persistence/persistence.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../helpers/event_fixtures.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  setUpAll(sqfliteFfiInit);
+
   test(
     'report summary totals are scoped to the requested local date range',
     () async {
@@ -44,4 +50,106 @@ void main() {
       expect(futureSummary.grossMarginMinor, 0);
     },
   );
+
+  test(
+    'local-device report scope excludes transactions from other devices',
+    () async {
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
+      final repository = await DekonRepository.open(database: db);
+      try {
+        await repository.completeDeviceOnboarding(DeviceRole.cashierDevice);
+        final product = await repository.createProduct(
+          name: 'Scoped Tea',
+          barcode: 'SCOPED-TEA',
+          salePriceMinor: 400,
+          purchaseCostMinor: 150,
+        );
+        await repository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 2),
+        ]);
+        await repository.recordSale([
+          TransactionLineDraft(product: product, quantity: 1),
+        ]);
+        await _appendRemoteTransactions(db, product.productId);
+
+        final today = DateTime.now();
+        final range = ReportDateRange(
+          startLocal: DateTime(today.year, today.month, today.day),
+          endLocalExclusive: DateTime(
+            today.year,
+            today.month,
+            today.day,
+          ).add(const Duration(days: 1)),
+        );
+        final localSummary = await repository.reportSummary(
+          range: range,
+          scope: ReportScope.localDevice,
+        );
+        final allSummary = await repository.reportSummary(
+          range: range,
+          scope: ReportScope.allDevices,
+        );
+        final localSales = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+          range: range,
+          scope: ReportScope.localDevice,
+          limit: null,
+        );
+
+        expect(localSummary.salesMinor, 400);
+        expect(localSummary.purchasesMinor, 300);
+        expect(localSummary.grossMarginMinor, 250);
+        expect(allSummary.salesMinor, 1200);
+        expect(allSummary.purchasesMinor, 900);
+        expect(allSummary.grossMarginMinor, 750);
+        expect(localSales, hasLength(1));
+      } finally {
+        await repository.close();
+      }
+    },
+  );
+}
+
+Future<void> _appendRemoteTransactions(Database db, String productId) async {
+  final store = EventStore(db);
+  final projector = DomainProjector(db);
+  final now = DateTime.now().toUtc();
+  final remoteDeviceId = '018f2f12-7b60-7a15-8c7d-000000000002';
+  final purchase = makeTestEvent(
+    eventId: '018f2f12-7b60-7a15-8c7d-000000400001',
+    deviceId: remoteDeviceId,
+    type: EventTypes.inventoryPurchaseRecorded,
+    entityId: 'remote-purchase-1',
+    physicalTimeMillis: now.millisecondsSinceEpoch,
+    createdAt: now,
+    payload: {
+      'occurred_at': now.toIso8601String(),
+      'total_minor': 600,
+      'line_items': [
+        {'product_id': productId, 'quantity': 4, 'unit_cost_minor': 150},
+      ],
+    },
+  );
+  final sale = makeTestEvent(
+    eventId: '018f2f12-7b60-7a15-8c7d-000000400002',
+    deviceId: remoteDeviceId,
+    type: EventTypes.inventorySaleRecorded,
+    entityId: 'remote-sale-1',
+    physicalTimeMillis: now.millisecondsSinceEpoch + 1,
+    createdAt: now.add(const Duration(milliseconds: 1)),
+    payload: {
+      'occurred_at': now.toIso8601String(),
+      'total_minor': 800,
+      'line_items': [
+        {'product_id': productId, 'quantity': 2, 'unit_price_minor': 400},
+      ],
+    },
+  );
+  for (final event in [purchase, sale]) {
+    await store.append(event);
+    await projector.apply(event);
+  }
 }

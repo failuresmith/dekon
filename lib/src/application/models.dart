@@ -70,6 +70,8 @@ class TransactionLineDraft {
 
 enum TransactionHistoryKind { sale, purchase }
 
+enum ReportScope { allDevices, localDevice }
+
 class TransactionHistoryLine {
   const TransactionHistoryLine({
     required this.productName,

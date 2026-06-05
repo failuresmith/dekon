@@ -81,6 +81,30 @@ void main() {
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
   });
 
+  testWidgets('cashier shell hides Inventory and scopes Reports to device', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(
+      onboarded: true,
+      role: DeviceRole.cashierDevice,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sell'), findsWidgets);
+    expect(find.text('Buy'), findsOneWidget);
+    expect(find.text('Inventory'), findsNothing);
+    expect(find.text('Reports'), findsOneWidget);
+
+    await tester.tap(find.text('Reports'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('This Device Reports'), findsOneWidget);
+    expect(find.byKey(const Key('local-device-report-scope')), findsOneWidget);
+    expect(find.byKey(const Key('low-stock-report-metric')), findsNothing);
+  });
+
   testWidgets('unknown barcode opens product creation and adds the item', (
     tester,
   ) async {

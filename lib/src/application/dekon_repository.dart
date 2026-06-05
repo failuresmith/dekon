@@ -322,18 +322,26 @@ class DekonRepository {
     );
   }
 
-  Future<ReportSummary> reportSummary({ReportDateRange? range}) async {
+  Future<ReportSummary> reportSummary({
+    ReportDateRange? range,
+    ReportScope scope = ReportScope.allDevices,
+  }) async {
     final reportRange = range ?? _localDayRange(_now());
     final stockRows = await _stockRows();
     return ReportSummary(
       range: reportRange,
       stockRows: stockRows,
-      salesMinor: await _rangeTotal(TransactionHistoryKind.sale, reportRange),
+      salesMinor: await _rangeTotal(
+        TransactionHistoryKind.sale,
+        reportRange,
+        scope,
+      ),
       purchasesMinor: await _rangeTotal(
         TransactionHistoryKind.purchase,
         reportRange,
+        scope,
       ),
-      grossMarginMinor: await _grossMarginEstimate(reportRange),
+      grossMarginMinor: await _grossMarginEstimate(reportRange, scope),
       lowStockRows: stockRows.where((row) => row.quantity <= 0).toList(),
       unsyncedEventCount: await _eventStore.count(),
       lastSyncAt: await _lastSyncAt(),
@@ -343,11 +351,13 @@ class DekonRepository {
   Future<List<TransactionHistoryEntry>> transactionHistory(
     TransactionHistoryKind kind, {
     ReportDateRange? range,
+    ReportScope scope = ReportScope.allDevices,
     int? limit = 20,
   }) async {
     final source = _transactionSource(kind);
     final where = ['e.type = ?', '${source.alias}.${source.statusColumn} = 0'];
     final args = <Object?>[_transactionType(kind)];
+    _addScopeFilter(where, args, scope);
     if (range != null) {
       where.add('${source.alias}.occurred_at >= ?');
       where.add('${source.alias}.occurred_at < ?');
@@ -435,25 +445,36 @@ class DekonRepository {
   Future<int> _rangeTotal(
     TransactionHistoryKind kind,
     ReportDateRange range,
+    ReportScope scope,
   ) async {
     final source = _transactionSource(kind);
+    final scopeFilter = _scopeSql(scope, 'e');
     final rows = await _db.rawQuery(
       '''
-      SELECT COALESCE(SUM(total_minor), 0) AS total
-      FROM ${source.table}
-      WHERE occurred_at >= ?
-        AND occurred_at < ?
-        AND ${source.statusColumn} = 0
+      SELECT COALESCE(SUM(${source.alias}.total_minor), 0) AS total
+      FROM ${source.table} ${source.alias}
+      JOIN events e ON e.entity_id = ${source.alias}.${source.idColumn}
+      WHERE e.type = ?
+        AND ${source.alias}.occurred_at >= ?
+        AND ${source.alias}.occurred_at < ?
+        AND ${source.alias}.${source.statusColumn} = 0
+        $scopeFilter
       ''',
       [
+        _transactionType(kind),
         range.startUtc.toIso8601String(),
         range.endUtcExclusive.toIso8601String(),
+        if (scope == ReportScope.localDevice) _deviceId,
       ],
     );
     return rows.single['total'] as int;
   }
 
-  Future<int> _grossMarginEstimate(ReportDateRange range) async {
+  Future<int> _grossMarginEstimate(
+    ReportDateRange range,
+    ReportScope scope,
+  ) async {
+    final scopeFilter = _scopeSql(scope, 'e');
     final rows = await _db.rawQuery(
       '''
       SELECT e.payload_json
@@ -463,11 +484,13 @@ class DekonRepository {
         AND s.voided = 0
         AND s.occurred_at >= ?
         AND s.occurred_at < ?
+        $scopeFilter
       ''',
       [
         EventTypes.inventorySaleRecorded,
         range.startUtc.toIso8601String(),
         range.endUtcExclusive.toIso8601String(),
+        if (scope == ReportScope.localDevice) _deviceId,
       ],
     );
     var margin = 0;
@@ -572,6 +595,20 @@ class DekonRepository {
         statusColumn: 'corrected',
       ),
     };
+  }
+
+  void _addScopeFilter(
+    List<String> where,
+    List<Object?> args,
+    ReportScope scope,
+  ) {
+    if (scope != ReportScope.localDevice) return;
+    where.add('e.device_id = ?');
+    args.add(_deviceId);
+  }
+
+  String _scopeSql(ReportScope scope, String alias) {
+    return scope == ReportScope.localDevice ? 'AND $alias.device_id = ?' : '';
   }
 
   DateTime? _optionalDateTime(Map<String, Object?> payload, String key) {

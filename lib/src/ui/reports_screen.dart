@@ -5,9 +5,14 @@ import '../application/application.dart';
 enum _ReportPeriod { day, week, month, custom }
 
 class ReportsScreen extends StatefulWidget {
-  const ReportsScreen({super.key, required this.repository});
+  const ReportsScreen({
+    super.key,
+    required this.repository,
+    this.scope = ReportScope.allDevices,
+  });
 
   final DekonRepository repository;
+  final ReportScope scope;
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -43,9 +48,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Text(
-                        'Reports',
+                        _title,
                         style: Theme.of(context).textTheme.headlineMedium,
                       ),
+                      if (widget.scope == ReportScope.localDevice) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Transactions recorded on this device',
+                          key: const Key('local-device-report-scope'),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       _periodSelector(summary.range),
                       Expanded(child: Center(child: _metrics(summary))),
@@ -101,6 +114,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final availableWidth = MediaQuery.sizeOf(context).width - 32;
     final narrowWidth = (availableWidth - 12) / 2;
     final width = availableWidth >= 340 ? 156.0 : narrowWidth;
+    final showInventorySignals = widget.scope == ReportScope.allDevices;
     return Center(
       child: Wrap(
         alignment: WrapAlignment.center,
@@ -135,13 +149,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
             value: formatMoney(summary.grossMarginMinor),
             width: width,
           ),
-          _metric(
-            key: const Key('low-stock-report-metric'),
-            label: 'Low Stock',
-            value: summary.lowStockRows.length.toString(),
-            width: width,
-            onTap: () => _showLowStock(summary.lowStockRows),
-          ),
+          if (showInventorySignals)
+            _metric(
+              key: const Key('low-stock-report-metric'),
+              label: 'Low Stock',
+              value: summary.lowStockRows.length.toString(),
+              width: width,
+              onTap: () => _showLowStock(summary.lowStockRows),
+            ),
         ],
       ),
     );
@@ -244,6 +259,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final entries = await widget.repository.transactionHistory(
       kind,
       range: range,
+      scope: widget.scope,
       limit: null,
     );
     if (!mounted) return;
@@ -281,7 +297,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<ReportSummary> _loadSummary() {
-    return widget.repository.reportSummary(range: _activeRange());
+    return widget.repository.reportSummary(
+      range: _activeRange(),
+      scope: widget.scope,
+    );
   }
 
   Future<void> _refresh() async {
@@ -366,6 +385,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   String get _salesLabel {
     return _period == _ReportPeriod.day ? 'Daily Sales' : 'Sales';
+  }
+
+  String get _title {
+    return widget.scope == ReportScope.localDevice
+        ? 'This Device Reports'
+        : 'Reports';
   }
 
   String _rangeLabel(ReportDateRange range) {

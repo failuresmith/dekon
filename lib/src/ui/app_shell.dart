@@ -71,26 +71,14 @@ class _AppShellState extends State<AppShell> {
             onCompleted: _reloadRoleSettings,
           );
         }
-        return _appScaffold();
+        return _appScaffold(settings.role);
       },
     );
   }
 
-  Widget _appScaffold() {
-    final screens = [
-      TransactionScreen(
-        repository: widget.repository,
-        mode: TransactionMode.sell,
-        scanBarcode: widget.scanBarcode,
-      ),
-      TransactionScreen(
-        repository: widget.repository,
-        mode: TransactionMode.buy,
-        scanBarcode: widget.scanBarcode,
-      ),
-      InventoryScreen(repository: widget.repository),
-      ReportsScreen(repository: widget.repository),
-    ];
+  Widget _appScaffold(DeviceRole role) {
+    final items = _navigationItems(role);
+    final index = _index >= items.length ? items.length - 1 : _index;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dekon'),
@@ -103,21 +91,66 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
-      body: screens[_index],
+      body: items[index].screen,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
+        selectedIndex: index,
         onDestinationSelected: (value) => setState(() => _index = value),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.point_of_sale), label: 'Sell'),
-          NavigationDestination(icon: Icon(Icons.add_business), label: 'Buy'),
-          NavigationDestination(
+        destinations: [for (final item in items) item.destination],
+      ),
+    );
+  }
+
+  List<_NavigationItem> _navigationItems(DeviceRole role) {
+    final items = [
+      _NavigationItem(
+        screen: TransactionScreen(
+          repository: widget.repository,
+          mode: TransactionMode.sell,
+          scanBarcode: widget.scanBarcode,
+        ),
+        destination: const NavigationDestination(
+          icon: Icon(Icons.point_of_sale),
+          label: 'Sell',
+        ),
+      ),
+      _NavigationItem(
+        screen: TransactionScreen(
+          repository: widget.repository,
+          mode: TransactionMode.buy,
+          scanBarcode: widget.scanBarcode,
+        ),
+        destination: const NavigationDestination(
+          icon: Icon(Icons.add_business),
+          label: 'Buy',
+        ),
+      ),
+    ];
+    if (role == DeviceRole.mainDevice) {
+      items.add(
+        _NavigationItem(
+          screen: InventoryScreen(repository: widget.repository),
+          destination: const NavigationDestination(
             icon: Icon(Icons.inventory_2),
             label: 'Inventory',
           ),
-          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Reports'),
-        ],
+        ),
+      );
+    }
+    items.add(
+      _NavigationItem(
+        screen: ReportsScreen(
+          repository: widget.repository,
+          scope: role == DeviceRole.cashierDevice
+              ? ReportScope.localDevice
+              : ReportScope.allDevices,
+        ),
+        destination: const NavigationDestination(
+          icon: Icon(Icons.bar_chart),
+          label: 'Reports',
+        ),
       ),
     );
+    return items;
   }
 
   void _reloadRoleSettings() {
@@ -143,4 +176,11 @@ class _AppShellState extends State<AppShell> {
       ),
     );
   }
+}
+
+class _NavigationItem {
+  const _NavigationItem({required this.screen, required this.destination});
+
+  final Widget screen;
+  final NavigationDestination destination;
 }

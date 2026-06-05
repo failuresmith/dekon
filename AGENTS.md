@@ -7,3 +7,4 @@
 
 - Transaction quantity controls must support direct numeric entry with select-all-on-focus behavior for bulk Buy/Sell flows; plus/minus buttons are only supplemental.
 - Reports should stay summary-first and minimal. Keep dense lists in tap-through modals, keep summary boxes centered, and place sync metadata after the report content.
+- Cashier devices must not expose Inventory. Their Reports view must clearly indicate and enforce local-device transaction scope.
