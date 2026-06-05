@@ -46,10 +46,12 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_disposed || _closing) return;
+    if (!_controller.value.hasCameraPermission) return;
     switch (state) {
       case AppLifecycleState.resumed:
         unawaited(_startScanner());
       case AppLifecycleState.inactive:
+        unawaited(_pauseScanner());
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
@@ -74,7 +76,10 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
                 onDetect: _handleDetect,
                 onDetectError: _handleError,
                 errorBuilder: (context, error) {
-                  return _ScannerMessage(_messageFor(error));
+                  return _ScannerMessage(
+                    scannerStatusMessageFor(error) ??
+                        'Camera unavailable. Use manual entry.',
+                  );
                 },
                 placeholderBuilder: (context) {
                   return const _ScannerMessage('Starting camera...');
@@ -86,7 +91,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
                   if (state.error?.errorCode ==
                       MobileScannerErrorCode.permissionDenied) {
                     return const _ScannerMessage(
-                      'Camera permission denied. Enter barcode manually.',
+                      'Camera permission denied. Use manual entry.',
                     );
                   }
                   final error = _error;
@@ -118,16 +123,9 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
   }
 
   void _handleError(Object error, StackTrace stackTrace) {
-    final message = _messageFor(error);
+    final message = scannerStatusMessageFor(error);
+    if (message == null) return;
     if (mounted && _error != message) setState(() => _error = message);
-  }
-
-  String _messageFor(Object error) {
-    if (error is MobileScannerException &&
-        error.errorCode == MobileScannerErrorCode.permissionDenied) {
-      return 'Camera permission denied. Enter barcode manually.';
-    }
-    return 'Camera unavailable. Enter barcode manually.';
   }
 
   Future<void> _startScanner() async {
@@ -145,6 +143,15 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
     }
   }
 
+  Future<void> _pauseScanner() async {
+    if (!_controller.value.isRunning) return;
+    try {
+      await _controller.pause();
+    } catch (_) {
+      // Pausing is best-effort while the app is moving between lifecycle states.
+    }
+  }
+
   Future<void> _stopScanner() async {
     if (!_controller.value.isRunning) return;
     try {
@@ -158,6 +165,16 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog>
     await _stopScanner();
     await _controller.dispose();
   }
+}
+
+@visibleForTesting
+String? scannerStatusMessageFor(Object error) {
+  if (error is MobileScannerBarcodeException) return null;
+  if (error is MobileScannerException &&
+      error.errorCode == MobileScannerErrorCode.permissionDenied) {
+    return 'Camera permission denied. Use manual entry.';
+  }
+  return 'Camera unavailable. Use manual entry.';
 }
 
 class _ScannerMessage extends StatelessWidget {
