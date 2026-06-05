@@ -194,6 +194,7 @@ class _AppShellState extends State<AppShell> {
           screen: InventoryScreen(
             key: const ValueKey('inventory-screen'),
             repository: widget.repository,
+            scanBarcode: widget.scanBarcode,
           ),
           destination: const NavigationDestination(
             icon: Icon(Icons.inventory_2_outlined),

@@ -310,7 +310,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bulk Rice'), findsOneWidget);
-    expect(find.text('Stock 125'), findsOneWidget);
+    expect(find.text('Stock: 125'), findsOneWidget);
   });
 
   testWidgets('Restock and Sell are the Inventory stock mutation path', (
@@ -339,7 +339,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Dates'), findsOneWidget);
-    expect(find.text('Stock 2'), findsOneWidget);
+    expect(find.text('Stock: 2'), findsOneWidget);
     final product = (await repository.products()).single;
     expect(
       find.byKey(Key('stock-decrease-${product.productId}')),
@@ -360,7 +360,7 @@ void main() {
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Stock 1'), findsOneWidget);
+    expect(find.text('Stock: 1'), findsOneWidget);
   });
 
   testWidgets('Inventory delete is a soft delete for auditability', (
@@ -378,7 +378,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(Key('edit-${product.productId}')));
+    await tester.tap(find.byKey(Key('inventory-product-${product.productId}')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('soft-delete-product')));
     await tester.pumpAndSettle();
@@ -393,7 +393,66 @@ void main() {
     expect(await repository.productByBarcodeOrSku('AUDIT-1'), isNull);
     expect((await repository.products()).single.productId, product.productId);
     expect(find.text('Audit Beans'), findsNothing);
-    expect(find.text('No products'), findsOneWidget);
+    expect(find.text('No products in inventory'), findsOneWidget);
+  });
+
+  testWidgets('Inventory search and low-stock filter use compact rows', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+    final stocked = await repository.createProduct(
+      name: 'Stocked Tea',
+      barcode: 'STOCKED-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: stocked, quantity: 2),
+    ]);
+    final empty = await repository.createProduct(
+      name: 'Empty Soda',
+      barcode: 'EMPTY-SODA',
+      salePriceMinor: 250,
+      purchaseCostMinor: 100,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('inventory-search-field')), findsOneWidget);
+    expect(find.byKey(const Key('inventory-low-stock-filter')), findsOneWidget);
+    expect(find.byKey(const Key('inventory-add-product')), findsOneWidget);
+    expect(
+      find.byKey(Key('inventory-product-${stocked.productId}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('inventory-product-${empty.productId}')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('inventory-search-field')),
+      'soda',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Empty Soda'), findsOneWidget);
+    expect(find.text('Stocked Tea'), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('inventory-search-field')), '');
+    await tester.tap(find.byKey(const Key('inventory-low-stock-filter')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Empty Soda'), findsOneWidget);
+    expect(find.text('Stocked Tea'), findsNothing);
+
+    await tester.tap(find.byKey(Key('inventory-product-${empty.productId}')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit Product'), findsOneWidget);
   });
 
   testWidgets('scanned known barcode adds item to Sell flow', (tester) async {
@@ -531,10 +590,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Flour'), findsOneWidget);
-    expect(find.textContaining('Stock 1'), findsOneWidget);
+    expect(find.textContaining('Stock: 1'), findsOneWidget);
   });
 
-  testWidgets('Reports use summary tiles and drill-down modals', (
+  testWidgets('Reports use summary tiles and drill-down routes', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
@@ -566,30 +625,25 @@ void main() {
     expect(find.byKey(const Key('report-period-week')), findsOneWidget);
     expect(find.byKey(const Key('report-period-month')), findsOneWidget);
     expect(find.byKey(const Key('report-period-custom')), findsOneWidget);
-    expect(find.text('Daily Sales'), findsOneWidget);
+    expect(find.text('Revenue'), findsOneWidget);
     expect(find.text('4.00'), findsOneWidget);
-    expect(find.text('Low Stock'), findsOneWidget);
-    expect(find.byKey(const Key('report-trend-button')), findsOneWidget);
+    expect(find.text('Low-stock Items'), findsOneWidget);
+    expect(find.byKey(const Key('reports-view-trend-button')), findsOneWidget);
     expect(find.text('Empty Soda'), findsNothing);
-    expect(find.textContaining('Unsynced events:'), findsOneWidget);
-    expect(find.textContaining('Last sync:'), findsOneWidget);
+    expect(find.textContaining('Unsynced events:'), findsNothing);
+    expect(find.textContaining('Last sync:'), findsNothing);
+    expect(find.byKey(const Key('sync-warning')), findsNothing);
     expect(
-      tester.getTopLeft(find.byKey(const Key('sync-status'))).dy,
-      greaterThan(
-        tester.getTopLeft(find.byKey(const Key('sales-report-metric'))).dy,
-      ),
-    );
-    expect(
-      tester.getTopLeft(find.byKey(const Key('report-trend-button'))).dy,
+      tester.getTopLeft(find.byKey(const Key('reports-view-trend-button'))).dy,
       greaterThan(
         tester.getTopLeft(find.byKey(const Key('low-stock-report-metric'))).dy,
       ),
     );
 
-    await tester.tap(find.byKey(const Key('report-trend-button')));
+    await tester.tap(find.byKey(const Key('reports-view-trend-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sales vs Purchases'), findsOneWidget);
+    expect(find.text('Sales Trend'), findsOneWidget);
     expect(find.byKey(const Key('report-trend-period-day')), findsOneWidget);
     expect(find.byKey(const Key('report-trend-period-week')), findsOneWidget);
     expect(find.byKey(const Key('report-trend-period-month')), findsOneWidget);
@@ -599,16 +653,13 @@ void main() {
       find.byKey(const Key('report-trend-selection-summary')),
       findsOneWidget,
     );
-    expect(find.text('Sales'), findsWidgets);
+    expect(find.text('Revenue'), findsWidgets);
     expect(find.text('Purchases'), findsWidgets);
+    expect(find.byKey(const Key('report-trend-text-summary')), findsOneWidget);
     final bucketFinder = find.byWidgetPredicate(
       (widget) => widget.key.toString().contains('report-trend-bucket-'),
     );
     expect(bucketFinder, findsWidgets);
-    final dialogRect = tester.getRect(find.byType(Dialog));
-    final bucketRect = tester.getRect(bucketFinder.first);
-    expect(dialogRect.contains(bucketRect.topLeft), true);
-    expect(dialogRect.contains(bucketRect.bottomRight), true);
 
     await tester.tap(bucketFinder.first);
     await tester.pumpAndSettle();
@@ -623,7 +674,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Last 12 months'), findsOneWidget);
-    await tester.tap(find.byTooltip('Close'));
+    await tester.pageBack();
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('sales-report-metric')));
@@ -644,11 +695,11 @@ void main() {
     await tester.tap(find.byKey(const Key('report-period-week')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sales'), findsOneWidget);
+    expect(find.text('Revenue'), findsOneWidget);
     expect(find.text('Daily Sales'), findsNothing);
   });
 
-  testWidgets('Reports sync labels refresh while the view stays open', (
+  testWidgets('Reports sync warning refreshes while the view stays open', (
     tester,
   ) async {
     final repository = await createTestRepository(onboarded: true);
@@ -674,7 +725,13 @@ void main() {
     await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Unsynced events: 2'), findsOneWidget);
+    expect(find.byKey(const Key('sync-warning')), findsOneWidget);
+    expect(
+      find.text(
+        '2 transactions have not synced yet. Check Device Sync in Settings.',
+      ),
+      findsOneWidget,
+    );
 
     final events = await syncStore.fetchEventsAfter(null, limit: 100);
     await syncStore.updatePushCursor(
@@ -684,7 +741,8 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(find.text('Unsynced events: 0'), findsOneWidget);
+    expect(find.byKey(const Key('sync-warning')), findsNothing);
+    expect(find.textContaining('Last sync:'), findsNothing);
   });
 
   testWidgets('Reports can filter performance by cashier', (tester) async {
@@ -755,7 +813,7 @@ void main() {
     await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Daily Sales'), findsOneWidget);
+    expect(find.text('Revenue'), findsOneWidget);
     expect(find.text('4.00'), findsOneWidget);
   });
 

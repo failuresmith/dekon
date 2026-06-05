@@ -159,7 +159,7 @@ class _SelectedBucketSummary extends StatelessWidget {
             children: [
               _SummaryText(label: 'Period', value: label),
               _SummaryText(
-                label: 'Sales',
+                label: 'Revenue',
                 value: formatMoney(bucket.salesMinor),
               ),
               _SummaryText(
@@ -201,7 +201,7 @@ class _Legend extends StatelessWidget {
     return const Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _LegendItem(color: ReportTrendChart._salesColor, label: 'Sales'),
+        _LegendItem(color: ReportTrendChart._salesColor, label: 'Revenue'),
         SizedBox(width: 16),
         _LegendItem(
           color: ReportTrendChart._purchasesColor,
@@ -257,7 +257,7 @@ class _BucketBars extends StatelessWidget {
       button: true,
       selected: selected,
       label:
-          '$label sales ${formatMoney(bucket.salesMinor)} purchases '
+          '$label revenue ${formatMoney(bucket.salesMinor)} purchases '
           '${formatMoney(bucket.purchasesMinor)}',
       child: Material(
         color: selected

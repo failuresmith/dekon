@@ -3,19 +3,32 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'barcode_scanner_dialog.dart';
 import 'product_form_dialog.dart';
+import 'ui_strings.dart';
+
+enum _InventoryFilter { all, lowStock }
 
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({super.key, required this.repository});
+  const InventoryScreen({
+    super.key,
+    required this.repository,
+    this.scanBarcode = showBarcodeScannerDialog,
+  });
 
   final DekonRepository repository;
+  final BarcodeScanLauncher scanBarcode;
 
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
+  final _queryController = TextEditingController();
   late Future<List<ProductSummary>> _future = widget.repository.products();
+  var _filter = _InventoryFilter.all;
+  var _query = '';
+  String? _barcodeForCreate;
   StreamSubscription<void>? _eventsChangedSubscription;
 
   @override
@@ -37,6 +50,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   void dispose() {
     _eventsChangedSubscription?.cancel();
+    _queryController.dispose();
     super.dispose();
   }
 
@@ -51,45 +65,260 @@ class _InventoryScreenState extends State<InventoryScreen> {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final products = snapshot.requireData
+        final activeProducts = snapshot.requireData
             .where((product) => product.active)
             .toList(growable: false);
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (products.isEmpty)
-                const Text('No products')
-              else
-                for (final product in products) _productRow(product),
-            ],
+        final visibleProducts = _visibleProducts(activeProducts);
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _lookupControls(),
+                const SizedBox(height: 12),
+                _filterAndCreateRow(),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _refresh,
+                    child: _inventoryList(activeProducts, visibleProducts),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _productRow(ProductSummary product) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border.all(color: Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ListTile(
-          title: Text(product.name),
-          subtitle: Text('Stock ${product.quantity.g}'),
-          trailing: IconButton(
-            key: Key('edit-${product.productId}'),
-            tooltip: 'Edit product',
-            onPressed: () => _edit(product),
-            icon: const Icon(Icons.edit),
+  Widget _lookupControls() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            key: const Key('inventory-search-field'),
+            controller: _queryController,
+            decoration: const InputDecoration(
+              hintText: UiStrings.searchProductsOrScanBarcode,
+              prefixIcon: Icon(Icons.search),
+            ),
+            textInputAction: TextInputAction.search,
+            onChanged: _setQuery,
           ),
         ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          key: const Key('inventory-scan-button'),
+          onPressed: _scanProduct,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text(UiStrings.scan),
+        ),
+      ],
+    );
+  }
+
+  Widget _filterAndCreateRow() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        ChoiceChip(
+          key: const Key('inventory-all-filter'),
+          label: const Text(UiStrings.all),
+          selected: _filter == _InventoryFilter.all,
+          onSelected: (_) => setState(() => _filter = _InventoryFilter.all),
+        ),
+        ChoiceChip(
+          key: const Key('inventory-low-stock-filter'),
+          label: const Text(UiStrings.lowStock),
+          selected: _filter == _InventoryFilter.lowStock,
+          onSelected: (_) =>
+              setState(() => _filter = _InventoryFilter.lowStock),
+        ),
+        FilledButton.tonalIcon(
+          key: const Key('inventory-add-product'),
+          onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
+          icon: const Icon(Icons.add),
+          label: const Text(UiStrings.addProduct),
+        ),
+      ],
+    );
+  }
+
+  Widget _inventoryList(
+    List<ProductSummary> activeProducts,
+    List<ProductSummary> visibleProducts,
+  ) {
+    if (activeProducts.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [_emptyInventoryState()],
+      );
+    }
+    if (visibleProducts.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [_emptyFilteredState()],
+      );
+    }
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      itemCount: visibleProducts.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) => _productRow(visibleProducts[index]),
+    );
+  }
+
+  Widget _emptyInventoryState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 12),
+      child: Column(
+        children: [
+          Icon(
+            Icons.inventory_2_outlined,
+            size: 40,
+            color: Theme.of(context).colorScheme.secondary,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'No products in inventory',
+            style: Theme.of(context).textTheme.titleMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Add the first product to start recording\nsales and restocks.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            key: const Key('inventory-empty-add-product'),
+            onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
+            icon: const Icon(Icons.add),
+            label: const Text(UiStrings.addProduct),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _emptyFilteredState() {
+    final query = _query.trim();
+    final message = query.isNotEmpty
+        ? 'No products found for "$query"'
+        : 'No low-stock products';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 12),
+      child: Text(
+        key: const Key('inventory-empty-filtered'),
+        message,
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _productRow(ProductSummary product) {
+    final lowStock = _isLowStock(product);
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label:
+          '${product.name}. Stock ${product.quantity.g}. Open product details.',
+      child: ListTile(
+        key: Key('inventory-product-${product.productId}'),
+        minVerticalPadding: 12,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        title: Text(product.name),
+        subtitle: Text('Stock: ${product.quantity.g}'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (lowStock)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.warning_amber, color: colors.error, size: 18),
+                    const SizedBox(width: 4),
+                    Text(
+                      UiStrings.lowStock,
+                      style: TextStyle(color: colors.error),
+                    ),
+                  ],
+                ),
+              ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+        onTap: () => _edit(product),
+      ),
+    );
+  }
+
+  List<ProductSummary> _visibleProducts(List<ProductSummary> products) {
+    final query = _query.trim().toLowerCase();
+    return [
+      for (final product in products)
+        if ((_filter == _InventoryFilter.all || _isLowStock(product)) &&
+            _matchesQuery(product, query))
+          product,
+    ];
+  }
+
+  bool _matchesQuery(ProductSummary product, String query) {
+    if (query.isEmpty) return true;
+    return product.name.toLowerCase().contains(query) ||
+        (product.barcode?.toLowerCase().contains(query) ?? false) ||
+        (product.sku?.toLowerCase().contains(query) ?? false);
+  }
+
+  bool _isLowStock(ProductSummary product) => product.quantity <= 0;
+
+  void _setQuery(String query) {
+    setState(() {
+      _query = query;
+      if (_barcodeForCreate != null && query.trim() != _barcodeForCreate) {
+        _barcodeForCreate = null;
+      }
+    });
+  }
+
+  Future<void> _scanProduct() async {
+    try {
+      final scanned = await widget.scanBarcode(context);
+      if (!mounted || scanned == null || scanned.trim().isEmpty) return;
+      final query = scanned.trim();
+      final product = await widget.repository.productByBarcodeOrSku(query);
+      if (!mounted) return;
+      if (product != null) {
+        await _edit(product);
+        return;
+      }
+      setState(() {
+        _barcodeForCreate = query;
+        _query = query;
+        _queryController.text = query;
+      });
+      _message('No product found for this barcode.');
+    } catch (_) {
+      if (mounted) _message('Scan unavailable. Search products manually.');
+    }
+  }
+
+  Future<void> _addProduct({String? initialBarcode}) async {
+    await showProductFormDialog(
+      context: context,
+      repository: widget.repository,
+      initialBarcode: initialBarcode,
+    );
+    if (!mounted) return;
+    setState(() => _barcodeForCreate = null);
+    await _refresh();
   }
 
   Future<void> _edit(ProductSummary product) async {
@@ -116,6 +345,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
     setState(() {
       _future = widget.repository.products();
     });
+  }
+
+  void _message(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 }
 

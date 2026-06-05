@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 2 — Transaction workflow complete
+Current phase: Remaining redesign scope complete; manual Android QA pending
 Last updated: 2026-06-05
 
 ## Completed
@@ -19,14 +19,26 @@ Last updated: 2026-06-05
 - [x] Add guided empty states for Sell and Restock
 - [x] Keep transaction summary and primary action visible near the bottom
 - [x] Preserve current negative-stock confirmation policy with row-level warning
+- [x] Replace Inventory cards with compact tappable rows
+- [x] Add Inventory search, barcode scan, All / Low Stock filters, and labeled Add Product action
+- [x] Keep Inventory editing metadata-only; stock remains read-only and ledger-derived
+- [x] Use range-neutral Reports metric labels: Revenue, Purchases, Gross Profit, Low-stock Items
+- [x] Add readable Reports period labels and previous/next period navigation
+- [x] Hide healthy sync diagnostics from Reports and show an operator-facing warning only when transactions are unsynced
+- [x] Replace the sales trend modal with a full-screen Sales Trend route containing a chart and textual summary
+- [x] Split Settings into Device Sync and Backup and Restore pages
+- [x] Hide pairing QR code and local address until pairing / technical details are explicitly opened
+- [x] Rename the active pairing stop action to Stop Pairing
+- [x] Keep backup save and restore errors human-readable and actionable
+- [x] Preserve restore validation before mutation and notify open screens after a successful restore
 
 ## In Progress
 
-- None for Phase 2
+- None
 
 ## Next Step
 
-Proceed to the Inventory redesign phase after reviewing the remaining scope below.
+Run manual Android QA for barcode scanning, LAN pairing, backup save/restore, narrow layouts, and increased text scale.
 
 ## Decisions
 
@@ -42,18 +54,47 @@ Proceed to the Inventory redesign phase after reviewing the remaining scope belo
 - Keep Restock product creation contextual and explicit; unknown Restock barcode now shows a message and `Create New Product` before opening the product form.
 - Keep purchase-cost capture in the existing product metadata flow for now; Restock rows display the current purchase cost used by the draft, but Phase 2 does not add a per-line cost editor.
 - Dismiss stale transaction snackbars when the operator adds a new product so prior success messages do not block the next sticky action.
+- Reuse the existing low-stock report definition (`quantity <= 0`) because the current product model has no low-stock threshold field.
+- Inventory barcode scan opens the matching product metadata dialog; unknown barcodes remain visible in the search field and can prefill Add Product without changing stock.
+- Keep the current report aggregation and cashier filter queries; the redesign changes labels and flow, not financial calculation semantics.
+- Treat the existing gross-margin estimate as a monetary gross-profit value in the UI.
+- Use the existing custom Flutter bar chart implementation instead of adding a chart dependency.
+- Keep the existing Android Storage Access Framework method-channel backup save path and improve the visible flow/copy instead of adding storage permissions.
+- Keep local IP details available only inside Device Sync technical details.
+- Add `DekonRepository.restoreBackup` as a narrow notification wrapper around the existing backup import so open projections refresh after restore.
+- Use a fake LAN sync server in widget tests for Device Sync pairing-mode UI so tests do not bind sockets.
 
 ## Risks and Open Questions
 
-- Confirm whether the current gross-margin value is monetary or percentage-based: both.
+- Confirm whether the current gross-margin value is monetary or percentage-based: implemented as monetary UI label `Gross Profit`; no formula change.
 - Confirm whether negative stock is prohibited or merely warned against: warned.
-- Inspect the Android backup destination strategy.
-- Inventory filters, report sync metadata, backup/recovery UX, and settings subsections are still pending.
-- No Android emulator/manual viewport pass was completed for Phase 1 or Phase 2; widget tests cover navigation, copy, state-preservation, lookup, and transaction behavior.
-- Phase 2 intentionally does not redesign Inventory, Reports, Settings subpages, chart navigation, or backup/recovery.
+- Android backup destination strategy uses the existing `ACTION_CREATE_DOCUMENT` method channel on Android and `file_selector` elsewhere; this pass did not re-test on a physical Android device.
+- No Android emulator/manual viewport pass was completed for this redesign; widget tests cover navigation, copy, state-preservation, lookup, transaction behavior, inventory filtering, report sync warnings, chart routing, settings subpages, and backup/restore dialogs.
+- Build still emits the existing non-blocking `mobile_scanner` Kotlin Gradle Plugin warning; future Flutter versions may require a plugin update.
 - Per-line Restock cost editing remains a follow-up decision because the current UI edits purchase cost through product metadata rather than each transaction row.
 
 ## Verification Log
+
+### 2026-06-05 Completion Pass
+
+- Commands run:
+  - `docker compose run --rm flutter-dev dart format .`
+  - `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart --plain-name "Device Sync hides QR"`
+  - `timeout 180s docker compose run --rm flutter-dev flutter test test/ui/minimal_ui_test.dart test/ui/backup_recovery_ui_test.dart`
+  - `docker compose run --rm flutter-dev flutter analyze`
+  - `timeout 240s docker compose run --rm flutter-dev flutter test`
+  - `timeout 300s docker compose run --rm flutter-dev flutter build apk --debug`
+- Tests passing:
+  - Focused Device Sync widget test: passed.
+  - Focused Inventory / Reports / Settings widget files: 29 tests passed.
+  - `flutter analyze`: No issues found.
+  - `flutter test`: 83 tests passed.
+  - `flutter build apk --debug`: Built `build/app/outputs/flutter-apk/app-debug.apk`.
+- Manual QA completed:
+  - Not run on Android emulator/device in this pass.
+- Remaining failures:
+  - None from automated validation.
+  - Build emitted the existing non-blocking Flutter warning that `mobile_scanner` applies the Kotlin Gradle Plugin and may need a future dependency update.
 
 ### 2026-06-05
 

@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../application/application.dart';
-import 'report_trend_dialog.dart';
+import 'report_trend_page.dart';
+import 'ui_strings.dart';
 
 enum _ReportPeriod { day, week, month, custom }
 
@@ -24,6 +24,7 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   var _period = _ReportPeriod.day;
+  var _anchorLocal = DateTime.now();
   String? _selectedCashierDeviceId;
   DateTimeRange? _customRange;
   late Future<ReportSummary> _future = _loadSummary();
@@ -82,7 +83,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     children: [
                       if (widget.scope == ReportScope.localDevice) ...[
                         Text(
-                          'Transactions recorded on this device',
+                          'Local cashier transactions',
                           key: const Key('local-device-report-scope'),
                           style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
@@ -122,11 +123,29 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        Text(
-          _rangeLabel(range),
-          key: const Key('report-range-label'),
-          style: Theme.of(context).textTheme.bodySmall,
-          textAlign: TextAlign.center,
+        Row(
+          children: [
+            IconButton(
+              key: const Key('report-previous-period'),
+              tooltip: 'Previous $_periodUnitLabel',
+              onPressed: () => _shiftPeriod(-1),
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Expanded(
+              child: Text(
+                _rangeLabel(range),
+                key: const Key('report-range-label'),
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+            ),
+            IconButton(
+              key: const Key('report-next-period'),
+              tooltip: 'Next $_periodUnitLabel',
+              onPressed: () => _shiftPeriod(1),
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
         ),
       ],
     );
@@ -161,38 +180,38 @@ class _ReportsScreenState extends State<ReportsScreen> {
             children: [
               _metric(
                 key: const Key('sales-report-metric'),
-                label: _salesLabel,
+                label: UiStrings.revenue,
                 value: formatMoney(summary.salesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.sale,
-                  title: _salesLabel,
+                  title: UiStrings.revenue,
                   range: summary.range,
                   deviceId: _selectedCashierDeviceId,
                 ),
               ),
               _metric(
                 key: const Key('purchases-report-metric'),
-                label: 'Purchases',
+                label: UiStrings.purchases,
                 value: formatMoney(summary.purchasesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.purchase,
-                  title: 'Purchases',
+                  title: UiStrings.purchases,
                   range: summary.range,
                   deviceId: _selectedCashierDeviceId,
                 ),
               ),
               _metric(
                 key: const Key('gross-margin-report-metric'),
-                label: 'Gross Margin',
+                label: UiStrings.grossProfit,
                 value: formatMoney(summary.grossMarginMinor),
                 width: width,
               ),
               if (showInventorySignals)
                 _metric(
                   key: const Key('low-stock-report-metric'),
-                  label: 'Low Stock',
+                  label: UiStrings.lowStockItems,
                   value: summary.lowStockRows.length.toString(),
                   width: width,
                   onTap: () => _showLowStock(summary.lowStockRows),
@@ -201,10 +220,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ),
           const SizedBox(height: 14),
           OutlinedButton.icon(
-            key: const Key('report-trend-button'),
+            key: const Key('reports-view-trend-button'),
             onPressed: _showTrendChart,
             icon: const Icon(Icons.stacked_bar_chart),
-            label: const Text('View Chart'),
+            label: const Text(UiStrings.viewSalesTrend),
             style: OutlinedButton.styleFrom(
               visualDensity: VisualDensity.compact,
             ),
@@ -239,7 +258,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               initialValue: _selectedCashierDeviceId ?? '',
               decoration: const InputDecoration(
                 isDense: true,
-                labelText: 'Cashier',
+                labelText: 'Cashier device',
               ),
               items: [
                 const DropdownMenuItem(value: '', child: Text('All devices')),
@@ -295,31 +314,78 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Widget _syncStatus(ReportSummary summary) {
-    final lastSync = summary.lastSyncAt == null
-        ? 'Never'
-        : _timestamp(summary.lastSyncAt!);
+    if (summary.unsyncedEventCount == 0) return const SizedBox.shrink();
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(top: 24),
-      child: Center(
-        child: Wrap(
-          key: const Key('sync-status'),
-          alignment: WrapAlignment.center,
-          spacing: 16,
-          runSpacing: 4,
-          children: [
-            Text('Unsynced events: ${summary.unsyncedEventCount}'),
-            Text('Last sync: $lastSync'),
-          ],
+      child: DecoratedBox(
+        key: const Key('sync-warning'),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.error),
+          borderRadius: BorderRadius.circular(8),
+          color: colors.errorContainer.withValues(alpha: 0.35),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber, color: colors.error),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${summary.unsyncedEventCount} transactions have not synced yet. '
+                  'Check Device Sync in Settings.',
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  void _shiftPeriod(int direction) {
+    setState(() {
+      if (_period == _ReportPeriod.custom) {
+        final range = _customRange;
+        if (range != null) {
+          final days = range.duration.inDays + 1;
+          _customRange = DateTimeRange(
+            start: range.start.add(Duration(days: days * direction)),
+            end: range.end.add(Duration(days: days * direction)),
+          );
+        }
+      } else {
+        _anchorLocal = switch (_period) {
+          _ReportPeriod.day => _anchorLocal.add(Duration(days: direction)),
+          _ReportPeriod.week => _anchorLocal.add(Duration(days: 7 * direction)),
+          _ReportPeriod.month => DateTime(
+            _anchorLocal.year,
+            _anchorLocal.month + direction,
+            1,
+          ),
+          _ReportPeriod.custom => _anchorLocal,
+        };
+      }
+      _future = _loadSummary();
+    });
+  }
+
+  String get _periodUnitLabel {
+    return switch (_period) {
+      _ReportPeriod.day => 'day',
+      _ReportPeriod.week => 'week',
+      _ReportPeriod.month => 'month',
+      _ReportPeriod.custom => 'range',
+    };
   }
 
   Future<void> _showLowStock(List<StockReportRow> rows) {
     return showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Low Stock'),
+        title: const Text(UiStrings.lowStock),
         content: SizedBox(
           width: double.maxFinite,
           child: rows.isEmpty
@@ -394,39 +460,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<void> _showTrendChart() async {
-    const landscapeOrientations = [
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ];
-    _requestOrientations(landscapeOrientations);
-    if (!mounted) {
-      _requestOrientations(DeviceOrientation.values);
-      return;
-    }
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => ReportTrendDialog(
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ReportTrendPage(
           repository: widget.repository,
           scope: widget.scope,
           deviceId: _selectedCashierDeviceId,
         ),
-      );
-    } finally {
-      _requestOrientations(DeviceOrientation.values);
-    }
-  }
-
-  void _requestOrientations(List<DeviceOrientation> orientations) {
-    unawaited(_setOrientations(orientations));
-  }
-
-  Future<void> _setOrientations(List<DeviceOrientation> orientations) async {
-    try {
-      await SystemChrome.setPreferredOrientations(orientations);
-    } catch (error) {
-      debugPrint('Report chart orientation request failed: $error');
-    }
+      ),
+    );
   }
 
   Future<ReportSummary> _loadSummary() {
@@ -499,7 +541,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   ReportDateRange _activeRange() {
-    final now = DateTime.now();
+    final now = _anchorLocal;
     return switch (_period) {
       _ReportPeriod.day => _dayRange(now),
       _ReportPeriod.week => _weekRange(now),
@@ -545,19 +587,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return DateTime(value.year, value.month, value.day);
   }
 
-  String get _salesLabel {
-    return _period == _ReportPeriod.day ? 'Daily Sales' : 'Sales';
-  }
-
   String _rangeLabel(ReportDateRange range) {
     final endInclusive = range.endLocalExclusive.subtract(
       const Duration(days: 1),
     );
-    if (_period == _ReportPeriod.day) return _date(range.startLocal);
-    if (_period == _ReportPeriod.month) {
-      return '${range.startLocal.year}-${range.startLocal.month.p2}';
+    if (_period == _ReportPeriod.day) {
+      if (_isSameDay(range.startLocal, DateTime.now())) return 'Today';
+      return _humanDate(range.startLocal);
     }
-    return '${_date(range.startLocal)} - ${_date(endInclusive)}';
+    if (_period == _ReportPeriod.month) {
+      return '${_monthName(range.startLocal.month)} ${range.startLocal.year}';
+    }
+    return '${_humanDate(range.startLocal)} - ${_humanDate(endInclusive)}';
   }
 
   String _lineSummary(TransactionHistoryEntry entry) {
@@ -571,13 +612,31 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return dateTime.toLocal().toString().split('.').first;
   }
 
-  String _date(DateTime dateTime) {
-    return '${dateTime.year}-${dateTime.month.p2}-${dateTime.day.p2}';
+  String _humanDate(DateTime dateTime) {
+    return '${dateTime.day} ${_monthName(dateTime.month)} ${dateTime.year}';
   }
-}
 
-extension on int {
-  String get p2 => toString().padLeft(2, '0');
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _monthName(int month) {
+    const names = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return names[month - 1];
+  }
 }
 
 extension on double {

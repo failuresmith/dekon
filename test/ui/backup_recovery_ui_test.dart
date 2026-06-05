@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/backup/backup.dart';
 import 'package:dekon/src/sync/sync.dart';
@@ -10,7 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../helpers/test_app.dart';
 
 void main() {
-  testWidgets('Settings saves a backup and shows the saved path', (
+  testWidgets('Backup and Restore saves a backup with safe copy', (
     tester,
   ) async {
     final repository = await createTestRepository();
@@ -36,18 +38,16 @@ void main() {
         ),
       );
       await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-backup-restore-tile')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('save-backup')));
       await _pumpUntilFound(
         tester,
-        find.text(
-          'Saved 1 records to /storage/emulated/0/Download/dekon-backup.json',
-        ),
+        find.text('Backup saved successfully: dekon-backup.json'),
       );
 
       expect(
-        find.text(
-          'Saved 1 records to /storage/emulated/0/Download/dekon-backup.json',
-        ),
+        find.text('Backup saved successfully: dekon-backup.json'),
         findsOneWidget,
       );
       expect(backupService.prepareCalled, true);
@@ -87,6 +87,8 @@ void main() {
         ),
       );
       await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-backup-restore-tile')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('restore-backup')));
       await _pumpUntilFound(tester, find.text('Restore backup?'));
 
@@ -94,9 +96,12 @@ void main() {
       expect(find.textContaining('1 records'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('confirm-restore-backup')));
-      await _pumpUntilFound(tester, find.text('Restored 1 records'));
+      await _pumpUntilFound(tester, find.byKey(const Key('backup-status')));
 
-      expect(find.text('Restored 1 records'), findsOneWidget);
+      final status = tester.widget<Text>(
+        find.byKey(const Key('backup-status')),
+      );
+      expect(status.data, 'Backup restored successfully');
       expect(backupService.importCalled, true);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -104,11 +109,11 @@ void main() {
     }
   });
 
-  testWidgets('Settings hides device role and shows connect cashier action', (
+  testWidgets('Device Sync hides QR and local address until pairing starts', (
     tester,
   ) async {
     final repository = await createTestRepository();
-    final syncServer = repository.createLanSyncServer();
+    final syncServer = _FakeLanSyncServer(repository);
     try {
       await tester.pumpWidget(
         _reportsApp(
@@ -121,8 +126,29 @@ void main() {
 
       expect(find.text('Device Role'), findsNothing);
       expect(find.byKey(const Key('cashier-device-role')), findsNothing);
-      expect(find.text('Connect Cashier Device'), findsOneWidget);
-      expect(find.text('Start LAN Sync'), findsNothing);
+      expect(find.byKey(const Key('sync-pairing-qr')), findsNothing);
+      expect(find.byKey(const Key('sync-server-url')), findsNothing);
+      expect(find.byKey(const Key('save-backup')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Connect Another Device'), findsOneWidget);
+      expect(find.byKey(const Key('sync-pairing-qr')), findsNothing);
+
+      await tester.tap(
+        find.byKey(const Key('device-sync-start-pairing-button')),
+      );
+      await _pumpUntilFound(tester, find.byKey(const Key('sync-pairing-qr')));
+
+      expect(find.byKey(const Key('sync-pairing-qr')), findsOneWidget);
+      expect(find.text('Stop Pairing'), findsOneWidget);
+      expect(find.byKey(const Key('sync-server-url')), findsNothing);
+
+      await tester.tap(find.text('Technical details'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sync-server-url')), findsOneWidget);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();
@@ -159,6 +185,8 @@ void main() {
         ),
       );
       await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
       await _pumpUntilFound(tester, find.byKey(const Key('pair-main-device')));
       await tester.tap(find.byKey(const Key('pair-main-device')));
       await _pumpUntilFound(tester, find.text('Paired with Main Device.'));
@@ -202,6 +230,9 @@ void main() {
           },
         ),
       );
+      await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
       await _pumpUntilFound(
         tester,
         find.byKey(const Key('pair-main-device-manual')),
@@ -254,11 +285,15 @@ void main() {
         ),
       );
       await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-backup-restore-tile')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('save-backup')));
       await _pumpUntilFound(tester, find.byKey(const Key('retry-backup')));
 
       expect(
-        find.text('Backup failed: Storage access was denied.'),
+        find.text(
+          'Could not save the backup.\nChoose another folder or check that the selected location is writable.',
+        ),
         findsOneWidget,
       );
       expect(find.byKey(const Key('retry-backup')), findsOneWidget);
@@ -376,5 +411,42 @@ class _FakeBackupService implements BackupRunner {
   Future<BackupImportResult> importBackup(String contents) async {
     importCalled = true;
     return importResult!;
+  }
+}
+
+class _FakeLanSyncServer extends LanSyncServer {
+  _FakeLanSyncServer(DekonRepository repository)
+    : super(store: repository.createSyncStore());
+
+  var _running = false;
+
+  @override
+  bool get isRunning => _running;
+
+  @override
+  String? get serverUrl => _running ? 'http://192.168.1.10:40739' : null;
+
+  @override
+  String? get pairingQrData => _running
+      ? SyncPairingPayload(
+          baseUrl: serverUrl!,
+          serverDeviceId: store.localDeviceId,
+          pairingSecret: 'pairing-secret',
+          expiresAt: DateTime.utc(2026, 6, 5, 12),
+        ).toQrJson()
+      : null;
+
+  @override
+  Future<void> start({
+    InternetAddress? address,
+    int port = 0,
+    Duration pairingTtl = const Duration(minutes: 10),
+  }) async {
+    _running = true;
+  }
+
+  @override
+  Future<void> stop() async {
+    _running = false;
   }
 }

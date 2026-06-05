@@ -73,6 +73,13 @@ class DekonRepository {
     return BackupService(database: _db);
   }
 
+  Future<BackupImportResult> restoreBackup(String contents) async {
+    final result = await createBackupService().importBackup(contents);
+    _syncActivityBus.notifyEventsChanged();
+    _syncActivityBus.notifySyncStateChanged();
+    return result;
+  }
+
   Future<DeviceRole> deviceRole() async {
     return (await deviceRoleSettings()).role;
   }
