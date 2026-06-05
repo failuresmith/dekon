@@ -6,8 +6,10 @@ import 'package:dekon/src/sync/sync.dart';
 import 'package:dekon/src/ui/barcode_scanner_dialog.dart';
 import 'package:dekon/src/ui/cashier_pairing_panel.dart';
 import 'package:dekon/src/ui/settings_screen.dart';
+import 'package:dekon/src/ui/ui_strings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shelf/shelf.dart';
 
 import '../helpers/test_app.dart';
 
@@ -109,6 +111,30 @@ void main() {
     }
   });
 
+  testWidgets('Settings opens minimal About screen with Dekon link', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    try {
+      await tester.pumpWidget(
+        _reportsApp(repository, backupFiles: const _FakeBackupFiles()),
+      );
+      await _pumpWork(tester);
+
+      await tester.tap(find.byKey(const Key('settings-about-tile')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('About'), findsOneWidget);
+      expect(find.byKey(const Key('about-link')), findsOneWidget);
+      expect(find.text('https://ble.ir/dekon'), findsOneWidget);
+      expect(find.text('Device Sync'), findsNothing);
+      expect(find.text('Backup and Restore'), findsNothing);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
   testWidgets('Device Sync hides QR and local address until pairing starts', (
     tester,
   ) async {
@@ -149,6 +175,53 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('sync-server-url')), findsOneWidget);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await syncServer.stop();
+      await repository.close();
+    }
+  });
+
+  testWidgets('Device Sync opens peer messages modal on demand', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    final syncServer = repository.createLanSyncServer();
+    try {
+      await syncServer.handler(
+        Request('GET', Uri.parse('http://localhost/health')),
+      );
+      await tester.pumpWidget(
+        _reportsApp(
+          repository,
+          backupFiles: const _FakeBackupFiles(),
+          syncServer: syncServer,
+        ),
+      );
+      await _pumpWork(tester);
+
+      expect(find.text('Peer messages'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sync-peer-messages-button')), findsNothing);
+
+      await tester.tap(find.text('Technical details'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sync-peer-messages-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Peer messages'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('clear-sync-peer-messages')), findsOneWidget);
+      expect(find.textContaining('Received GET /health'), findsOneWidget);
+      expect(find.textContaining('Sent 200 GET /health'), findsOneWidget);
+      expect(find.text('No peer messages yet.'), findsNothing);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();
@@ -327,19 +400,51 @@ Widget _reportsApp(
   MainDevicePairer? pairWithMainDevice,
   MainDeviceAddressPairer? pairWithMainDeviceAddress,
 }) {
-  return MaterialApp(
-    home: Scaffold(
-      body: SettingsScreen(
-        repository: repository,
-        syncServer: syncServer,
-        backupFiles: backupFiles,
-        backupService: backupService,
-        scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
-        pairWithMainDevice: pairWithMainDevice,
-        pairWithMainDeviceAddress: pairWithMainDeviceAddress,
+  return _TestLanguageHost(
+    child: MaterialApp(
+      home: Scaffold(
+        body: SettingsScreen(
+          repository: repository,
+          syncServer: syncServer,
+          backupFiles: backupFiles,
+          backupService: backupService,
+          scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
+          pairWithMainDevice: pairWithMainDevice,
+          pairWithMainDeviceAddress: pairWithMainDeviceAddress,
+        ),
       ),
     ),
   );
+}
+
+class _TestLanguageHost extends StatefulWidget {
+  const _TestLanguageHost({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_TestLanguageHost> createState() => _TestLanguageHostState();
+}
+
+class _TestLanguageHostState extends State<_TestLanguageHost> {
+  late final AppLanguageController _languageController = AppLanguageController(
+    initialLanguage: AppLanguage.english,
+    saveLanguage: (_) async {},
+  );
+
+  @override
+  void dispose() {
+    _languageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppLanguageScope(
+      controller: _languageController,
+      child: widget.child,
+    );
+  }
 }
 
 class _FakeBackupFiles extends BackupFileActions {

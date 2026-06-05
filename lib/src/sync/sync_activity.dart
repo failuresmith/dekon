@@ -1,13 +1,25 @@
 import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
 
 class SyncActivityBus {
+  SyncActivityBus({this.maxPeerMessages = 50});
+
+  final int maxPeerMessages;
   final _eventsChanged = StreamController<void>.broadcast();
   final _syncStateChanged = StreamController<void>.broadcast();
   final _transfers = StreamController<SyncTransferActivity>.broadcast();
+  final _peerMessages = StreamController<SyncPeerMessage>.broadcast();
+  final _peerMessageLog = ListQueue<SyncPeerMessage>();
 
   Stream<void> get eventsChanged => _eventsChanged.stream;
   Stream<void> get syncStateChanged => _syncStateChanged.stream;
   Stream<SyncTransferActivity> get transfers => _transfers.stream;
+  Stream<SyncPeerMessage> get peerMessages => _peerMessages.stream;
+
+  List<SyncPeerMessage> peerMessageSnapshot() {
+    return List.unmodifiable(_peerMessageLog);
+  }
 
   void notifyEventsChanged() {
     if (!_eventsChanged.isClosed) _eventsChanged.add(null);
@@ -22,10 +34,24 @@ class SyncActivityBus {
     _transfers.add(activity);
   }
 
+  void recordPeerMessage(SyncPeerMessage message) {
+    if (_peerMessages.isClosed || maxPeerMessages <= 0) return;
+    _peerMessageLog.add(message);
+    while (_peerMessageLog.length > maxPeerMessages) {
+      _peerMessageLog.removeFirst();
+    }
+    _peerMessages.add(message);
+  }
+
+  void clearPeerMessages() {
+    _peerMessageLog.clear();
+  }
+
   Future<void> close() async {
     await _eventsChanged.close();
     await _syncStateChanged.close();
     await _transfers.close();
+    await _peerMessages.close();
   }
 }
 
@@ -40,3 +66,93 @@ class SyncTransferActivity {
 }
 
 enum SyncTransferDirection { sent, received }
+
+class SyncPeerMessage {
+  const SyncPeerMessage({
+    required this.timestamp,
+    required this.direction,
+    required this.method,
+    required this.path,
+    this.statusCode,
+    this.peerDeviceId,
+    this.summary,
+    this.bodyPreview,
+  });
+
+  final DateTime timestamp;
+  final SyncPeerMessageDirection direction;
+  final String method;
+  final String path;
+  final int? statusCode;
+  final String? peerDeviceId;
+  final String? summary;
+  final String? bodyPreview;
+
+  static String? bodyPreviewFrom(String? body, {int maxLength = 1200}) {
+    final trimmed = body?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    String preview;
+    try {
+      preview = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(_redact(jsonDecode(trimmed)));
+    } on Object {
+      preview = trimmed;
+    }
+    if (preview.length <= maxLength) return preview;
+    return '${preview.substring(0, maxLength)}...';
+  }
+
+  static String? summaryFrom(String? body) {
+    final trimmed = body?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is! Map) return null;
+      final events = decoded['events'];
+      if (events is List) return '${events.length} event(s)';
+      if (decoded['shared_secret'] != null) return 'Pairing result';
+      if (decoded['pairing_secret'] != null ||
+          decoded['manual_pairing'] == true) {
+        return 'Pairing request';
+      }
+      final outcomes = <String>[];
+      for (final key in ['accepted', 'duplicate', 'unsupported', 'rejected']) {
+        final value = decoded[key];
+        if (value is List && value.isNotEmpty) {
+          outcomes.add('$key: ${value.length}');
+        }
+      }
+      if (outcomes.isNotEmpty) return outcomes.join(', ');
+      final error = decoded['error'];
+      if (error is String) return 'error: $error';
+      if (decoded['device_id'] != null) return 'Device info';
+    } on Object {
+      return null;
+    }
+    return null;
+  }
+
+  static Object? _redact(Object? value) {
+    if (value is Map) {
+      return {
+        for (final entry in value.entries)
+          entry.key: _isSensitiveKey(entry.key)
+              ? '[redacted]'
+              : _redact(entry.value),
+      };
+    }
+    if (value is List) return [for (final item in value) _redact(item)];
+    return value;
+  }
+
+  static bool _isSensitiveKey(Object? key) {
+    final normalized = key.toString().toLowerCase();
+    return normalized.contains('secret') ||
+        normalized.contains('signature') ||
+        normalized.contains('password') ||
+        normalized.contains('token');
+  }
+}
+
+enum SyncPeerMessageDirection { sent, received }

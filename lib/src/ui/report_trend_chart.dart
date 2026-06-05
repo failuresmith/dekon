@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'ui_strings.dart';
 
 class ReportTrendChart extends StatefulWidget {
   const ReportTrendChart({
@@ -43,9 +44,9 @@ class _ReportTrendChartState extends State<ReportTrendChart> {
       (max, bucket) => math.max(max, bucket.maxMinor),
     );
     if (buckets.isEmpty || maxMinor == 0) {
-      return const Center(
-        key: Key('report-trend-empty'),
-        child: Text('No sales or purchases in this period'),
+      return Center(
+        key: const Key('report-trend-empty'),
+        child: Text(context.strings.noSalesPurchasesInPeriod),
       );
     }
     final selectedIndex = _selectedIndex ?? buckets.length - 1;
@@ -108,27 +109,9 @@ class _ReportTrendChartState extends State<ReportTrendChart> {
     return switch (period) {
       ReportTrendPeriod.day => '${start.month}/${start.day}',
       ReportTrendPeriod.week => '${start.month}/${start.day}',
-      ReportTrendPeriod.month => _monthName(start.month),
+      ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
       ReportTrendPeriod.year => start.year.toString(),
     };
-  }
-
-  String _monthName(int month) {
-    const names = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return names[month - 1];
   }
 }
 
@@ -157,16 +140,19 @@ class _SelectedBucketSummary extends StatelessWidget {
             spacing: 14,
             runSpacing: 6,
             children: [
-              _SummaryText(label: 'Period', value: label),
+              _SummaryText(label: context.strings.period, value: label),
               _SummaryText(
-                label: 'Revenue',
+                label: context.strings.revenue,
                 value: formatMoney(bucket.salesMinor),
               ),
               _SummaryText(
-                label: 'Purchases',
+                label: context.strings.purchases,
                 value: formatMoney(bucket.purchasesMinor),
               ),
-              _SummaryText(label: 'Net', value: formatMoney(netMinor)),
+              _SummaryText(
+                label: context.strings.net,
+                value: formatMoney(netMinor),
+              ),
             ],
           ),
         ),
@@ -198,14 +184,17 @@ class _Legend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _LegendItem(color: ReportTrendChart._salesColor, label: 'Revenue'),
-        SizedBox(width: 16),
+        _LegendItem(
+          color: ReportTrendChart._salesColor,
+          label: context.strings.revenue,
+        ),
+        const SizedBox(width: 16),
         _LegendItem(
           color: ReportTrendChart._purchasesColor,
-          label: 'Purchases',
+          label: context.strings.purchases,
         ),
       ],
     );
@@ -251,14 +240,16 @@ class _BucketBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = _bucketLabel(bucket.range.startLocal, period);
+    final label = _bucketLabel(context, bucket.range.startLocal, period);
     final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
-      label:
-          '$label revenue ${formatMoney(bucket.salesMinor)} purchases '
-          '${formatMoney(bucket.purchasesMinor)}',
+      label: context.strings.reportTrendBucketSemantics(
+        label: label,
+        revenueAmount: formatMoney(bucket.salesMinor),
+        purchasesAmount: formatMoney(bucket.purchasesMinor),
+      ),
       child: Material(
         color: selected
             ? colors.primaryContainer.withValues(alpha: 0.35)
@@ -318,31 +309,17 @@ class _BucketBars extends StatelessWidget {
     );
   }
 
-  String _bucketLabel(DateTime start, ReportTrendPeriod period) {
+  String _bucketLabel(
+    BuildContext context,
+    DateTime start,
+    ReportTrendPeriod period,
+  ) {
     return switch (period) {
       ReportTrendPeriod.day => '${start.month}/${start.day}',
       ReportTrendPeriod.week => '${start.month}/${start.day}',
-      ReportTrendPeriod.month => _monthName(start.month),
+      ReportTrendPeriod.month => context.strings.shortMonthName(start.month),
       ReportTrendPeriod.year => start.year.toString(),
     };
-  }
-
-  String _monthName(int month) {
-    const names = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return names[month - 1];
   }
 }
 

@@ -55,7 +55,9 @@ class _AppShellState extends State<AppShell> {
         if (snapshot.hasError) {
           return Scaffold(
             appBar: AppBar(title: const Text('Dekon')),
-            body: Center(child: Text('Startup failed: ${snapshot.error}')),
+            body: Center(
+              child: Text(context.strings.startupFailed(snapshot.error!)),
+            ),
           );
         }
         if (!snapshot.hasData) {
@@ -110,10 +112,11 @@ class _AppShellState extends State<AppShell> {
   }
 
   Widget _historyAction(TransactionMode mode) {
+    final strings = context.strings;
     final isSell = mode == TransactionMode.sell;
     return IconButton(
       key: Key(isSell ? 'sell-history' : 'restock-history'),
-      tooltip: isSell ? UiStrings.saleHistory : UiStrings.restockHistory,
+      tooltip: isSell ? strings.saleHistory : strings.restockHistory,
       onPressed: () => showTransactionHistoryDialog(
         context: context,
         repository: widget.repository,
@@ -132,7 +135,7 @@ class _AppShellState extends State<AppShell> {
       children: [
         IconButton(
           key: const Key('open-settings'),
-          tooltip: 'Settings',
+          tooltip: context.strings.settings,
           onPressed: _openSettings,
           icon: const Icon(Icons.settings),
         ),
@@ -151,11 +154,12 @@ class _AppShellState extends State<AppShell> {
   }
 
   List<_NavigationItem> _navigationItems(DeviceRoleSettings settings) {
+    final strings = context.strings;
     final role = settings.role;
     final items = [
       _NavigationItem(
         tab: MainTab.sell,
-        title: UiStrings.sell,
+        title: strings.sell,
         screen: TransactionScreen(
           key: const ValueKey('sell-screen'),
           repository: widget.repository,
@@ -166,12 +170,12 @@ class _AppShellState extends State<AppShell> {
         destination: const NavigationDestination(
           icon: Icon(Icons.point_of_sale_outlined),
           selectedIcon: Icon(Icons.point_of_sale),
-          label: UiStrings.sell,
+          label: '',
         ),
       ),
       _NavigationItem(
         tab: MainTab.restock,
-        title: UiStrings.restock,
+        title: strings.restock,
         screen: TransactionScreen(
           key: const ValueKey('restock-screen'),
           repository: widget.repository,
@@ -182,24 +186,26 @@ class _AppShellState extends State<AppShell> {
         destination: const NavigationDestination(
           icon: Icon(Icons.add_business_outlined),
           selectedIcon: Icon(Icons.add_business),
-          label: UiStrings.restock,
+          label: '',
         ),
       ),
     ];
+    items[0] = items[0].copyWithDestinationLabel(strings.sell);
+    items[1] = items[1].copyWithDestinationLabel(strings.restock);
     if (role == DeviceRole.mainDevice || settings.locked) {
       items.add(
         _NavigationItem(
           tab: MainTab.inventory,
-          title: UiStrings.inventory,
+          title: strings.inventory,
           screen: InventoryScreen(
             key: const ValueKey('inventory-screen'),
             repository: widget.repository,
             scanBarcode: widget.scanBarcode,
           ),
-          destination: const NavigationDestination(
-            icon: Icon(Icons.inventory_2_outlined),
-            selectedIcon: Icon(Icons.inventory_2),
-            label: UiStrings.inventory,
+          destination: NavigationDestination(
+            icon: const Icon(Icons.inventory_2_outlined),
+            selectedIcon: const Icon(Icons.inventory_2),
+            label: strings.inventory,
           ),
         ),
       );
@@ -211,17 +217,17 @@ class _AppShellState extends State<AppShell> {
       _NavigationItem(
         tab: MainTab.reports,
         title: reportScope == ReportScope.localDevice
-            ? UiStrings.thisDeviceReports
-            : UiStrings.reports,
+            ? strings.thisDeviceReports
+            : strings.reports,
         screen: ReportsScreen(
           key: const ValueKey('reports-screen'),
           repository: widget.repository,
           scope: reportScope,
         ),
-        destination: const NavigationDestination(
-          icon: Icon(Icons.bar_chart_outlined),
-          selectedIcon: Icon(Icons.bar_chart),
-          label: UiStrings.reports,
+        destination: NavigationDestination(
+          icon: const Icon(Icons.bar_chart_outlined),
+          selectedIcon: const Icon(Icons.bar_chart),
+          label: strings.reports,
         ),
       ),
     );
@@ -239,7 +245,7 @@ class _AppShellState extends State<AppShell> {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text(UiStrings.settings)),
+          appBar: AppBar(title: Text(context.strings.settings)),
           body: SettingsScreen(
             repository: widget.repository,
             syncServer: _syncServer,
@@ -267,4 +273,18 @@ class _NavigationItem {
   final Widget screen;
   final NavigationDestination destination;
   final TransactionMode? historyMode;
+
+  _NavigationItem copyWithDestinationLabel(String label) {
+    return _NavigationItem(
+      tab: tab,
+      title: title,
+      screen: screen,
+      historyMode: historyMode,
+      destination: NavigationDestination(
+        icon: destination.icon,
+        selectedIcon: destination.selectedIcon,
+        label: label,
+      ),
+    );
+  }
 }

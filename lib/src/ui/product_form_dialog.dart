@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'ui_strings.dart';
 
 Future<ProductSummary?> showProductFormDialog({
   required BuildContext context,
@@ -72,8 +73,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   @override
   Widget build(BuildContext context) {
     final editing = widget.product != null;
+    final strings = context.strings;
     return AlertDialog(
-      title: Text(editing ? 'Edit Product' : 'Create Product'),
+      title: Text(editing ? strings.editProduct : strings.createProduct),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -83,32 +85,32 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               TextFormField(
                 key: const Key('product-name'),
                 controller: _name,
-                decoration: const InputDecoration(labelText: 'Name'),
+                decoration: InputDecoration(labelText: strings.name),
                 validator: _required,
               ),
               TextFormField(
                 key: const Key('product-barcode'),
                 controller: _barcode,
-                decoration: const InputDecoration(labelText: 'Barcode'),
+                decoration: InputDecoration(labelText: strings.barcode),
               ),
               TextFormField(
                 controller: _sku,
-                decoration: const InputDecoration(
-                  labelText: 'SKU - Internal Product Code',
+                decoration: InputDecoration(
+                  labelText: strings.skuInternalProductCode,
                 ),
               ),
               TextFormField(
                 key: const Key('product-sale-price'),
                 controller: _salePrice,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Sale price'),
+                decoration: InputDecoration(labelText: strings.salePrice),
                 validator: _money,
               ),
               TextFormField(
                 key: const Key('product-cost'),
                 controller: _cost,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Purchase cost'),
+                decoration: InputDecoration(labelText: strings.purchaseCost),
                 validator: _money,
               ),
             ],
@@ -121,17 +123,17 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
             key: const Key('soft-delete-product'),
             onPressed: _saving ? null : _softDelete,
             icon: const Icon(Icons.delete_outline),
-            label: const Text('Delete'),
+            label: Text(strings.delete),
           ),
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(strings.cancel),
         ),
         FilledButton.icon(
           key: const Key('save-product'),
           onPressed: _saving ? null : _save,
           icon: const Icon(Icons.save),
-          label: Text(_saving ? 'Saving' : 'Save'),
+          label: Text(_saving ? strings.saving : strings.save),
         ),
       ],
     );
@@ -166,7 +168,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       if (existing != null) await widget.repository.updateProduct(product);
       if (mounted) Navigator.pop(context, product);
     } catch (error) {
-      if (mounted) _showError('Product save failed', error);
+      if (mounted) _showError(context.strings.productSaveFailed(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -180,7 +182,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       await widget.repository.softDeleteProduct(widget.product!.productId);
       if (mounted) Navigator.pop(context);
     } catch (error) {
-      if (mounted) _showError('Product delete failed', error);
+      if (mounted) _showError(context.strings.productDeleteFailed(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -190,34 +192,34 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete product?'),
-        content: const Text(
-          'This hides the item from Restock and Sell while keeping its history for reports.',
-        ),
+        title: Text(dialogContext.strings.deleteProductQuestion),
+        content: Text(dialogContext.strings.deleteProductHelp),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(dialogContext.strings.cancel),
           ),
           FilledButton.icon(
             key: const Key('confirm-soft-delete-product'),
             onPressed: () => Navigator.pop(dialogContext, true),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('Delete'),
+            label: Text(dialogContext.strings.delete),
           ),
         ],
       ),
     );
   }
 
-  void _showError(String message, Object error) {
+  void _showError(String message) {
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$message: $error')));
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String? _required(String? value) {
-    return value == null || value.trim().isEmpty ? 'Required' : null;
+    return value == null || value.trim().isEmpty
+        ? context.strings.requiredField
+        : null;
   }
 
   String? _money(String? value) {

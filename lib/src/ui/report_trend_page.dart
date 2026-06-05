@@ -27,7 +27,7 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sales Trend')),
+      appBar: AppBar(title: Text(context.strings.salesTrend)),
       body: SafeArea(
         top: false,
         child: Padding(
@@ -70,7 +70,9 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('Chart failed: ${snapshot.error}'));
+          return Center(
+            child: Text(context.strings.chartFailed(snapshot.error!)),
+          );
         }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -115,10 +117,10 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
 
   String _periodLabel(ReportTrendPeriod period) {
     return switch (period) {
-      ReportTrendPeriod.day => 'Day',
-      ReportTrendPeriod.week => 'Week',
-      ReportTrendPeriod.month => 'Month',
-      ReportTrendPeriod.year => 'Year',
+      ReportTrendPeriod.day => context.strings.day,
+      ReportTrendPeriod.week => context.strings.week,
+      ReportTrendPeriod.month => context.strings.month,
+      ReportTrendPeriod.year => context.strings.year,
     };
   }
 
@@ -132,21 +134,23 @@ class _ReportTrendPageState extends State<ReportTrendPage> {
       (sum, bucket) => sum + bucket.purchasesMinor,
     );
     if (revenue == 0 && purchases == 0) {
-      return 'No sales or purchases in $_windowLabel.';
+      return context.strings.noSalesPurchasesInWindow(_windowLabel);
     }
     final net = revenue - purchases;
-    return 'Sales trend for $_windowLabel. '
-        '${UiStrings.revenue}: ${formatMoney(revenue)}. '
-        '${UiStrings.purchases}: ${formatMoney(purchases)}. '
-        'Net: ${formatMoney(net)}.';
+    return context.strings.trendSummary(
+      window: _windowLabel,
+      revenueAmount: formatMoney(revenue),
+      purchasesAmount: formatMoney(purchases),
+      netAmount: formatMoney(net),
+    );
   }
 
   String get _windowLabel {
     return switch (_period) {
-      ReportTrendPeriod.day => 'Last 7 days',
-      ReportTrendPeriod.week => 'Last 8 weeks',
-      ReportTrendPeriod.month => 'Last 12 months',
-      ReportTrendPeriod.year => 'Last 5 years',
+      ReportTrendPeriod.day => context.strings.last7Days,
+      ReportTrendPeriod.week => context.strings.last8Weeks,
+      ReportTrendPeriod.month => context.strings.last12Months,
+      ReportTrendPeriod.year => context.strings.last5Years,
     };
   }
 }

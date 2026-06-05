@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../application/application.dart';
+import 'ui_strings.dart';
+
 typedef BarcodeScanLauncher = Future<String?> Function(BuildContext context);
 
 Future<String?> showBarcodeScannerDialog(BuildContext context) {
@@ -24,7 +27,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Scan barcode'),
+      title: Text(context.strings.scanBarcode),
       content: SizedBox(
         width: 320,
         height: 320,
@@ -38,12 +41,12 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
                 onDetectError: _handleError,
                 errorBuilder: (context, error) {
                   return _ScannerMessage(
-                    scannerStatusMessageFor(error) ??
-                        'Camera unavailable. Enter barcode manually.',
+                    scannerStatusMessageFor(error, strings: context.strings) ??
+                        context.strings.cameraUnavailableEnterManual,
                   );
                 },
                 placeholderBuilder: (context) {
-                  return const _ScannerMessage('Starting camera...');
+                  return _ScannerMessage(context.strings.startingCamera);
                 },
               ),
               if (_error != null) _ScannerMessage(_error!),
@@ -55,7 +58,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
         TextButton(
           key: const Key('manual-barcode-entry'),
           onPressed: () => Navigator.pop(context),
-          child: const Text('Manual entry'),
+          child: Text(context.strings.manualEntry),
         ),
       ],
     );
@@ -70,36 +73,38 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
   }
 
   void _handleError(Object error, StackTrace stackTrace) {
-    final message = scannerStatusMessageFor(error);
+    final message = scannerStatusMessageFor(error, strings: context.strings);
     if (message == null) return;
     if (mounted && _error != message) setState(() => _error = message);
   }
 }
 
 @visibleForTesting
-String? scannerStatusMessageFor(Object error) {
+String? scannerStatusMessageFor(Object error, {UiStrings? strings}) {
+  final text = strings ?? UiStrings.forLanguage(AppLanguage.english);
   if (error is MobileScannerBarcodeException) return null;
 
   if (error is MobileScannerException) {
     final action = error.errorCode == MobileScannerErrorCode.permissionDenied
-        ? 'Camera permission denied. Enter barcode manually.'
-        : 'Camera unavailable. Enter barcode manually.';
-    return '$action\n\n${_scannerDebugDetails(error)}';
+        ? text.cameraPermissionDeniedEnterManual
+        : text.cameraUnavailableEnterManual;
+    return '$action\n\n${_scannerDebugDetails(error, text)}';
   }
 
-  return 'Camera unavailable. Enter barcode manually.\n\n'
-      'Scanner error: ${error.runtimeType}';
+  return '${text.cameraUnavailableEnterManual}\n\n'
+      '${text.scannerError(error.runtimeType.toString())}';
 }
 
-String _scannerDebugDetails(MobileScannerException error) {
+String _scannerDebugDetails(MobileScannerException error, UiStrings strings) {
   final details = error.errorDetails;
   final lines = <String>[
-    'Scanner error: ${error.errorCode.name}',
-    if (_displayValue(details?.code) case final code?) 'Platform code: $code',
+    strings.scannerError(error.errorCode.name),
+    if (_displayValue(details?.code) case final code?)
+      strings.platformCode(code),
     if (_displayValue(details?.message) case final message?)
-      'Platform message: $message',
+      strings.platformMessage(message),
     if (_displayValue(details?.details) case final platformDetails?)
-      'Platform details: $platformDetails',
+      strings.platformDetails(platformDetails),
   ];
   return lines.join('\n');
 }

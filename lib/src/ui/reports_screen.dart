@@ -63,7 +63,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('Reports failed: ${snapshot.error}'));
+          return Center(
+            child: Text(context.strings.reportsFailed(snapshot.error!)),
+          );
         }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -83,7 +85,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     children: [
                       if (widget.scope == ReportScope.localDevice) ...[
                         Text(
-                          'Local cashier transactions',
+                          context.strings.localCashierTransactions,
                           key: const Key('local-device-report-scope'),
                           style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
@@ -116,10 +118,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            _periodChip(_ReportPeriod.day, 'Day'),
-            _periodChip(_ReportPeriod.week, 'Week'),
-            _periodChip(_ReportPeriod.month, 'Month'),
-            _periodChip(_ReportPeriod.custom, 'Custom'),
+            _periodChip(_ReportPeriod.day, context.strings.day),
+            _periodChip(_ReportPeriod.week, context.strings.week),
+            _periodChip(_ReportPeriod.month, context.strings.month),
+            _periodChip(_ReportPeriod.custom, context.strings.custom),
           ],
         ),
         const SizedBox(height: 8),
@@ -127,7 +129,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           children: [
             IconButton(
               key: const Key('report-previous-period'),
-              tooltip: 'Previous $_periodUnitLabel',
+              tooltip: context.strings.previousPeriod(_periodUnitLabel),
               onPressed: () => _shiftPeriod(-1),
               icon: const Icon(Icons.chevron_left),
             ),
@@ -141,7 +143,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
             IconButton(
               key: const Key('report-next-period'),
-              tooltip: 'Next $_periodUnitLabel',
+              tooltip: context.strings.nextPeriod(_periodUnitLabel),
               onPressed: () => _shiftPeriod(1),
               icon: const Icon(Icons.chevron_right),
             ),
@@ -180,38 +182,38 @@ class _ReportsScreenState extends State<ReportsScreen> {
             children: [
               _metric(
                 key: const Key('sales-report-metric'),
-                label: UiStrings.revenue,
+                label: context.strings.revenue,
                 value: formatMoney(summary.salesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.sale,
-                  title: UiStrings.revenue,
+                  title: context.strings.revenue,
                   range: summary.range,
                   deviceId: _selectedCashierDeviceId,
                 ),
               ),
               _metric(
                 key: const Key('purchases-report-metric'),
-                label: UiStrings.purchases,
+                label: context.strings.purchases,
                 value: formatMoney(summary.purchasesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.purchase,
-                  title: UiStrings.purchases,
+                  title: context.strings.purchases,
                   range: summary.range,
                   deviceId: _selectedCashierDeviceId,
                 ),
               ),
               _metric(
                 key: const Key('gross-margin-report-metric'),
-                label: UiStrings.grossProfit,
+                label: context.strings.grossProfit,
                 value: formatMoney(summary.grossMarginMinor),
                 width: width,
               ),
               if (showInventorySignals)
                 _metric(
                   key: const Key('low-stock-report-metric'),
-                  label: UiStrings.lowStockItems,
+                  label: context.strings.lowStockItems,
                   value: summary.lowStockRows.length.toString(),
                   width: width,
                   onTap: () => _showLowStock(summary.lowStockRows),
@@ -223,7 +225,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
             key: const Key('reports-view-trend-button'),
             onPressed: _showTrendChart,
             icon: const Icon(Icons.stacked_bar_chart),
-            label: const Text(UiStrings.viewSalesTrend),
+            label: Text(context.strings.viewSalesTrend),
             style: OutlinedButton.styleFrom(
               visualDensity: VisualDensity.compact,
             ),
@@ -246,7 +248,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           if (selectedCashierMissing)
             CashierReportFilter(
               deviceId: selectedDeviceId,
-              label: 'Selected cashier',
+              label: context.strings.selectedCashier,
             ),
           ...cashiers,
         ];
@@ -256,12 +258,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
             child: DropdownButtonFormField<String>(
               key: const Key('cashier-report-filter'),
               initialValue: _selectedCashierDeviceId ?? '',
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                labelText: 'Cashier device',
+                labelText: context.strings.cashierDeviceField,
               ),
               items: [
-                const DropdownMenuItem(value: '', child: Text('All devices')),
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(context.strings.allDevices),
+                ),
                 for (final cashier in filterItems)
                   DropdownMenuItem(
                     value: cashier.deviceId,
@@ -334,8 +339,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '${summary.unsyncedEventCount} transactions have not synced yet. '
-                  'Check Device Sync in Settings.',
+                  context.strings.unsyncedTransactionsWarning(
+                    summary.unsyncedEventCount,
+                  ),
                 ),
               ),
             ],
@@ -374,10 +380,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   String get _periodUnitLabel {
     return switch (_period) {
-      _ReportPeriod.day => 'day',
-      _ReportPeriod.week => 'week',
-      _ReportPeriod.month => 'month',
-      _ReportPeriod.custom => 'range',
+      _ReportPeriod.day => context.strings.periodUnitDay,
+      _ReportPeriod.week => context.strings.periodUnitWeek,
+      _ReportPeriod.month => context.strings.periodUnitMonth,
+      _ReportPeriod.custom => context.strings.periodUnitRange,
     };
   }
 
@@ -385,11 +391,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text(UiStrings.lowStock),
+        title: Text(context.strings.lowStock),
         content: SizedBox(
           width: double.maxFinite,
           child: rows.isEmpty
-              ? const Text('No low-stock products')
+              ? Text(context.strings.noLowStockProducts)
               : ListView.builder(
                   shrinkWrap: true,
                   itemCount: rows.length,
@@ -397,7 +403,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     final row = rows[index];
                     return ListTile(
                       title: Text(row.name),
-                      trailing: Text('Qty ${row.quantity.g}'),
+                      trailing: Text(
+                        context.strings.quantityShort(row.quantity.g),
+                      ),
                     );
                   },
                 ),
@@ -405,7 +413,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(context.strings.close),
           ),
         ],
       ),
@@ -433,7 +441,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         content: SizedBox(
           width: double.maxFinite,
           child: entries.isEmpty
-              ? const Text('No transactions')
+              ? Text(context.strings.noTransactions)
               : ListView.builder(
                   shrinkWrap: true,
                   itemCount: entries.length,
@@ -452,7 +460,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(context.strings.close),
           ),
         ],
       ),
@@ -592,17 +600,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
       const Duration(days: 1),
     );
     if (_period == _ReportPeriod.day) {
-      if (_isSameDay(range.startLocal, DateTime.now())) return 'Today';
+      if (_isSameDay(range.startLocal, DateTime.now())) {
+        return context.strings.today;
+      }
       return _humanDate(range.startLocal);
     }
     if (_period == _ReportPeriod.month) {
-      return '${_monthName(range.startLocal.month)} ${range.startLocal.year}';
+      return '${context.strings.monthName(range.startLocal.month)} ${range.startLocal.year}';
     }
     return '${_humanDate(range.startLocal)} - ${_humanDate(endInclusive)}';
   }
 
   String _lineSummary(TransactionHistoryEntry entry) {
-    if (entry.lines.isEmpty) return 'No line details';
+    if (entry.lines.isEmpty) return context.strings.noLineDetails;
     return entry.lines
         .map((line) => '${line.productName} x${line.quantity.g}')
         .join(', ');
@@ -613,29 +623,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   String _humanDate(DateTime dateTime) {
-    return '${dateTime.day} ${_monthName(dateTime.month)} ${dateTime.year}';
+    return '${dateTime.day} ${context.strings.monthName(dateTime.month)} ${dateTime.year}';
   }
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
-  String _monthName(int month) {
-    const names = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    return names[month - 1];
   }
 }
 

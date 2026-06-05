@@ -72,64 +72,90 @@ class LanSyncServer {
 
   Future<Response> _handle(Request request) async {
     try {
+      final body = request.method == 'POST'
+          ? await request.readAsString()
+          : null;
+      _recordPeerMessage(
+        direction: SyncPeerMessageDirection.received,
+        request: request,
+        body: body,
+      );
       final path = request.requestedUri.path;
-      if (request.method == 'GET' && path == '/health') return _health();
-      if (request.method == 'GET' && path == '/device') return _device();
+      if (request.method == 'GET' && path == '/health') {
+        return _health(request);
+      }
+      if (request.method == 'GET' && path == '/device') {
+        return _device(request);
+      }
       if (request.method == 'POST' && path == '/pair') {
-        return _pair(await request.readAsString());
+        return _pair(request, body ?? '');
       }
       if (request.method == 'GET' && path == '/events') {
         final peer = await _authenticate(request, const []);
-        if (peer == null) return _unauthorized();
+        if (peer == null) return _unauthorized(request);
         return _events(request, peer);
       }
       if (request.method == 'POST' && path == '/events') {
-        final body = await request.readAsString();
-        final bodyBytes = utf8.encode(body);
+        final bodyBytes = utf8.encode(body ?? '');
         final peer = await _authenticate(request, bodyBytes);
-        if (peer == null) return _unauthorized();
-        return _postEvents(body, peer);
+        if (peer == null) return _unauthorized(request);
+        return _postEvents(request, body ?? '', peer);
       }
       if (request.method == 'GET' && path == '/sync/state') {
         final peer = await _authenticate(request, const []);
-        if (peer == null) return _unauthorized();
+        if (peer == null) return _unauthorized(request);
         await store.markPeerSuccess(peer.deviceId);
-        return _json(await store.state().then((state) => state.toJson()));
+        return _json(
+          await store.state().then((state) => state.toJson()),
+          request: request,
+        );
       }
-      return _json({'error': 'not_found'}, status: HttpStatus.notFound);
+      return _json(
+        {'error': 'not_found'},
+        status: HttpStatus.notFound,
+        request: request,
+      );
     } on FormatException {
-      return _json({'error': 'bad_request'}, status: HttpStatus.badRequest);
+      return _json(
+        {'error': 'bad_request'},
+        status: HttpStatus.badRequest,
+        request: request,
+      );
     } on Object {
-      return _json({
-        'error': 'sync_request_failed',
-      }, status: HttpStatus.internalServerError);
+      return _json(
+        {'error': 'sync_request_failed'},
+        status: HttpStatus.internalServerError,
+        request: request,
+      );
     }
   }
 
-  Response _health() {
+  Response _health(Request request) {
     return _json({
       'status': 'ok',
       'device_id': store.localDeviceId,
       'server_time': _now().toUtc().toIso8601String(),
-    });
+    }, request: request);
   }
 
-  Response _device() => _json({
+  Response _device(Request request) => _json({
     ...store.deviceInfo().toJson(),
     'server_time': _now().toUtc().toIso8601String(),
-  });
+  }, request: request);
 
-  Future<Response> _pair(String body) async {
+  Future<Response> _pair(Request request, String body) async {
     final payload = _pairingPayload;
     if (payload == null || payload.expiresAt.isBefore(_now().toUtc())) {
-      return _json({
-        'error': 'pairing_unavailable',
-      }, status: HttpStatus.forbidden);
+      return _json(
+        {'error': 'pairing_unavailable'},
+        status: HttpStatus.forbidden,
+        request: request,
+      );
     }
     final decoded = _decodeMap(body);
     final manualPairing = decoded['manual_pairing'] == true;
     if (!manualPairing && decoded['pairing_secret'] != payload.pairingSecret) {
-      return _unauthorized();
+      return _unauthorized(request);
     }
     final peerDeviceId = _requiredString(decoded, 'device_id');
     final assignedDisplayName = await store.trustCashierPeer(
@@ -142,7 +168,7 @@ class LanSyncServer {
       'shared_secret': payload.pairingSecret,
       'assigned_display_name': assignedDisplayName,
       'server_time': _now().toUtc().toIso8601String(),
-    });
+    }, request: request);
   }
 
   Future<Response> _events(Request request, TrustedPeer peer) async {
@@ -168,16 +194,22 @@ class LanSyncServer {
           ? cursor?.encode()
           : SyncCursor.fromEvent(events.last).encode(),
       'has_more': page.length > limit,
-    });
+    }, request: request);
   }
 
-  Future<Response> _postEvents(String body, TrustedPeer peer) async {
+  Future<Response> _postEvents(
+    Request request,
+    String body,
+    TrustedPeer peer,
+  ) async {
     final decoded = _decodeMap(body);
     final rawEvents = decoded['events'];
     if (rawEvents is! List) {
-      return _json({
-        'error': 'events_must_be_list',
-      }, status: HttpStatus.badRequest);
+      return _json(
+        {'error': 'events_must_be_list'},
+        status: HttpStatus.badRequest,
+        request: request,
+      );
     }
     final events = <EventEnvelope>[];
     final malformed = <EventRejection>[];
@@ -199,7 +231,7 @@ class LanSyncServer {
       store.notifyTransfer(SyncTransferDirection.received, events.length);
     }
     await store.markPeerSuccess(peer.deviceId);
-    return _json(result.toJson());
+    return _json(result.toJson(), request: request);
   }
 
   Future<TrustedPeer?> _authenticate(
@@ -220,19 +252,57 @@ class LanSyncServer {
     return valid ? peer : null;
   }
 
-  Response _unauthorized() {
-    return _json({
-      'error': 'unauthorized',
-      'server_time': _now().toUtc().toIso8601String(),
-    }, status: HttpStatus.unauthorized);
+  Response _unauthorized(Request request) {
+    return _json(
+      {
+        'error': 'unauthorized',
+        'server_time': _now().toUtc().toIso8601String(),
+      },
+      status: HttpStatus.unauthorized,
+      request: request,
+    );
   }
 
-  Response _json(Object body, {int status = HttpStatus.ok}) {
+  Response _json(Object body, {int status = HttpStatus.ok, Request? request}) {
+    final encoded = jsonEncode(body);
+    if (request != null) {
+      _recordPeerMessage(
+        direction: SyncPeerMessageDirection.sent,
+        request: request,
+        statusCode: status,
+        body: encoded,
+      );
+    }
     return Response(
       status,
-      body: jsonEncode(body),
+      body: encoded,
       headers: const {'content-type': 'application/json; charset=utf-8'},
     );
+  }
+
+  void _recordPeerMessage({
+    required SyncPeerMessageDirection direction,
+    required Request request,
+    int? statusCode,
+    String? body,
+  }) {
+    store.recordPeerMessage(
+      SyncPeerMessage(
+        timestamp: _now().toUtc(),
+        direction: direction,
+        method: request.method,
+        path: _messagePath(request.requestedUri),
+        statusCode: statusCode,
+        peerDeviceId: request.headers[SyncAuthHeaders.deviceId],
+        summary: SyncPeerMessage.summaryFrom(body),
+        bodyPreview: SyncPeerMessage.bodyPreviewFrom(body),
+      ),
+    );
+  }
+
+  String _messagePath(Uri uri) {
+    final path = uri.path.isEmpty ? '/' : uri.path;
+    return uri.hasQuery ? '$path?${uri.query}' : path;
   }
 
   Map<String, Object?> _decodeMap(String body) {

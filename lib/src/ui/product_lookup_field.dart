@@ -52,9 +52,9 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
               child: TextField(
                 key: const Key('barcode-entry'),
                 controller: _queryController,
-                decoration: const InputDecoration(
-                  hintText: UiStrings.scanBarcodeOrSearchProduct,
-                  prefixIcon: Icon(Icons.search),
+                decoration: InputDecoration(
+                  hintText: context.strings.scanBarcodeOrSearchProduct,
+                  prefixIcon: const Icon(Icons.search),
                 ),
                 textInputAction: TextInputAction.search,
                 onChanged: _onQueryChanged,
@@ -66,7 +66,7 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
               key: const Key('scan-barcode'),
               onPressed: _busy ? null : _scan,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text(UiStrings.scan),
+              label: Text(context.strings.scan),
             ),
           ],
         ),
@@ -93,7 +93,9 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
                   ListTile(
                     key: Key('product-search-result-${product.productId}'),
                     title: Text(product.name),
-                    subtitle: Text('Stock ${product.quantity.g}'),
+                    subtitle: Text(
+                      context.strings.stockInline(product.quantity.g),
+                    ),
                     onTap: () => _selectProduct(product),
                   ),
               ],
@@ -115,7 +117,9 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
       _queryController.text = query;
       await _lookupExact(query, barcodeForCreate: query);
     } catch (_) {
-      if (mounted) _message('Scan unavailable. Enter barcode manually.');
+      if (mounted) {
+        _message(context.strings.scanUnavailableEnterBarcodeManually);
+      }
     }
   }
 
@@ -213,12 +217,12 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
           children: [
             Text(
               isBarcodeMiss
-                  ? 'This barcode is not in your inventory.'
-                  : 'No products found for "$query".',
+                  ? context.strings.thisBarcodeNotInInventory
+                  : '${context.strings.noProductsFoundFor(query)}.',
             ),
             if (!widget.allowCreateProduct) ...[
               const SizedBox(height: 4),
-              const Text(UiStrings.productNotFoundRestockFirst),
+              Text(context.strings.productNotFoundRestockFirst),
             ],
             if (widget.allowCreateProduct) ...[
               const SizedBox(height: 8),
@@ -228,7 +232,7 @@ class _ProductLookupFieldState extends State<ProductLookupField> {
                     ? null
                     : () => _createProduct(initialBarcode: createBarcode),
                 icon: const Icon(Icons.add),
-                label: const Text(UiStrings.createNewProduct),
+                label: Text(context.strings.createNewProduct),
               ),
             ],
           ],

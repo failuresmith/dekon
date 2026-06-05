@@ -37,10 +37,11 @@ class LanSyncClient {
       'display_name': displayName,
       'pairing_secret': payload.pairingSecret,
     });
-    final response = await _client.post(
+    final response = await _post(
       uri,
       headers: const {'content-type': 'application/json'},
       body: body,
+      peerDeviceId: payload.serverDeviceId,
     );
     if (response.statusCode != 200) {
       throw SyncClientException('Pairing failed with ${response.statusCode}.');
@@ -72,7 +73,7 @@ class LanSyncClient {
   }) async {
     final baseUrl = _normalizeManualAddress(address);
     final deviceUri = Uri.parse(baseUrl).resolve('/device');
-    final deviceResponse = await _client.get(deviceUri);
+    final deviceResponse = await _get(deviceUri);
     if (deviceResponse.statusCode != 200) {
       throw SyncClientException(
         'Main device lookup failed with ${deviceResponse.statusCode}.',
@@ -81,7 +82,7 @@ class LanSyncClient {
     _updateClockOffsetFromBody(deviceResponse.body);
     final deviceInfo = SyncDeviceInfo.fromJson(jsonDecode(deviceResponse.body));
     final pairUri = Uri.parse(baseUrl).resolve('/pair');
-    final response = await _client.post(
+    final response = await _post(
       pairUri,
       headers: const {'content-type': 'application/json'},
       body: jsonEncode({
@@ -89,6 +90,7 @@ class LanSyncClient {
         'display_name': displayName,
         'manual_pairing': true,
       }),
+      peerDeviceId: deviceInfo.deviceId,
     );
     if (response.statusCode != 200) {
       throw SyncClientException('Pairing failed with ${response.statusCode}.');
@@ -245,15 +247,17 @@ class LanSyncClient {
   }
 
   Future<http.Response> _authenticatedGet(Uri uri, TrustedPeer peer) async {
-    var response = await _client.get(
+    var response = await _get(
       uri,
       headers: _authHeaders('GET', uri, const [], peer),
+      peerDeviceId: peer.deviceId,
     );
     if (response.statusCode == 401 &&
         _updateClockOffsetFromBody(response.body)) {
-      response = await _client.get(
+      response = await _get(
         uri,
         headers: _authHeaders('GET', uri, const [], peer),
+        peerDeviceId: peer.deviceId,
       );
     }
     return response;
@@ -269,12 +273,92 @@ class LanSyncClient {
       'content-type': 'application/json',
       ..._authHeaders('POST', uri, bodyBytes, peer),
     };
-    var response = await _client.post(uri, headers: headers(), body: body);
+    var response = await _post(
+      uri,
+      headers: headers(),
+      body: body,
+      peerDeviceId: peer.deviceId,
+    );
     if (response.statusCode == 401 &&
         _updateClockOffsetFromBody(response.body)) {
-      response = await _client.post(uri, headers: headers(), body: body);
+      response = await _post(
+        uri,
+        headers: headers(),
+        body: body,
+        peerDeviceId: peer.deviceId,
+      );
     }
     return response;
+  }
+
+  Future<http.Response> _get(
+    Uri uri, {
+    Map<String, String>? headers,
+    String? peerDeviceId,
+  }) async {
+    _recordPeerMessage(
+      direction: SyncPeerMessageDirection.sent,
+      method: 'GET',
+      uri: uri,
+      peerDeviceId: peerDeviceId,
+    );
+    final response = await _client.get(uri, headers: headers);
+    _recordPeerMessage(
+      direction: SyncPeerMessageDirection.received,
+      method: 'GET',
+      uri: uri,
+      statusCode: response.statusCode,
+      peerDeviceId: peerDeviceId,
+      body: response.body,
+    );
+    return response;
+  }
+
+  Future<http.Response> _post(
+    Uri uri, {
+    required Map<String, String> headers,
+    required String body,
+    String? peerDeviceId,
+  }) async {
+    _recordPeerMessage(
+      direction: SyncPeerMessageDirection.sent,
+      method: 'POST',
+      uri: uri,
+      peerDeviceId: peerDeviceId,
+      body: body,
+    );
+    final response = await _client.post(uri, headers: headers, body: body);
+    _recordPeerMessage(
+      direction: SyncPeerMessageDirection.received,
+      method: 'POST',
+      uri: uri,
+      statusCode: response.statusCode,
+      peerDeviceId: peerDeviceId,
+      body: response.body,
+    );
+    return response;
+  }
+
+  void _recordPeerMessage({
+    required SyncPeerMessageDirection direction,
+    required String method,
+    required Uri uri,
+    int? statusCode,
+    String? peerDeviceId,
+    String? body,
+  }) {
+    store.recordPeerMessage(
+      SyncPeerMessage(
+        timestamp: _now().toUtc(),
+        direction: direction,
+        method: method,
+        path: _messagePath(uri),
+        statusCode: statusCode,
+        peerDeviceId: peerDeviceId,
+        summary: SyncPeerMessage.summaryFrom(body),
+        bodyPreview: SyncPeerMessage.bodyPreviewFrom(body),
+      ),
+    );
   }
 
   String _normalizeManualAddress(String address) {
@@ -293,6 +377,11 @@ class LanSyncClient {
       port: uri.hasPort ? uri.port : 0,
     );
     return normalized.toString().replaceFirst(RegExp(r'/$'), '');
+  }
+
+  String _messagePath(Uri uri) {
+    final path = uri.path.isEmpty ? '/' : uri.path;
+    return uri.hasQuery ? '$path?${uri.query}' : path;
   }
 
   Map<String, String> _authHeaders(

@@ -30,8 +30,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
   var _saving = false;
 
   bool get _isSell => widget.mode == TransactionMode.sell;
-  String get _emptyStateText =>
-      _isSell ? UiStrings.sellEmptyState : UiStrings.restockEmptyState;
+  String get _emptyStateText => _isSell
+      ? context.strings.sellEmptyState
+      : context.strings.restockEmptyState;
   int get _totalMinor => _lines.fold(
     0,
     (sum, line) =>
@@ -87,7 +88,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              UiStrings.noProductsAddedYet,
+              context.strings.noProductsAddedYet,
               key: Key(_isSell ? 'sell-empty-title' : 'restock-empty-title'),
               style: Theme.of(context).textTheme.titleMedium,
               textAlign: TextAlign.center,
@@ -135,12 +136,18 @@ class _TransactionScreenState extends State<TransactionScreen> {
                       ),
                       Text(
                         _isSell
-                            ? '${formatMoney(line.unitPriceMinor)} each'
-                            : 'Current stock: ${line.product.quantity.g}',
+                            ? context.strings.eachPrice(
+                                formatMoney(line.unitPriceMinor),
+                              )
+                            : context.strings.currentStock(
+                                line.product.quantity.g,
+                              ),
                       ),
                       if (!_isSell)
                         Text(
-                          'Purchase cost: ${formatMoney(line.unitCostMinor)} each',
+                          context.strings.purchaseCostEach(
+                            formatMoney(line.unitCostMinor),
+                          ),
                         ),
                     ],
                   ),
@@ -148,7 +155,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 _quantityControls(index, line),
                 IconButton(
                   key: Key('remove-line-$index'),
-                  tooltip: 'Remove product',
+                  tooltip: context.strings.removeProduct,
                   onPressed: () => _removeLine(index),
                   icon: const Icon(Icons.delete_outline),
                 ),
@@ -172,8 +179,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        'Only ${line.product.quantity.g} is available in stock. '
-                        'The sale needs confirmation before completion.',
+                        context.strings.availableStockWarning(
+                          line.product.quantity.g,
+                        ),
                         key: Key('negative-warning-${line.product.productId}'),
                         style: TextStyle(color: colors.error),
                       ),
@@ -193,7 +201,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
       children: [
         IconButton(
           key: Key('decrease-line-$index'),
-          tooltip: 'Decrease quantity',
+          tooltip: context.strings.decreaseQuantity,
           onPressed: line.quantity <= 1
               ? null
               : () {
@@ -210,7 +218,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
         ),
         IconButton(
           key: Key('increase-line-$index'),
-          tooltip: 'Increase quantity',
+          tooltip: context.strings.increaseQuantity,
           onPressed: () {
             FocusManager.instance.primaryFocus?.unfocus();
             _changeQuantity(index, 1);
@@ -236,7 +244,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'Items: ${_lines.length}',
+                    context.strings.itemsCount(_lines.length),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -254,10 +262,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
               icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),
               label: Text(
                 _saving
-                    ? 'Saving'
+                    ? context.strings.saving
                     : _isSell
-                    ? UiStrings.completeSale
-                    : UiStrings.addToInventory,
+                    ? context.strings.completeSale
+                    : context.strings.addToInventory,
               ),
             ),
           ],
@@ -317,11 +325,14 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   Future<void> _finish() async {
     if (_saving) return;
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _saving = true);
     try {
       if (_isSell) {
         final negativeProductIds = await widget.repository
             .negativeStockProductIds(_lines);
+        if (!mounted) return;
         if (negativeProductIds.isNotEmpty) {
           setState(() {
             _negativeProductIds
@@ -329,6 +340,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
               ..addAll(negativeProductIds);
           });
           final proceed = await _confirmNegativeStock(negativeProductIds);
+          if (!mounted) return;
           if (proceed != true) return;
         } else {
           setState(_negativeProductIds.clear);
@@ -336,17 +348,19 @@ class _TransactionScreenState extends State<TransactionScreen> {
       }
       if (_isSell) {
         await widget.repository.recordSale(_lines);
-        _message(UiStrings.saleCompleted);
+        if (!mounted) return;
+        _message(messenger, strings.saleCompleted);
       } else {
         await widget.repository.recordPurchase(_lines);
-        _message(UiStrings.inventoryUpdated);
+        if (!mounted) return;
+        _message(messenger, strings.inventoryUpdated);
       }
       setState(() {
         _lines.clear();
         _negativeProductIds.clear();
       });
     } catch (error) {
-      _message('Save failed: $error');
+      if (mounted) _message(messenger, strings.saveFailed(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -360,28 +374,25 @@ class _TransactionScreenState extends State<TransactionScreen> {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Negative stock warning'),
-        content: Text(
-          'This sale will make stock negative for: $names.\n'
-          'The affected row is highlighted.',
-        ),
+        title: Text(context.strings.negativeStockWarning),
+        content: Text(context.strings.negativeStockContent(names)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(context.strings.cancel),
           ),
           FilledButton(
             key: const Key('confirm-negative-stock'),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Continue'),
+            child: Text(context.strings.continueAction),
           ),
         ],
       ),
     );
   }
 
-  void _message(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  void _message(ScaffoldMessengerState messenger, String text) {
+    messenger.showSnackBar(SnackBar(content: Text(text)));
   }
 }
 
@@ -391,6 +402,7 @@ Future<void> showTransactionHistoryDialog({
   required TransactionMode mode,
 }) async {
   final isSell = mode == TransactionMode.sell;
+  final strings = context.strings;
   final kind = isSell
       ? TransactionHistoryKind.sale
       : TransactionHistoryKind.purchase;
@@ -399,11 +411,11 @@ Future<void> showTransactionHistoryDialog({
   await showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text(isSell ? UiStrings.saleHistory : UiStrings.restockHistory),
+      title: Text(isSell ? strings.saleHistory : strings.restockHistory),
       content: SizedBox(
         width: double.maxFinite,
         child: history.isEmpty
-            ? const Text('No previous transactions')
+            ? Text(strings.noPreviousTransactions)
             : ListView.builder(
                 shrinkWrap: true,
                 itemCount: history.length,
@@ -413,7 +425,7 @@ Future<void> showTransactionHistoryDialog({
                     title: Text(formatMoney(entry.totalMinor)),
                     subtitle: Text(
                       '${_timestamp(entry.occurredAt)}\n'
-                      '${_historyLineSummary(entry)}',
+                      '${_historyLineSummary(entry, strings)}',
                     ),
                   );
                 },
@@ -422,15 +434,15 @@ Future<void> showTransactionHistoryDialog({
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(strings.close),
         ),
       ],
     ),
   );
 }
 
-String _historyLineSummary(TransactionHistoryEntry entry) {
-  if (entry.lines.isEmpty) return 'No line details';
+String _historyLineSummary(TransactionHistoryEntry entry, UiStrings strings) {
+  if (entry.lines.isEmpty) return strings.noLineDetails;
   return entry.lines
       .map((line) => '${line.productName} x${line.quantity.g}')
       .join(', ');

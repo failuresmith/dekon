@@ -109,6 +109,36 @@ void main() {
     expect(find.byKey(const Key('restock-history')), findsNothing);
   });
 
+  testWidgets('Settings language choice updates copy and persists', (
+    tester,
+  ) async {
+    final repository = await createTestRepository(onboarded: true);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('settings-language-tile')), findsOneWidget);
+    expect(find.text('Language'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('settings-language-tile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('language-option-fa')));
+    await tester.pumpAndSettle();
+
+    expect(await repository.appLanguage(), AppLanguage.farsi);
+    expect(find.text('زبان به روز شد'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('فروش'), findsWidgets);
+    expect(find.text('تنظیمات'), findsNothing);
+  });
+
   testWidgets('root tab state is preserved while switching screens', (
     tester,
   ) async {

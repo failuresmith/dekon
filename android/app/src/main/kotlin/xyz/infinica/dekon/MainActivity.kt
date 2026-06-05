@@ -1,6 +1,7 @@
 package xyz.infinica.dekon
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -29,6 +30,15 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "saveBackupFile" -> saveBackupFile(call, result)
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            APP_ACTIONS_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openUrl" -> openUrl(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -109,6 +119,27 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun openUrl(call: MethodCall, result: MethodChannel.Result) {
+        val url = call.argument<String>("url")
+        if (url.isNullOrBlank()) {
+            result.error("invalid_arguments", "URL is missing.", null)
+            return
+        }
+
+        val uri = Uri.parse(url)
+        if (uri.scheme != "https") {
+            result.error("unsupported_url", "Only HTTPS links can be opened.", null)
+            return
+        }
+
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+            result.success(null)
+        } catch (error: ActivityNotFoundException) {
+            result.error("no_handler", "No app is available to open this link.", null)
+        }
+    }
+
     private data class PendingBackupSave(
         val sourcePath: String,
         val fileName: String,
@@ -128,6 +159,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val TAG = "DekonMainActivity"
         const val BACKUP_FILES_CHANNEL = "xyz.infinica.dekon/backup_files"
+        const val APP_ACTIONS_CHANNEL = "xyz.infinica.dekon/app_actions"
         const val SAVE_BACKUP_REQUEST_CODE = 9101
     }
 }

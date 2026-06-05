@@ -118,6 +118,42 @@ void main() {
     });
   });
 
+  test('records redacted peer messages for pairing exchange', () async {
+    await _withHarness((harness) async {
+      final pairing = harness.server.createPairingPayload(
+        baseUrl: 'http://localhost',
+      );
+      final response = await harness.server.handler(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/pair'),
+          body: jsonEncode({
+            'device_id': _peerDeviceId,
+            'display_name': 'Counter phone',
+            'pairing_secret': pairing.pairingSecret,
+          }),
+        ),
+      );
+
+      final messages = harness.activityBus.peerMessageSnapshot();
+      final request = messages.first;
+      final reply = messages.last;
+
+      expect(response.statusCode, 200);
+      expect(messages, hasLength(2));
+      expect(request.direction, SyncPeerMessageDirection.received);
+      expect(request.path, '/pair');
+      expect(request.summary, 'Pairing request');
+      expect(request.bodyPreview, contains('"pairing_secret": "[redacted]"'));
+      expect(request.bodyPreview, isNot(contains(pairing.pairingSecret)));
+      expect(reply.direction, SyncPeerMessageDirection.sent);
+      expect(reply.statusCode, 200);
+      expect(reply.summary, 'Pairing result');
+      expect(reply.bodyPreview, contains('"shared_secret": "[redacted]"'));
+      expect(reply.bodyPreview, isNot(contains(pairing.pairingSecret)));
+    });
+  });
+
   test('manual address client stores returned shared secret', () async {
     await _withHarness((harness) async {
       const baseUrl = 'http://192.168.1.10:1234';
@@ -529,28 +565,38 @@ Future<void> _withHarness(Future<void> Function(_Harness harness) body) async {
     singleInstance: false,
   );
   final localDeviceId = await DeviceIdentityRepository(db).getOrCreate();
+  final activityBus = SyncActivityBus();
   final store = SyncStore(
     database: db,
     localDeviceId: localDeviceId,
+    activityBus: activityBus,
     now: () => _now,
   );
   final server = LanSyncServer(store: store, now: () => _now);
-  final harness = _Harness(db, store, server, localDeviceId);
+  final harness = _Harness(db, store, server, localDeviceId, activityBus);
   try {
     await body(harness);
   } finally {
     await server.stop();
+    await activityBus.close();
     await db.close();
   }
 }
 
 class _Harness {
-  const _Harness(this.db, this.store, this.server, this.localDeviceId);
+  const _Harness(
+    this.db,
+    this.store,
+    this.server,
+    this.localDeviceId,
+    this.activityBus,
+  );
 
   final Database db;
   final SyncStore store;
   final LanSyncServer server;
   final String localDeviceId;
+  final SyncActivityBus activityBus;
 
   Future<void> trustPeer() {
     return store.trustPeer(

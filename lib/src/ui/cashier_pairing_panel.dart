@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../application/application.dart';
 import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
+import 'ui_strings.dart';
 
 typedef MainDevicePairer = Future<void> Function(SyncPairingPayload payload);
 typedef MainDeviceAddressPairer = Future<void> Function(String address);
@@ -33,10 +34,11 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = context.strings;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Pair with the main device before using this cashier.'),
+        Text(strings.pairWithMainDeviceBeforeUsingCashier),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -46,13 +48,13 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
               key: const Key('pair-main-device'),
               onPressed: _busy ? null : _pairWithQr,
               icon: const Icon(Icons.qr_code_scanner),
-              label: Text(_busy ? 'Pairing' : 'Scan QR Code'),
+              label: Text(_busy ? strings.pairing : strings.scanQrCode),
             ),
             OutlinedButton.icon(
               key: const Key('pair-main-device-manual'),
               onPressed: _busy ? null : _pairWithManualAddress,
               icon: const Icon(Icons.edit_location_alt),
-              label: const Text('Enter IP Manually'),
+              label: Text(strings.enterIpManually),
             ),
           ],
         ),
@@ -141,19 +143,21 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
   Future<void> _completePairing() async {
     await widget.repository.lockDeviceRole(DeviceRole.cashierDevice);
     if (!mounted) return;
-    setState(() => _status = 'Paired with Main Device.');
+    setState(() => _status = context.strings.pairedWithMainDevice);
     widget.onPaired?.call();
   }
 
   void _showPairingError(Object error) {
     if (!mounted) return;
-    setState(() => _status = 'Pairing failed: ${_safePairingError(error)}');
+    setState(
+      () => _status = context.strings.pairingFailed(_safePairingError(error)),
+    );
   }
 
   String _safePairingError(Object error) {
     if (error is FormatException) return error.message;
     if (error is SyncClientException) return error.message;
-    return 'Could not pair with the main device.';
+    return context.strings.couldNotPairWithMainDevice;
   }
 }
 
@@ -176,12 +180,12 @@ class _ManualPairingDialogState extends State<_ManualPairingDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Main device IP'),
+      title: Text(context.strings.mainDeviceIp),
       content: TextField(
         key: const Key('manual-main-device-address'),
         controller: _controller,
-        decoration: const InputDecoration(
-          labelText: 'IP address or URL',
+        decoration: InputDecoration(
+          labelText: context.strings.ipAddressOrUrl,
           hintText: '192.168.1.10:1234',
         ),
         keyboardType: TextInputType.url,
@@ -190,12 +194,12 @@ class _ManualPairingDialogState extends State<_ManualPairingDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(context.strings.cancel),
         ),
         FilledButton(
           key: const Key('confirm-manual-main-device'),
           onPressed: () => Navigator.pop(context, _controller.text),
-          child: const Text('Pair'),
+          child: Text(context.strings.pair),
         ),
       ],
     );

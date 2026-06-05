@@ -52,6 +52,22 @@ class DeviceRoleSettings {
   final String? deviceDisplayName;
 }
 
+enum AppLanguage {
+  english('en'),
+  farsi('fa');
+
+  const AppLanguage(this.storageValue);
+
+  final String storageValue;
+
+  static AppLanguage fromStorage(String? value) {
+    return AppLanguage.values.firstWhere(
+      (language) => language.storageValue == value,
+      orElse: () => AppLanguage.english,
+    );
+  }
+}
+
 class TransactionLineDraft {
   TransactionLineDraft({
     required this.product,

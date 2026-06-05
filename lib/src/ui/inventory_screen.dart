@@ -60,7 +60,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('Inventory failed: ${snapshot.error}'));
+          return Center(
+            child: Text(context.strings.inventoryFailed(snapshot.error!)),
+          );
         }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -101,9 +103,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
           child: TextField(
             key: const Key('inventory-search-field'),
             controller: _queryController,
-            decoration: const InputDecoration(
-              hintText: UiStrings.searchProductsOrScanBarcode,
-              prefixIcon: Icon(Icons.search),
+            decoration: InputDecoration(
+              hintText: context.strings.searchProductsOrScanBarcode,
+              prefixIcon: const Icon(Icons.search),
             ),
             textInputAction: TextInputAction.search,
             onChanged: _setQuery,
@@ -114,7 +116,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           key: const Key('inventory-scan-button'),
           onPressed: _scanProduct,
           icon: const Icon(Icons.qr_code_scanner),
-          label: const Text(UiStrings.scan),
+          label: Text(context.strings.scan),
         ),
       ],
     );
@@ -128,13 +130,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
       children: [
         ChoiceChip(
           key: const Key('inventory-all-filter'),
-          label: const Text(UiStrings.all),
+          label: Text(context.strings.all),
           selected: _filter == _InventoryFilter.all,
           onSelected: (_) => setState(() => _filter = _InventoryFilter.all),
         ),
         ChoiceChip(
           key: const Key('inventory-low-stock-filter'),
-          label: const Text(UiStrings.lowStock),
+          label: Text(context.strings.lowStock),
           selected: _filter == _InventoryFilter.lowStock,
           onSelected: (_) =>
               setState(() => _filter = _InventoryFilter.lowStock),
@@ -143,7 +145,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           key: const Key('inventory-add-product'),
           onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
           icon: const Icon(Icons.add),
-          label: const Text(UiStrings.addProduct),
+          label: Text(context.strings.addProduct),
         ),
       ],
     );
@@ -185,21 +187,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'No products in inventory',
+            context.strings.noProductsInInventory,
             style: Theme.of(context).textTheme.titleMedium,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Add the first product to start recording\nsales and restocks.',
-            textAlign: TextAlign.center,
-          ),
+          Text(context.strings.emptyInventoryHelp, textAlign: TextAlign.center),
           const SizedBox(height: 12),
           FilledButton.icon(
             key: const Key('inventory-empty-add-product'),
             onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
             icon: const Icon(Icons.add),
-            label: const Text(UiStrings.addProduct),
+            label: Text(context.strings.addProduct),
           ),
         ],
       ),
@@ -209,8 +208,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Widget _emptyFilteredState() {
     final query = _query.trim();
     final message = query.isNotEmpty
-        ? 'No products found for "$query"'
-        : 'No low-stock products';
+        ? context.strings.noProductsFoundFor(query)
+        : context.strings.noLowStockProducts;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 12),
       child: Text(
@@ -226,14 +225,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
-      label:
-          '${product.name}. Stock ${product.quantity.g}. Open product details.',
+      label: context.strings.inventoryProductSemantics(
+        name: product.name,
+        quantity: product.quantity.g,
+      ),
       child: ListTile(
         key: Key('inventory-product-${product.productId}'),
         minVerticalPadding: 12,
         contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         title: Text(product.name),
-        subtitle: Text('Stock: ${product.quantity.g}'),
+        subtitle: Text(context.strings.stockLabel(product.quantity.g)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -246,7 +247,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     Icon(Icons.warning_amber, color: colors.error, size: 18),
                     const SizedBox(width: 4),
                     Text(
-                      UiStrings.lowStock,
+                      context.strings.lowStock,
                       style: TextStyle(color: colors.error),
                     ),
                   ],
@@ -304,9 +305,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
         _query = query;
         _queryController.text = query;
       });
-      _message('No product found for this barcode.');
+      _message(context.strings.noProductFoundForBarcode);
     } catch (_) {
-      if (mounted) _message('Scan unavailable. Search products manually.');
+      if (mounted) _message(context.strings.scanUnavailableSearchManually);
     }
   }
 

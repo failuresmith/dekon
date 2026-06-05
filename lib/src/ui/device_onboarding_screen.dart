@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
+import 'ui_strings.dart';
 
 class DeviceOnboardingScreen extends StatefulWidget {
   const DeviceOnboardingScreen({
@@ -35,6 +36,7 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = context.strings;
     return Scaffold(
       appBar: AppBar(title: const Text('Dekon')),
       body: ListView(
@@ -42,15 +44,15 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
         children: [
           Text(
             _step == _OnboardingStep.chooseRole
-                ? 'Set up this device'
-                : 'Pair cashier device',
+                ? strings.setupThisDevice
+                : strings.pairCashierDevice,
             style: Theme.of(context).textTheme.headlineMedium,
           ),
           const SizedBox(height: 8),
           Text(
             _step == _OnboardingStep.chooseRole
-                ? 'Choose how this device will be used.'
-                : 'Connect this cashier to the main device before use.',
+                ? strings.chooseDeviceUse
+                : strings.connectCashierBeforeUse,
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -82,14 +84,14 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
           key: const Key('onboarding-main-device'),
           onPressed: _busy ? null : _chooseMainDevice,
           icon: const Icon(Icons.inventory_2),
-          label: const Text('Main Device'),
+          label: Text(context.strings.mainDevice),
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           key: const Key('onboarding-cashier-device'),
           onPressed: _busy ? null : _chooseCashierDevice,
           icon: const Icon(Icons.point_of_sale),
-          label: const Text('Cashier'),
+          label: Text(context.strings.cashier),
         ),
       ],
     );
@@ -104,7 +106,7 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
       await widget.repository.completeDeviceOnboarding(DeviceRole.mainDevice);
       widget.onCompleted();
     } catch (error) {
-      if (mounted) setState(() => _error = 'Setup failed: $error');
+      if (mounted) setState(() => _error = context.strings.setupFailed(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -119,7 +121,7 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
       await widget.repository.setDeviceRole(DeviceRole.cashierDevice);
       if (mounted) setState(() => _step = _OnboardingStep.pairCashier);
     } catch (error) {
-      if (mounted) setState(() => _error = 'Setup failed: $error');
+      if (mounted) setState(() => _error = context.strings.setupFailed(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

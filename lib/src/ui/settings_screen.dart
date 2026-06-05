@@ -3,9 +3,11 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../application/application.dart';
 import '../backup/backup.dart';
+import '../platform/external_link_actions.dart';
 import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
+import 'sync_peer_messages_dialog.dart';
 import 'ui_strings.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -15,6 +17,7 @@ class SettingsScreen extends StatelessWidget {
     this.syncServer,
     this.backupService,
     this.backupFiles = const BackupFileActions(),
+    this.openExternalLink = openExternalHttpsLink,
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
@@ -24,31 +27,55 @@ class SettingsScreen extends StatelessWidget {
   final LanSyncServer? syncServer;
   final BackupRunner? backupService;
   final BackupFileActions backupFiles;
+  final ExternalLinkLauncher openExternalLink;
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
   @override
   Widget build(BuildContext context) {
+    final strings = context.strings;
+    final languageController = AppLanguageScope.controllerOf(context);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _SettingsSectionTile(
+          key: const Key('settings-language-tile'),
+          title: strings.languageLabel,
+          subtitle: strings.languageSubtitle(languageController.language),
+          icon: Icons.language,
+          onTap: () => _openLanguage(context),
+        ),
+        const SizedBox(height: 12),
+        _SettingsSectionTile(
           key: const Key('settings-device-sync-tile'),
-          title: UiStrings.deviceSync,
-          subtitle: 'Manage connected cashier devices',
+          title: strings.deviceSync,
+          subtitle: strings.settingsDeviceSyncSubtitle,
           icon: Icons.sync_alt,
           onTap: () => _openDeviceSync(context),
         ),
         const SizedBox(height: 12),
         _SettingsSectionTile(
           key: const Key('settings-backup-restore-tile'),
-          title: UiStrings.backupAndRestore,
-          subtitle: 'Save or restore store data',
+          title: strings.backupAndRestore,
+          subtitle: strings.settingsBackupRestoreSubtitle,
           icon: Icons.backup_outlined,
           onTap: () => _openBackupRestore(context),
         ),
+        const SizedBox(height: 12),
+        _SettingsSectionTile(
+          key: const Key('settings-about-tile'),
+          title: strings.about,
+          icon: Icons.info_outline,
+          onTap: () => _openAbout(context),
+        ),
       ],
+    );
+  }
+
+  Future<void> _openLanguage(BuildContext context) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (context) => const LanguageScreen()),
     );
   }
 
@@ -76,6 +103,121 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _openAbout(BuildContext context) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => AboutScreen(openExternalLink: openExternalLink),
+      ),
+    );
+  }
+}
+
+class LanguageScreen extends StatefulWidget {
+  const LanguageScreen({super.key});
+
+  @override
+  State<LanguageScreen> createState() => _LanguageScreenState();
+}
+
+class _LanguageScreenState extends State<LanguageScreen> {
+  var _saving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    final controller = AppLanguageScope.controllerOf(context);
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.languageLabel)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(strings.chooseLanguage),
+          const SizedBox(height: 8),
+          for (final language in AppLanguage.values)
+            ListTile(
+              key: Key('language-option-${language.storageValue}'),
+              title: Text(strings.languageChoiceLabel(language)),
+              leading: Icon(
+                controller.language == language
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+              ),
+              selected: controller.language == language,
+              enabled: !_saving,
+              onTap: _saving ? null : () => _setLanguage(language),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setLanguage(AppLanguage? language) async {
+    if (language == null) return;
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
+    try {
+      await AppLanguageScope.controllerOf(context).setLanguage(language);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.strings.languageSaved)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.languageSaveFailed)),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class AboutScreen extends StatelessWidget {
+  const AboutScreen({super.key, this.openExternalLink = openExternalHttpsLink});
+
+  static final _aboutUri = Uri.parse('https://ble.ir/dekon');
+
+  final ExternalLinkLauncher openExternalLink;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.about)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              key: const Key('about-link'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                padding: EdgeInsets.zero,
+              ),
+              onPressed: () {
+                _openLink(context);
+              },
+              child: Text(strings.aboutUrl),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openLink(BuildContext context) async {
+    try {
+      await openExternalLink(_aboutUri);
+    } on ExternalLinkException {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.strings.aboutLinkError)));
+    }
   }
 }
 
@@ -112,12 +254,12 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text(UiStrings.deviceSync)),
+      appBar: AppBar(title: Text(context.strings.deviceSync)),
       body: FutureBuilder<DeviceRoleSettings>(
         future: _roleFuture,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return const Center(child: Text('Device Sync could not load.'));
+            return Center(child: Text(context.strings.deviceSyncCouldNotLoad));
           }
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
@@ -142,15 +284,18 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   Widget _mainDeviceContent() {
     final server = widget.syncServer;
     if (server == null) {
-      return const Text('Device Sync is unavailable on this device.');
+      return Text(context.strings.deviceSyncUnavailable);
     }
     final running = server.isRunning;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Main Device', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          context.strings.mainDevice,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 4),
-        const Text('This device stores the inventory database.'),
+        Text(context.strings.thisDeviceStoresInventoryDatabase),
         const SizedBox(height: 20),
         FutureBuilder<List<CashierReportFilter>>(
           future: _cashiersFuture,
@@ -177,14 +322,13 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
 
   Widget _connectedCashiers(List<CashierReportFilter> cashiers) {
     final count = cashiers.length;
-    final countLabel = count == 1
-        ? '1 device connected'
-        : '$count devices connected';
+    final strings = context.strings;
+    final countLabel = strings.connectedDeviceCount(count);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Connected Cashier Devices',
+          strings.connectedCashierDevices,
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 4),
@@ -196,7 +340,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.phone_android),
               title: Text(cashier.label),
-              subtitle: const Text('Trusted cashier device'),
+              subtitle: Text(strings.trustedCashierDevice),
             ),
         ],
       ],
@@ -209,7 +353,9 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
       onPressed: _serverBusy ? null : _startServer,
       icon: const Icon(Icons.qr_code_2),
       label: Text(
-        _serverBusy ? 'Starting pairing' : UiStrings.connectAnotherDevice,
+        _serverBusy
+            ? context.strings.startingPairing
+            : context.strings.connectAnotherDevice,
       ),
     );
   }
@@ -219,7 +365,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Scan this QR code from the cashier device.'),
+        Text(context.strings.scanQrFromCashier),
         if (qrData != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -237,7 +383,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
           key: const Key('device-sync-stop-pairing-button'),
           onPressed: _serverBusy ? null : _stopServer,
           icon: const Icon(Icons.stop),
-          label: const Text(UiStrings.stopPairing),
+          label: Text(context.strings.stopPairing),
         ),
       ],
     );
@@ -247,18 +393,49 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     return ExpansionTile(
       key: const Key('device-sync-technical-details'),
       tilePadding: EdgeInsets.zero,
-      title: const Text(UiStrings.technicalDetails),
+      title: Text(context.strings.technicalDetails),
       children: [
         Align(
           alignment: Alignment.centerLeft,
           child: SelectableText(
             server.serverUrl == null
-                ? 'Start pairing to create a local address.'
-                : 'Local address\n${server.serverUrl}',
+                ? context.strings.startPairingToCreateLocalAddress
+                : context.strings.localAddress(server.serverUrl!),
             key: const Key('sync-server-url'),
           ),
         ),
+        const SizedBox(height: 12),
+        _peerMessagesButton(),
       ],
+    );
+  }
+
+  Widget _cashierTechnicalDetails() {
+    return ExpansionTile(
+      key: const Key('cashier-sync-technical-details'),
+      tilePadding: EdgeInsets.zero,
+      title: Text(context.strings.technicalDetails),
+      children: [_peerMessagesButton()],
+    );
+  }
+
+  Widget _peerMessagesButton() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: OutlinedButton.icon(
+          key: const Key('sync-peer-messages-button'),
+          onPressed: () {
+            showSyncPeerMessagesDialog(
+              context: context,
+              repository: widget.repository,
+            );
+          },
+          icon: const Icon(Icons.bug_report_outlined),
+          label: Text(context.strings.peerMessages),
+        ),
+      ),
     );
   }
 
@@ -266,10 +443,17 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Cashier Device', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          context.strings.cashierDevice,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 4),
         locked
-            ? Text(_cashierConnectionText(settings.deviceDisplayName))
+            ? Text(
+                context.strings.cashierConnectionText(
+                  settings.deviceDisplayName,
+                ),
+              )
             : CashierPairingPanel(
                 repository: widget.repository,
                 scanBarcode: widget.scanBarcode,
@@ -277,19 +461,10 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
                 onPaired: _refreshRoleSettings,
               ),
+        const SizedBox(height: 16),
+        _cashierTechnicalDetails(),
       ],
     );
-  }
-
-  String _cashierConnectionText(String? displayName) {
-    final trimmed = displayName?.trim();
-    if (trimmed == null ||
-        trimmed.isEmpty ||
-        trimmed == 'This device' ||
-        trimmed == 'Dekon phone') {
-      return 'Connected to Main device.';
-    }
-    return 'Connected to Main device as $trimmed';
   }
 
   void _refreshRoleSettings() {
@@ -301,6 +476,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   }
 
   Future<void> _startServer() async {
+    final strings = context.strings;
     setState(() {
       _serverBusy = true;
       _serverError = null;
@@ -308,8 +484,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     try {
       await widget.syncServer!.start();
     } catch (_) {
-      _serverError =
-          'Could not start pairing. Check that this device is connected to Wi-Fi.';
+      _serverError = strings.couldNotStartPairing;
     } finally {
       if (mounted) {
         setState(() {
@@ -321,6 +496,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   }
 
   Future<void> _stopServer() async {
+    final strings = context.strings;
     setState(() {
       _serverBusy = true;
       _serverError = null;
@@ -328,7 +504,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     try {
       await widget.syncServer!.stop();
     } catch (_) {
-      _serverError = 'Could not stop pairing. Try again.';
+      _serverError = strings.couldNotStopPairing;
     } finally {
       if (mounted) setState(() => _serverBusy = false);
     }
@@ -360,16 +536,14 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text(UiStrings.backupAndRestore)),
+      appBar: AppBar(title: Text(context.strings.backupAndRestore)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text(
-            'Save a backup file so your store data can be recovered if this device is lost or replaced.',
-          ),
+          Text(context.strings.backupHelp),
           const SizedBox(height: 20),
           Text(
-            'Last successful backup',
+            context.strings.lastSuccessfulBackup,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
@@ -384,7 +558,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
               key: const Key('retry-backup'),
               onPressed: _backupBusy ? null : _saveBackup,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry Backup'),
+              label: Text(context.strings.retryBackup),
             ),
           ],
           const SizedBox(height: 20),
@@ -392,14 +566,18 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
             key: const Key('save-backup'),
             onPressed: _backupBusy ? null : _saveBackup,
             icon: const Icon(Icons.save_alt),
-            label: Text(_backupBusy ? 'Working' : UiStrings.saveBackup),
+            label: Text(
+              _backupBusy
+                  ? context.strings.working
+                  : context.strings.saveBackup,
+            ),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             key: const Key('restore-backup'),
             onPressed: _backupBusy ? null : _restoreBackup,
             icon: const Icon(Icons.restore),
-            label: const Text(UiStrings.restoreBackup),
+            label: Text(context.strings.restoreBackup),
           ),
         ],
       ),
@@ -407,6 +585,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   }
 
   Future<void> _saveBackup() async {
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() {
       _backupBusy = true;
       _backupNeedsRetry = false;
@@ -423,14 +603,14 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
       draft.savedAs(path: savedFile.path, fileName: savedFile.fileName);
       _lastSuccessfulBackupAt = DateTime.now();
       _backupStatus =
-          '${UiStrings.backupSavedSuccessfully}: ${savedFile.fileName}';
-      _message(UiStrings.backupSavedSuccessfully);
+          '${strings.backupSavedSuccessfully}: ${savedFile.fileName}';
+      _message(messenger, strings.backupSavedSuccessfully);
     } on BackupException {
-      _markBackupFailed();
+      _markBackupFailed(strings);
     } on BackupStorageException {
-      _markBackupFailed();
+      _markBackupFailed(strings);
     } catch (_) {
-      _markBackupFailed();
+      _markBackupFailed(strings);
     } finally {
       if (draft != null) await _backupService.discardPreparedExport(draft);
       if (mounted) setState(() => _backupBusy = false);
@@ -438,6 +618,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   }
 
   Future<void> _restoreBackup() async {
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
     setState(() {
       _backupBusy = true;
       _backupNeedsRetry = false;
@@ -447,17 +629,20 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
       final file = await widget.backupFiles.chooseImportFile();
       if (file == null) return;
       final preview = await _backupService.preview(file.contents);
-      if (!mounted || await _confirmRestore(file, preview) != true) return;
+      if (!mounted) return;
+      final confirmed = await _confirmRestore(file, preview, strings);
+      if (confirmed != true) return;
       final result = await _importBackup(file.contents);
       _backupStatus = result.duplicateCount == 0
-          ? UiStrings.backupRestoredSuccessfully
-          : '${UiStrings.backupRestoredSuccessfully}. Skipped ${result.duplicateCount} duplicate records.';
-      _message(UiStrings.backupRestoredSuccessfully);
+          ? strings.backupRestoredSuccessfully
+          : strings.backupRestoredWithSkippedDuplicates(result.duplicateCount);
+      _message(messenger, strings.backupRestoredSuccessfully);
     } on BackupException catch (error) {
-      _backupStatus = 'Could not restore the backup.\n${error.message}';
+      _backupStatus = strings.couldNotRestoreBackup(error.message);
     } catch (_) {
-      _backupStatus =
-          'Could not restore the backup.\nChoose a valid Dekon backup file and try again.';
+      _backupStatus = strings.couldNotRestoreBackup(
+        strings.chooseValidBackupFile,
+      );
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
@@ -473,26 +658,31 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     return widget.backupService ?? widget.repository.createBackupService();
   }
 
-  Future<bool?> _confirmRestore(BackupImportFile file, BackupPreview preview) {
+  Future<bool?> _confirmRestore(
+    BackupImportFile file,
+    BackupPreview preview,
+    UiStrings strings,
+  ) {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Restore backup?'),
+        title: Text(strings.restoreBackupQuestion),
         content: Text(
-          'Current store data may be replaced by the selected backup file.\n\n'
-          '${file.name}\n'
-          '${preview.eventCount} records\n'
-          'Made ${_timestamp(preview.exportedAt)}',
+          strings.restoreBackupPreview(
+            fileName: file.name,
+            recordCount: preview.eventCount,
+            exportedAt: _timestamp(preview.exportedAt),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             key: const Key('confirm-restore-backup'),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Restore'),
+            child: Text(strings.restore),
           ),
         ],
       ),
@@ -501,22 +691,21 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
 
   String get _lastBackupText {
     final lastBackup = _lastSuccessfulBackupAt;
-    if (lastBackup == null) return 'No backup saved in this session';
+    if (lastBackup == null) return context.strings.noBackupSavedInThisSession;
     return _timestamp(lastBackup);
   }
 
-  void _markBackupFailed() {
+  void _markBackupFailed(UiStrings strings) {
     _backupNeedsRetry = true;
-    _backupStatus =
-        'Could not save the backup.\nChoose another folder or check that the selected location is writable.';
+    _backupStatus = strings.couldNotSaveBackup;
   }
 
   String _timestamp(DateTime dateTime) {
     return dateTime.toLocal().toString().split('.').first;
   }
 
-  void _message(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  void _message(ScaffoldMessengerState messenger, String text) {
+    messenger.showSnackBar(SnackBar(content: Text(text)));
   }
 }
 
@@ -524,13 +713,13 @@ class _SettingsSectionTile extends StatelessWidget {
   const _SettingsSectionTile({
     super.key,
     required this.title,
-    required this.subtitle,
     required this.icon,
     required this.onTap,
+    this.subtitle,
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final IconData icon;
   final VoidCallback onTap;
 
@@ -545,7 +734,7 @@ class _SettingsSectionTile extends StatelessWidget {
         minVerticalPadding: 12,
         leading: Icon(icon),
         title: Text(title),
-        subtitle: Text(subtitle),
+        subtitle: subtitle == null ? null : Text(subtitle!),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),

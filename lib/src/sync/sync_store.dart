@@ -277,6 +277,10 @@ class SyncStore {
     );
   }
 
+  void recordPeerMessage(SyncPeerMessage message) {
+    activityBus?.recordPeerMessage(message);
+  }
+
   Future<void> _updateCursor(
     String deviceId,
     String column,

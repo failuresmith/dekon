@@ -47,6 +47,15 @@ class DekonRepository {
   Stream<void> get eventsChanged => _syncActivityBus.eventsChanged;
   Stream<void> get syncStateChanged => _syncActivityBus.syncStateChanged;
   Stream<SyncTransferActivity> get syncTransfers => _syncActivityBus.transfers;
+  Stream<SyncPeerMessage> get syncPeerMessages => _syncActivityBus.peerMessages;
+
+  List<SyncPeerMessage> recentSyncPeerMessages() {
+    return _syncActivityBus.peerMessageSnapshot();
+  }
+
+  void clearSyncPeerMessages() {
+    _syncActivityBus.clearPeerMessages();
+  }
 
   Future<void> close() async {
     await _syncActivityBus.close();
@@ -82,6 +91,23 @@ class DekonRepository {
 
   Future<DeviceRole> deviceRole() async {
     return (await deviceRoleSettings()).role;
+  }
+
+  Future<AppLanguage> appLanguage() async {
+    final rows = await _db.query(
+      'app_settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: const ['language_code'],
+      limit: 1,
+    );
+    return AppLanguage.fromStorage(
+      rows.isEmpty ? null : rows.single['value'] as String?,
+    );
+  }
+
+  Future<void> setAppLanguage(AppLanguage language) {
+    return _setAppSetting('language_code', language.storageValue);
   }
 
   Future<DeviceRoleSettings> deviceRoleSettings() async {
