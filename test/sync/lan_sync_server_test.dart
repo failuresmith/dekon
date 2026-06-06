@@ -414,7 +414,7 @@ void main() {
   test('duplicate POST is idempotent and reports duplicate IDs', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
-      final event = _productCreated(1, barcode: 'COF-1');
+      final event = _saleRecorded(1);
       final first = await harness.postEvents([event]);
       final second = await harness.postEvents([event]);
       final state = await harness.store.state();
@@ -422,6 +422,43 @@ void main() {
       expect(first['accepted'], [event.eventId]);
       expect(second['duplicate'], [event.eventId]);
       expect(state.eventCount, 1);
+    });
+  });
+
+  test('GET events returns cashier-safe product and stock changes', () async {
+    await _withHarness((harness) async {
+      await harness.trustPeer();
+      await EventStore(harness.db).append(
+        _productCreated(1, deviceId: harness.localDeviceId, barcode: 'A-1'),
+      );
+      await EventStore(harness.db).append(
+        _purchaseRecorded(
+          2,
+          deviceId: harness.localDeviceId,
+          productId: 'product-1',
+          quantity: 5,
+        ),
+      );
+
+      final response = await harness.getEvents(limit: 10);
+      final events = response['events'] as List;
+      final product = events.cast<Map>().singleWhere(
+        (event) => event['type'] == EventTypes.productCreated,
+      );
+      final productPayload = product['payload'] as Map;
+      final stock = events.cast<Map>().singleWhere(
+        (event) => event['type'] == EventTypes.inventoryAdjustmentRecorded,
+      );
+      final stockPayload = stock['payload'] as Map;
+      final stockLine = (stockPayload['line_items'] as List).single as Map;
+
+      expect(productPayload['sale_price_minor'], 100);
+      expect(productPayload.containsKey('purchase_cost_minor'), false);
+      expect(productPayload.containsKey('sku'), false);
+      expect(stockPayload.containsKey('total_minor'), false);
+      expect(stockLine['product_id'], 'product-1');
+      expect(stockLine['quantity_delta'], 5);
+      expect(stockLine.containsKey('unit_cost_minor'), false);
     });
   });
 
@@ -453,10 +490,9 @@ void main() {
   test('future schema events are stored as unsupported', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
-      final event = _productCreated(
+      final event = _saleRecorded(
         3,
         schemaVersion: EventSchema.currentVersion + 1,
-        type: 'future.product_changed',
       );
 
       final response = await harness.postEvents([event]);
@@ -467,7 +503,7 @@ void main() {
     });
   });
 
-  test('out-of-order product events converge after POST', () async {
+  test('cashier product mutations are rejected before projection', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
       final productId = 'remote-product-1';
@@ -494,10 +530,18 @@ void main() {
         where: 'product_id = ?',
         whereArgs: [productId],
       );
+      final state = await harness.store.state();
 
-      expect(response['accepted'], [created.eventId, fieldSet.eventId]);
-      expect(rows.single['name'], 'Remote Tea');
-      expect(rows.single['barcode'], 'REMOTE-1');
+      expect(response['accepted'], isEmpty);
+      expect(
+        response['rejected'],
+        containsAll([
+          {'event_id': fieldSet.eventId, 'reason': 'permission_denied'},
+          {'event_id': created.eventId, 'reason': 'permission_denied'},
+        ]),
+      );
+      expect(rows, isEmpty);
+      expect(state.eventCount, 0);
     });
   });
 
@@ -505,46 +549,48 @@ void main() {
     await _withHarness((harness) async {
       await harness.trustPeer();
       final productId = 'ordered-product-1';
-      final purchase = makeTestEvent(
+      final laterSale = _saleRecorded(
+        6,
         eventId: _eventId(6),
-        deviceId: _peerDeviceId,
-        type: EventTypes.inventoryPurchaseRecorded,
-        entityId: 'ordered-purchase-1',
+        productId: productId,
+        quantity: 1,
         physicalTimeMillis: 1000,
         createdAt: _now.add(const Duration(seconds: 1)),
-        payload: {
-          'occurred_at': _now.toIso8601String(),
-          'total_minor': 500,
-          'line_items': [
-            {'product_id': productId, 'quantity': 5, 'unit_cost_minor': 100},
-          ],
-        },
       );
-      final sale = makeTestEvent(
+      final earlierSale = _saleRecorded(
+        7,
         eventId: _eventId(7),
-        deviceId: _peerDeviceId,
-        type: EventTypes.inventorySaleRecorded,
-        entityId: 'ordered-sale-1',
+        productId: productId,
+        quantity: 2,
         physicalTimeMillis: 2000,
-        createdAt: _now.add(const Duration(seconds: 2)),
-        payload: {
-          'occurred_at': _now.toIso8601String(),
-          'total_minor': 200,
-          'line_items': [
-            {'product_id': productId, 'quantity': 2, 'unit_price_minor': 100},
-          ],
-        },
+        createdAt: _now,
       );
 
-      final response = await harness.postEvents([sale, purchase]);
+      final response = await harness.postEvents([laterSale, earlierSale]);
       final inventory = (await harness.db.query(
         'inventory_projection',
         where: 'product_id = ?',
         whereArgs: [productId],
       )).single;
 
-      expect(response['accepted'], [purchase.eventId, sale.eventId]);
-      expect(inventory['quantity'], 3);
+      expect(response['accepted'], [earlierSale.eventId, laterSale.eventId]);
+      expect(inventory['quantity'], -3);
+    });
+  });
+
+  test('cashier cannot spoof another device ID in posted events', () async {
+    await _withHarness((harness) async {
+      await harness.trustPeer();
+      final spoofed = _saleRecorded(8, deviceId: _secondPeerDeviceId);
+
+      final response = await harness.postEvents([spoofed]);
+      final state = await harness.store.state();
+
+      expect(response['accepted'], isEmpty);
+      expect(response['rejected'], [
+        {'event_id': spoofed.eventId, 'reason': 'permission_denied'},
+      ]);
+      expect(state.eventCount, 0);
     });
   });
 }
@@ -704,6 +750,63 @@ EventEnvelope _productCreated(
     },
     physicalTimeMillis: physicalTimeMillis,
     createdAt: _now,
+  );
+}
+
+EventEnvelope _purchaseRecorded(
+  int index, {
+  String? deviceId,
+  String productId = 'product-1',
+  double quantity = 1,
+  int physicalTimeMillis = 1000,
+  DateTime? createdAt,
+}) {
+  return makeTestEvent(
+    eventId: _eventId(index),
+    deviceId: deviceId ?? _peerDeviceId,
+    type: EventTypes.inventoryPurchaseRecorded,
+    entityId: 'purchase-$index',
+    payload: {
+      'occurred_at': (createdAt ?? _now).toIso8601String(),
+      'total_minor': (quantity * 50).round(),
+      'line_items': [
+        {'product_id': productId, 'quantity': quantity, 'unit_cost_minor': 50},
+      ],
+    },
+    physicalTimeMillis: physicalTimeMillis,
+    createdAt: createdAt ?? _now,
+  );
+}
+
+EventEnvelope _saleRecorded(
+  int index, {
+  String? eventId,
+  String? deviceId,
+  String productId = 'product-1',
+  double quantity = 1,
+  int physicalTimeMillis = 1000,
+  int schemaVersion = EventSchema.currentVersion,
+  DateTime? createdAt,
+}) {
+  return makeTestEvent(
+    eventId: eventId ?? _eventId(index),
+    deviceId: deviceId ?? _peerDeviceId,
+    type: EventTypes.inventorySaleRecorded,
+    entityId: 'sale-$index',
+    schemaVersion: schemaVersion,
+    payload: {
+      'occurred_at': (createdAt ?? _now).toIso8601String(),
+      'total_minor': (quantity * 100).round(),
+      'line_items': [
+        {
+          'product_id': productId,
+          'quantity': quantity,
+          'unit_price_minor': 100,
+        },
+      ],
+    },
+    physicalTimeMillis: physicalTimeMillis,
+    createdAt: createdAt ?? _now,
   );
 }
 

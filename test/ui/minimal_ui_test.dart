@@ -379,19 +379,25 @@ void main() {
     }
   });
 
-  testWidgets('cashier shell shows Inventory and scopes Reports to device', (
+  testWidgets('cashier shell shows read-only Inventory and hides admin flows', (
     tester,
   ) async {
     final repository = await createEnglishTestRepository();
+    final product = await repository.createProduct(
+      name: 'Cashier Tea',
+      barcode: 'CASHIER-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
     await repository.lockDeviceRole(DeviceRole.cashierDevice);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
 
     expect(find.text('Sell'), findsWidgets);
-    expect(find.text('Restock'), findsOneWidget);
+    expect(find.text('Restock'), findsNothing);
     expect(find.text('Inventory'), findsOneWidget);
-    expect(find.text('Reports'), findsOneWidget);
+    expect(find.text('Reports'), findsNothing);
     expect(find.byKey(const Key('cashier-sync-indicator')), findsOneWidget);
     expect(
       find.byKey(const Key('cashier-sync-indicator-disconnected')),
@@ -404,12 +410,26 @@ void main() {
       lessThan(1),
     );
 
-    await tester.tap(find.text('Reports'));
+    await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
-    expect(find.text('This Device Reports'), findsOneWidget);
-    expect(find.byKey(const Key('local-device-report-scope')), findsOneWidget);
-    expect(find.byKey(const Key('low-stock-report-metric')), findsNothing);
+    expect(find.byKey(const Key('inventory-add-product')), findsNothing);
+    await tester.tap(find.byKey(Key('inventory-product-${product.productId}')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cashier Tea'), findsWidgets);
+    expect(find.text('Sale price: 400 Rial'), findsOneWidget);
+    expect(find.text('Barcode: CASHIER-TEA'), findsOneWidget);
+    expect(find.text('Edit Product'), findsNothing);
+    expect(find.text('Purchase cost'), findsNothing);
+
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('settings-backup-restore-tile')), findsNothing);
+    expect(find.byKey(const Key('settings-device-sync-tile')), findsOneWidget);
   });
 
   testWidgets('unknown barcode opens product creation and adds the item', (

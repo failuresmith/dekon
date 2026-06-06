@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../domain/events/events.dart';
+import 'sync_access_control.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
@@ -14,6 +15,7 @@ import 'sync_store.dart';
 class LanSyncServer {
   LanSyncServer({required this.store, DateTime Function()? now})
     : _authenticator = SyncAuthenticator(now: now),
+      _authorization = const AuthorizationService(),
       _now = now ?? DateTime.now;
 
   static const _defaultEventsWaitTimeout = Duration(seconds: 25);
@@ -21,6 +23,7 @@ class LanSyncServer {
 
   final SyncStore store;
   final SyncAuthenticator _authenticator;
+  final AuthorizationService _authorization;
   final DateTime Function() _now;
   HttpServer? _server;
   SyncPairingPayload? _pairingPayload;
@@ -172,28 +175,30 @@ class LanSyncServer {
   }
 
   Future<Response> _events(Request request, TrustedPeer peer) async {
+    _authorization.requireCapability(
+      principal: _remoteCashierPrincipal(peer),
+      capability: Capability.viewCashierInventory,
+    );
     final query = request.requestedUri.queryParameters;
     final limit = _limit(query['limit']);
     final cursor = SyncCursor.parse(query['since']);
-    var page = await store.fetchEventsAfter(cursor, limit: limit + 1);
-    if (page.isEmpty && _shouldWaitForEvents(query)) {
+    var page = await _cashierEventPage(peer, cursor, limit);
+    if (page.events.isEmpty && _shouldWaitForEvents(query)) {
       await store.waitForEventsAfter(
         cursor,
         timeout: _eventsWaitTimeout(query['wait_ms']),
       );
-      page = await store.fetchEventsAfter(cursor, limit: limit + 1);
+      page = await _cashierEventPage(peer, cursor, limit);
     }
-    final events = page.take(limit).toList(growable: false);
+    final events = page.events;
     if (events.isNotEmpty) {
       store.notifyTransfer(SyncTransferDirection.sent, events.length);
     }
     await store.markPeerSuccess(peer.deviceId);
     return _json({
       'events': [for (final event in events) EventCodec.toJson(event)],
-      'next_cursor': events.isEmpty
-          ? cursor?.encode()
-          : SyncCursor.fromEvent(events.last).encode(),
-      'has_more': page.length > limit,
+      'next_cursor': page.nextCursor?.encode(),
+      'has_more': page.hasMore,
     }, request: request);
   }
 
@@ -226,9 +231,48 @@ class LanSyncServer {
         );
       }
     }
-    final result = (await store.importEvents(events)).withRejected(malformed);
+    final authorizationRejected = <EventRejection>[];
+    final authorizedEvents = <EventEnvelope>[];
+    for (final event in events) {
+      if (event.deviceId != peer.deviceId) {
+        authorizationRejected.add(
+          EventRejection(
+            eventId: event.eventId,
+            reason: AuthorizationException.permissionDenied,
+          ),
+        );
+        continue;
+      }
+      final capability = capabilityForRemoteEvent(event);
+      if (capability == null) {
+        authorizationRejected.add(
+          EventRejection(
+            eventId: event.eventId,
+            reason: AuthorizationException.permissionDenied,
+          ),
+        );
+        continue;
+      }
+      try {
+        _authorization.requireCapability(
+          principal: _remoteCashierPrincipal(peer),
+          capability: capability,
+        );
+        authorizedEvents.add(event);
+      } on AuthorizationException catch (error) {
+        authorizationRejected.add(
+          EventRejection(eventId: event.eventId, reason: error.code),
+        );
+      }
+    }
+    final result = (await store.importEvents(
+      authorizedEvents,
+    )).withRejected([...malformed, ...authorizationRejected]);
     if (result.hasEventOutcomes) {
-      store.notifyTransfer(SyncTransferDirection.received, events.length);
+      store.notifyTransfer(
+        SyncTransferDirection.received,
+        authorizedEvents.length,
+      );
     }
     await store.markPeerSuccess(peer.deviceId);
     return _json(result.toJson(), request: request);
@@ -260,6 +304,56 @@ class LanSyncServer {
       },
       status: HttpStatus.unauthorized,
       request: request,
+    );
+  }
+
+  DevicePrincipal _remoteCashierPrincipal(TrustedPeer peer) {
+    return DevicePrincipal(
+      deviceId: peer.deviceId,
+      role: SyncDeviceRole.cashier,
+      isLocalMainDevice: false,
+    );
+  }
+
+  Future<_CashierEventPage> _cashierEventPage(
+    TrustedPeer peer,
+    SyncCursor? cursor,
+    int limit,
+  ) async {
+    final safeEvents = <EventEnvelope>[];
+    var scanCursor = cursor;
+    var nextCursor = cursor;
+    var hasMore = false;
+    const scanLimit = 100;
+    while (safeEvents.length < limit) {
+      final rawPage = await store.fetchEventsAfter(
+        scanCursor,
+        limit: scanLimit,
+      );
+      if (rawPage.isEmpty) break;
+      for (final event in rawPage) {
+        scanCursor = SyncCursor.fromEvent(event);
+        final safeEvent = cashierSafeEventFor(
+          event: event,
+          cashierDeviceId: peer.deviceId,
+        );
+        if (safeEvent == null) continue;
+        safeEvents.add(safeEvent);
+        nextCursor = SyncCursor.fromEvent(event);
+        if (safeEvents.length == limit) {
+          hasMore = true;
+          break;
+        }
+      }
+      if (safeEvents.length == limit || rawPage.length < scanLimit) {
+        if (safeEvents.isEmpty) nextCursor = scanCursor;
+        break;
+      }
+    }
+    return _CashierEventPage(
+      events: safeEvents,
+      nextCursor: nextCursor,
+      hasMore: hasMore,
     );
   }
 
@@ -353,4 +447,16 @@ class LanSyncServer {
     }
     return InternetAddress.loopbackIPv4.address;
   }
+}
+
+class _CashierEventPage {
+  const _CashierEventPage({
+    required this.events,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+
+  final List<EventEnvelope> events;
+  final SyncCursor? nextCursor;
+  final bool hasMore;
 }

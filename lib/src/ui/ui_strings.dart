@@ -756,6 +756,13 @@ class UiStrings {
     );
   }
 
+  String get cashierEmptyInventoryHelp {
+    return _text(
+      en: 'Inventory appears after this cashier syncs with the main device.',
+      fa: 'موجودی پس از همگام سازی این صندوق با دستگاه اصلی نمایش داده می شود.',
+    );
+  }
+
   String noProductsFoundFor(String query) {
     return _text(
       en: 'No products found for "$query"',
@@ -822,7 +829,7 @@ class UiStrings {
     final displayQuantity = digits(quantity);
     return _text(
       en: 'Current stock: $quantity',
-      fa: 'موجودی فعلی: $displayQuantity',
+      fa: 'موجودی: $displayQuantity',
     );
   }
 

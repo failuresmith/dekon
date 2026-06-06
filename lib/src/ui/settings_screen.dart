@@ -35,8 +35,25 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return FutureBuilder<DeviceRoleSettings>(
+      future: repository.deviceRoleSettings(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text(context.strings.deviceSyncCouldNotLoad));
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return _settingsList(context, snapshot.requireData);
+      },
+    );
+  }
+
+  Widget _settingsList(BuildContext context, DeviceRoleSettings settings) {
     final strings = context.strings;
     final languageController = AppLanguageScope.controllerOf(context);
+    final isLockedCashier =
+        settings.role == DeviceRole.cashierDevice && settings.locked;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -63,14 +80,16 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.sync_alt,
           onTap: () => _openDeviceSync(context),
         ),
-        const SizedBox(height: 12),
-        _SettingsSectionTile(
-          key: const Key('settings-backup-restore-tile'),
-          title: strings.backupAndRestore,
-          subtitle: strings.settingsBackupRestoreSubtitle,
-          icon: Icons.backup_outlined,
-          onTap: () => _openBackupRestore(context),
-        ),
+        if (!isLockedCashier) ...[
+          const SizedBox(height: 12),
+          _SettingsSectionTile(
+            key: const Key('settings-backup-restore-tile'),
+            title: strings.backupAndRestore,
+            subtitle: strings.settingsBackupRestoreSubtitle,
+            icon: Icons.backup_outlined,
+            onTap: () => _openBackupRestore(context),
+          ),
+        ],
         const SizedBox(height: 12),
         _SettingsSectionTile(
           key: const Key('settings-about-tile'),

@@ -14,10 +14,12 @@ class InventoryScreen extends StatefulWidget {
     super.key,
     required this.repository,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.readOnly = false,
   });
 
   final DekonRepository repository;
   final BarcodeScanLauncher scanBarcode;
+  final bool readOnly;
 
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
@@ -141,12 +143,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
           onSelected: (_) =>
               setState(() => _filter = _InventoryFilter.lowStock),
         ),
-        FilledButton.tonalIcon(
-          key: const Key('inventory-add-product'),
-          onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
-          icon: const Icon(Icons.add),
-          label: Text(context.strings.addProduct),
-        ),
+        if (!widget.readOnly)
+          FilledButton.tonalIcon(
+            key: const Key('inventory-add-product'),
+            onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
+            icon: const Icon(Icons.add),
+            label: Text(context.strings.addProduct),
+          ),
       ],
     );
   }
@@ -192,14 +195,21 @@ class _InventoryScreenState extends State<InventoryScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
-          Text(context.strings.emptyInventoryHelp, textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            key: const Key('inventory-empty-add-product'),
-            onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
-            icon: const Icon(Icons.add),
-            label: Text(context.strings.addProduct),
+          Text(
+            widget.readOnly
+                ? context.strings.cashierEmptyInventoryHelp
+                : context.strings.emptyInventoryHelp,
+            textAlign: TextAlign.center,
           ),
+          if (!widget.readOnly) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const Key('inventory-empty-add-product'),
+              onPressed: () => _addProduct(initialBarcode: _barcodeForCreate),
+              icon: const Icon(Icons.add),
+              label: Text(context.strings.addProduct),
+            ),
+          ],
         ],
       ),
     );
@@ -235,9 +245,17 @@ class _InventoryScreenState extends State<InventoryScreen> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         title: Text(product.name),
         subtitle: Text(
-          context.strings.stockLabel(
-            context.strings.quantity(product.quantity),
-          ),
+          widget.readOnly
+              ? [
+                  context.strings.stockLabel(
+                    context.strings.quantity(product.quantity),
+                  ),
+                  '${context.strings.salePrice}: '
+                      '${context.strings.money(product.salePriceMinor)}',
+                ].join('\n')
+              : context.strings.stockLabel(
+                  context.strings.quantity(product.quantity),
+                ),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -260,7 +278,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
             const Icon(Icons.chevron_right),
           ],
         ),
-        onTap: () => _edit(product),
+        onTap: () =>
+            widget.readOnly ? _showReadOnlyProduct(product) : _edit(product),
       ),
     );
   }
@@ -301,7 +320,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
       final product = await widget.repository.productByBarcodeOrSku(query);
       if (!mounted) return;
       if (product != null) {
-        await _edit(product);
+        if (widget.readOnly) {
+          await _showReadOnlyProduct(product);
+        } else {
+          await _edit(product);
+        }
         return;
       }
       setState(() {
@@ -316,6 +339,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _addProduct({String? initialBarcode}) async {
+    if (widget.readOnly) return;
     await showProductFormDialog(
       context: context,
       repository: widget.repository,
@@ -327,6 +351,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _edit(ProductSummary product) async {
+    if (widget.readOnly) {
+      await _showReadOnlyProduct(product);
+      return;
+    }
     await showProductFormDialog(
       context: context,
       repository: widget.repository,
@@ -354,5 +382,34 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _showReadOnlyProduct(ProductSummary product) {
+    final strings = context.strings;
+    final barcode = product.barcode?.trim();
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(product.name),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(strings.stockLabel(strings.quantity(product.quantity))),
+            Text(
+              '${strings.salePrice}: ${strings.money(product.salePriceMinor)}',
+            ),
+            if (barcode != null && barcode.isNotEmpty)
+              Text('${strings.barcode}: $barcode'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(strings.close),
+          ),
+        ],
+      ),
+    );
   }
 }

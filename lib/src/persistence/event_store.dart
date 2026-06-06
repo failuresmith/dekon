@@ -78,24 +78,32 @@ class EventStore {
   Future<List<EventEnvelope>> fetchEventsAfter({
     String? hlc,
     String? eventId,
+    String? deviceId,
     required int limit,
   }) async {
     final safeLimit = limit.clamp(1, 1000).toInt();
-    final rows = hlc == null
-        ? await _db.query(
-            'events',
-            orderBy: 'hlc ASC, event_id ASC',
-            limit: safeLimit,
-          )
-        : await _db.query(
-            'events',
-            where: eventId == null
-                ? 'hlc > ?'
-                : '(hlc > ? OR (hlc = ? AND event_id > ?))',
-            whereArgs: eventId == null ? [hlc] : [hlc, hlc, eventId],
-            orderBy: 'hlc ASC, event_id ASC',
-            limit: safeLimit,
-          );
+    final where = <String>[];
+    final whereArgs = <Object?>[];
+    if (deviceId != null) {
+      where.add('device_id = ?');
+      whereArgs.add(deviceId);
+    }
+    if (hlc != null) {
+      if (eventId == null) {
+        where.add('hlc > ?');
+        whereArgs.add(hlc);
+      } else {
+        where.add('(hlc > ? OR (hlc = ? AND event_id > ?))');
+        whereArgs.addAll([hlc, hlc, eventId]);
+      }
+    }
+    final rows = await _db.query(
+      'events',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: whereArgs.isEmpty ? null : whereArgs,
+      orderBy: 'hlc ASC, event_id ASC',
+      limit: safeLimit,
+    );
     return rows.map(EventEnvelope.fromStorage).toList(growable: false);
   }
 

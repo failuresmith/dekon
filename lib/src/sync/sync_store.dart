@@ -170,6 +170,18 @@ class SyncStore {
     );
   }
 
+  Future<List<EventEnvelope>> fetchLocalEventsAfter(
+    SyncCursor? cursor, {
+    required int limit,
+  }) {
+    return _eventStore.fetchEventsAfter(
+      hlc: cursor?.hlc,
+      eventId: cursor?.eventId.isEmpty == true ? null : cursor?.eventId,
+      deviceId: localDeviceId,
+      limit: limit,
+    );
+  }
+
   Future<void> waitForEventsAfter(
     SyncCursor? cursor, {
     required Duration timeout,

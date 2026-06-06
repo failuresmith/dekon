@@ -156,6 +156,7 @@ class _AppShellState extends State<AppShell> {
   List<_NavigationItem> _navigationItems(DeviceRoleSettings settings) {
     final strings = context.strings;
     final role = settings.role;
+    final isCashier = role == DeviceRole.cashierDevice;
     final items = [
       _NavigationItem(
         tab: MainTab.sell,
@@ -173,25 +174,28 @@ class _AppShellState extends State<AppShell> {
           label: '',
         ),
       ),
-      _NavigationItem(
-        tab: MainTab.restock,
-        title: strings.restock,
-        screen: TransactionScreen(
-          key: const ValueKey('restock-screen'),
-          repository: widget.repository,
-          mode: TransactionMode.buy,
-          scanBarcode: widget.scanBarcode,
-        ),
-        historyMode: TransactionMode.buy,
-        destination: const NavigationDestination(
-          icon: Icon(Icons.add_business_outlined),
-          selectedIcon: Icon(Icons.add_business),
-          label: '',
-        ),
-      ),
     ];
     items[0] = items[0].copyWithDestinationLabel(strings.sell);
-    items[1] = items[1].copyWithDestinationLabel(strings.restock);
+    if (!isCashier) {
+      items.add(
+        _NavigationItem(
+          tab: MainTab.restock,
+          title: strings.restock,
+          screen: TransactionScreen(
+            key: const ValueKey('restock-screen'),
+            repository: widget.repository,
+            mode: TransactionMode.buy,
+            scanBarcode: widget.scanBarcode,
+          ),
+          historyMode: TransactionMode.buy,
+          destination: NavigationDestination(
+            icon: const Icon(Icons.add_business_outlined),
+            selectedIcon: const Icon(Icons.add_business),
+            label: strings.restock,
+          ),
+        ),
+      );
+    }
     if (role == DeviceRole.mainDevice || settings.locked) {
       items.add(
         _NavigationItem(
@@ -201,6 +205,7 @@ class _AppShellState extends State<AppShell> {
             key: const ValueKey('inventory-screen'),
             repository: widget.repository,
             scanBarcode: widget.scanBarcode,
+            readOnly: isCashier,
           ),
           destination: NavigationDestination(
             icon: const Icon(Icons.inventory_2_outlined),
@@ -210,6 +215,7 @@ class _AppShellState extends State<AppShell> {
         ),
       );
     }
+    if (isCashier) return items;
     final reportScope = role == DeviceRole.cashierDevice
         ? ReportScope.localDevice
         : ReportScope.allDevices;

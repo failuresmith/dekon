@@ -191,7 +191,7 @@ class LanSyncClient {
 
   Future<PostEventsResult> pushToPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
-    final events = await store.fetchEventsAfter(
+    final events = await store.fetchLocalEventsAfter(
       peer.lastPushedCursor,
       limit: 100,
     );
