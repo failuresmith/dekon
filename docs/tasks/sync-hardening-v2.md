@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 5 - complete
+Current phase: Phase 6 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -30,6 +30,10 @@ Last updated: 2026-06-06
 - Phase 5 scope: move foreground Cashier sync lifecycle ownership out of `CashierSyncIndicator` into a controller while preserving existing foreground-only behavior.
 - Phase 5: added `CashierSyncController`; it owns ping, sync refresh, outbox/status refresh, projection stream open/reopen, app lifecycle handling, transfer activity state, and refresh serialization.
 - Phase 5: `CashierSyncIndicator` is now a view/subscriber that renders controller status and owns only animation/widget lifecycle plumbing.
+- Phase 6 scope: make the visible `Stop Pairing` action stop only the active pairing session without shutting down the LAN sync server.
+- Phase 6: added `LanSyncServer.stopPairing()` to clear only the current pairing payload.
+- Phase 6: Settings `Stop Pairing` now calls `stopPairing()` and leaves `main_sync_server_enabled` unchanged.
+- Phase 6: full `LanSyncServer.stop()` behavior remains available and unchanged for intentional server shutdown.
 
 ## Decisions
 
@@ -41,6 +45,7 @@ Last updated: 2026-06-06
 - Phase 3: the indicator does not breathe merely because a sync future is in progress; breathing remains tied to actual transfer activity.
 - Phase 4: heartbeat uses Dart's built-in WebSocket ping/pong handling instead of an app-level heartbeat message. If pongs stop arriving, Dart closes the socket; the Cashier marks the stream disconnected through `onDone` and runs snapshot sync before reconnecting.
 - Phase 5: foreground-only Cashier sync remains an explicit invariant. The controller starts while the app UI is mounted, closes the projection stream on pause/hidden/detached, and refreshes/reopens on resume. Background sync service work is out of scope.
+- Phase 6: pairing availability is an independent session state. Stopping pairing should not revoke trusted peers, unregister discovery, close projection sockets, or disable the Main sync server setting.
 
 ## Tests Added
 
@@ -66,6 +71,11 @@ Last updated: 2026-06-06
 - App resume refreshes snapshot before reopening projection stream.
 - Controller serializes overlapping refresh triggers.
 - Indicator disposal no longer owns protocol teardown directly; it disposes the controller subscription/controller.
+- Stop Pairing prevents new `/pair` requests.
+- Stop Pairing keeps the LAN sync server active and discovery registered.
+- Stop Pairing keeps an existing Cashier projection stream connected.
+- Projection broadcasts still reach the connected Cashier after pairing is stopped.
+- Settings Stop Pairing hides the QR code without disabling Main sync server persistence.
 
 ## Validation Log
 
@@ -86,6 +96,11 @@ Commands run:
 - `docker compose run --rm flutter-dev dart format test/ui/cashier_sync_controller_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `docker compose run --rm flutter-dev flutter test test/ui/minimal_ui_test.dart`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/ui/settings_screen.dart test/sync/lan_sync_server_test.dart test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart test/ui/cashier_sync_indicator_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
@@ -143,6 +158,10 @@ Results:
 - Focused `flutter test test/ui/minimal_ui_test.dart` passed.
 - Phase 5 `flutter analyze` passed with no issues.
 - Phase 5 `git diff --check` passed.
+- Phase 6 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 6 focused `flutter test test/ui/backup_recovery_ui_test.dart` passed.
+- Phase 6 `flutter analyze` passed with no issues.
+- Phase 6 `git diff --check` passed.
 
 ## Manual QA
 
@@ -154,7 +173,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 6 through Phase 11 are not implemented yet.
+- Phase 7 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---

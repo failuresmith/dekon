@@ -147,6 +147,52 @@ void main() {
     }
   });
 
+  test(
+    'stopPairing prevents new pairing while keeping server active',
+    () async {
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final repository = await DekonRepository.open(database: db);
+      final discovery = _FakeSyncServiceDiscovery();
+      final server = repository.createLanSyncServer(
+        serviceDiscovery: discovery,
+      );
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final serverUrl = server.serverUrl;
+
+        server.stopPairing();
+
+        final response = await http.post(
+          Uri.parse('$serverUrl/pair'),
+          headers: {'content-type': 'application/json'},
+          body: jsonEncode({
+            'device_id': _peerDeviceId,
+            'display_name': 'Counter phone',
+            'pairing_secret': pairing.pairingSecret,
+          }),
+        );
+
+        expect(response.statusCode, HttpStatus.forbidden);
+        expect(server.isRunning, true);
+        expect(server.serverUrl, serverUrl);
+        expect(server.pairingQrData, isNull);
+        expect(
+          server.discoveryAdvertisement.state,
+          SyncDiscoveryAdvertisementState.advertising,
+        );
+        expect(discovery.unregisterCount, 0);
+      } finally {
+        await server.stop();
+        await repository.close();
+      }
+    },
+  );
+
   test('server uses the fixed sync port by default', () async {
     final db = await CoreDatabase.open(
       path: inMemoryDatabasePath,
@@ -1649,6 +1695,10 @@ void main() {
         final socket = await client.openCashierProjectionStream(peer.deviceId);
         addTearDown(socket.close);
         expect(socket.pingInterval, const Duration(seconds: 15));
+        expect(server.isCashierConnected(cashierDeviceId), true);
+        server.stopPairing();
+        expect(server.isRunning, true);
+        expect(server.pairingQrData, isNull);
         expect(server.isCashierConnected(cashierDeviceId), true);
         final nextMessage = socket.first.timeout(const Duration(seconds: 2));
 

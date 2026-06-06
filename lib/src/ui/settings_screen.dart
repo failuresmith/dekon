@@ -567,7 +567,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
           ),
         FilledButton.icon(
           key: const Key('device-sync-stop-pairing-button'),
-          onPressed: _serverBusy ? null : _stopServer,
+          onPressed: _serverBusy ? null : _stopPairing,
           icon: const Icon(Icons.stop),
           label: Text(context.strings.stopPairing),
         ),
@@ -762,15 +762,14 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     }
   }
 
-  Future<void> _stopServer() async {
+  Future<void> _stopPairing() async {
     final strings = context.strings;
     setState(() {
       _serverBusy = true;
       _serverError = null;
     });
     try {
-      await widget.syncServer!.stop();
-      await widget.repository.setMainSyncServerEnabled(false);
+      widget.syncServer!.stopPairing();
     } catch (_) {
       _serverError = strings.couldNotStopPairing;
     } finally {

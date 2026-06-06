@@ -185,6 +185,17 @@ void main() {
       );
       expect(find.textContaining('Advertising on port 40739'), findsOneWidget);
       expect(find.byKey(const Key('refresh-mdns-advertising')), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('device-sync-stop-pairing-button')),
+      );
+      await tester.pumpAndSettle();
+
+      final roleSettings = await repository.deviceRoleSettings();
+      expect(find.byKey(const Key('sync-pairing-qr')), findsNothing);
+      expect(find.text('Connect Another Device'), findsOneWidget);
+      expect(syncServer.isRunning, true);
+      expect(roleSettings.mainSyncServerEnabled, true);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();
@@ -774,6 +785,7 @@ class _FakeLanSyncServer extends LanSyncServer {
     : super(store: repository.createSyncStore());
 
   var _running = false;
+  var _pairing = false;
   var _advertisement = const SyncDiscoveryAdvertisement.inactive();
   final connectedCashierDeviceIds = <String>{};
 
@@ -787,7 +799,7 @@ class _FakeLanSyncServer extends LanSyncServer {
   String? get serverUrl => _running ? 'http://192.168.1.10:40739' : null;
 
   @override
-  String? get pairingQrData => _running
+  String? get pairingQrData => _running && _pairing
       ? SyncPairingPayload(
           baseUrl: serverUrl!,
           serverDeviceId: store.localDeviceId,
@@ -809,12 +821,19 @@ class _FakeLanSyncServer extends LanSyncServer {
     bool enablePairing = true,
   }) async {
     _running = true;
+    _pairing = enablePairing;
     await refreshDiscoveryAdvertisement();
+  }
+
+  @override
+  void stopPairing() {
+    _pairing = false;
   }
 
   @override
   Future<void> stop() async {
     _running = false;
+    _pairing = false;
     _advertisement = const SyncDiscoveryAdvertisement.inactive();
   }
 

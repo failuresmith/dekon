@@ -129,6 +129,10 @@ class LanSyncServer {
     return payload;
   }
 
+  void stopPairing() {
+    _pairingPayload = null;
+  }
+
   Future<void> unpairCashier(String deviceId) async {
     final trimmed = deviceId.trim();
     if (trimmed.isEmpty) throw ArgumentError.value(deviceId, 'deviceId');
