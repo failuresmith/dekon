@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 8 - complete
+Current phase: Phase 9 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -41,6 +41,10 @@ Last updated: 2026-06-06
 - Phase 8 scope: force connected Cashiers to repair from a fresh snapshot after successful Main backup restore.
 - Phase 8: `DekonRepository.restoreBackup` now runs inside the replicated-mutation queue, imports the backup, increments the Cashier projection version once, and broadcasts `snapshot_required`.
 - Phase 8: restore validation/import behavior remains in `BackupService`; failed validation still exits before projection-version mutation or broadcast.
+- Phase 9 scope: serialize Cashier projection message application and snapshot repair work in `LanSyncClient`.
+- Phase 9: added a bounded per-client projection message queue with a depth limit of 32.
+- Phase 9: projection updates now check the latest applied projection version immediately before applying, so messages made stale by a newer snapshot are treated as duplicates.
+- Phase 9: concurrent gap and duplicate `snapshot_required` messages now produce one snapshot fetch, with later stale queued messages skipped.
 
 ## Decisions
 
@@ -58,6 +62,8 @@ Last updated: 2026-06-06
 - Phase 7: the pairing code is rotated before the async trusted-peer write to consume the old QR code before the server yields to another pairing request.
 - Phase 8: a restore emits a snapshot repair message instead of trying to summarize restored event deltas. Cashier snapshots remain the confidentiality boundary for restored product data.
 - Phase 8: projection version advances from the current Main setting, not from restored data, so restore cannot move Main's projection version backward.
+- Phase 9: the queue lives in `LanSyncClient`, the production boundary used by the controller and direct sync tests. The controller may still dispatch stream callbacks without awaiting each one; the client serializes the actual mutation and repair work.
+- Phase 9: queue overflow fails loudly with `SyncClientException` instead of allowing unbounded memory growth.
 
 ## Tests Added
 
@@ -97,6 +103,11 @@ Last updated: 2026-06-06
 - Connected Cashier applies a fresh snapshot after restore without app restart.
 - Restore increments Cashier projection version monotonically from the current Main version.
 - Restored private product fields do not appear in the WebSocket repair message or Cashier snapshot state.
+- Concurrent pushed projection messages apply in order.
+- Duplicate snapshot repairs coalesce into one inventory snapshot fetch.
+- Older queued projection messages are ignored after a newer snapshot has been applied.
+- Version gaps trigger one snapshot repair instead of one repair per queued stale message.
+- Projection message queue overflow is bounded and reported as a client error.
 
 ## Validation Log
 
@@ -128,6 +139,13 @@ Commands run:
 - `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/backup/backup_service_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_controller_test.dart test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart docs/tasks/sync-hardening-v2.md`
@@ -209,6 +227,11 @@ Results:
 - Phase 8 focused `flutter test test/backup/backup_service_test.dart` passed.
 - Phase 8 `flutter analyze` passed with no issues.
 - Phase 8 `git diff --check` passed.
+- Phase 9 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 9 focused `flutter test test/ui/cashier_sync_controller_test.dart test/ui/cashier_sync_indicator_test.dart` passed.
+- Phase 9 focused `flutter test test/sync/lan_sync_server_test.dart` passed again after adding bounded-queue coverage.
+- Phase 9 `flutter analyze` passed with no issues.
+- Phase 9 `git diff --check` passed.
 
 ## Manual QA
 
@@ -220,7 +243,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 9 through Phase 11 are not implemented yet.
+- Phase 10 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---

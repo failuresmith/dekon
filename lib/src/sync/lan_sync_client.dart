@@ -64,6 +64,10 @@ class LanSyncClient {
   static const _maxPullWaitTimeout = Duration(seconds: 30);
   static const _subnetProbeConcurrency = 32;
   static const _subnetProbePerHostTimeout = Duration(milliseconds: 250);
+  static const _maxProjectionMessageQueueDepth = 32;
+
+  Future<void> _projectionMessageQueue = Future<void>.value();
+  var _projectionMessageQueueDepth = 0;
 
   void close() => _client.close();
 
@@ -427,15 +431,46 @@ class LanSyncClient {
   Future<CashierProjectionApplyStatus> applyCashierProjectionMessage(
     String peerDeviceId,
     Object? message,
-  ) async {
-    final peer = await _requiredPeer(peerDeviceId);
+  ) {
     final update = CashierProjectionUpdate.fromJson(
       _decodeProjectionMessage(message),
     );
+    if (_projectionMessageQueueDepth >= _maxProjectionMessageQueueDepth) {
+      return Future.error(
+        SyncClientException('Projection message queue is full.'),
+      );
+    }
+    _projectionMessageQueueDepth += 1;
+    final completer = Completer<CashierProjectionApplyStatus>();
+    final previous = _projectionMessageQueue;
+    _projectionMessageQueue = previous.catchError((_) {}).then((_) async {
+      try {
+        completer.complete(
+          await _applyCashierProjectionUpdate(peerDeviceId, update),
+        );
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      } finally {
+        _projectionMessageQueueDepth -= 1;
+      }
+    });
+    return completer.future;
+  }
+
+  Future<CashierProjectionApplyStatus> _applyCashierProjectionUpdate(
+    String peerDeviceId,
+    CashierProjectionUpdate update,
+  ) async {
+    final peer = await _requiredPeer(peerDeviceId);
     if (update.type == cashierProjectionUnpaired) {
       if (update.targetDeviceId == store.localDeviceId) {
         throw const CashierUnpairedException();
       }
+      return CashierProjectionApplyStatus.duplicate;
+    }
+    final lastApplied = await store.lastAppliedCashierProjectionVersion();
+    if (update.projectionVersion <= lastApplied) {
+      await store.markPeerSuccess(peer.deviceId);
       return CashierProjectionApplyStatus.duplicate;
     }
     final status = await store.applyCashierProjectionUpdate(update);

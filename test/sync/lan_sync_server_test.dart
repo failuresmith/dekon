@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1762,6 +1763,281 @@ void main() {
     }
   });
 
+  test('client serializes concurrent projection messages in order', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = LanSyncServer(
+      store: mainRepository.createSyncStore(),
+      now: () => _now,
+    );
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+      now: () => _now,
+    );
+    final updates = <Map<String, Object?>>[];
+    final subscription = mainRepository.cashierProjectionUpdates.listen(
+      updates.add,
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Queued Beans',
+        barcode: 'QUEUED-BEANS',
+        salePriceMinor: 900,
+        purchaseCostMinor: 450,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 8),
+      ]);
+      await _flushStream();
+      updates.clear();
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+
+      await mainRepository.updateProduct(
+        _copyProduct(product, name: 'Queued Beans Renamed'),
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 1),
+      ]);
+      await _flushStream();
+
+      final statuses = await Future.wait([
+        client.applyCashierProjectionMessage(
+          peer.deviceId,
+          jsonEncode(updates[0]),
+        ),
+        client.applyCashierProjectionMessage(
+          peer.deviceId,
+          jsonEncode(updates[1]),
+        ),
+      ]);
+      final cashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final lastApplied = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(statuses, [
+        CashierProjectionApplyStatus.applied,
+        CashierProjectionApplyStatus.applied,
+      ]);
+      expect(cashierProduct?.name, 'Queued Beans Renamed');
+      expect(cashierProduct?.quantity, 9);
+      expect(lastApplied, 4);
+    } finally {
+      await subscription.cancel();
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
+  test(
+    'client coalesces snapshot repairs and drops older queued messages',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final server = LanSyncServer(
+        store: mainRepository.createSyncStore(),
+        now: () => _now,
+      );
+      var snapshotFetchCount = 0;
+      final client = LanSyncClient(
+        store: cashierRepository.createSyncStore(),
+        client: _serverBackedClient(
+          server,
+          onRequest: (request) {
+            if (request.url.path == '/cashier/inventory-snapshot') {
+              snapshotFetchCount += 1;
+            }
+          },
+        ),
+        now: () => _now,
+      );
+      final updates = <Map<String, Object?>>[];
+      final subscription = mainRepository.cashierProjectionUpdates.listen(
+        updates.add,
+      );
+      try {
+        final product = await mainRepository.createProduct(
+          name: 'Repair Beans',
+          barcode: 'REPAIR-BEANS',
+          salePriceMinor: 900,
+          purchaseCostMinor: 450,
+        );
+        await mainRepository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 8),
+        ]);
+        await _flushStream();
+        updates.clear();
+        final pairing = server.createPairingPayload(
+          baseUrl: 'http://main.local',
+        );
+        final peer = await client.pairWithServer(pairing);
+        snapshotFetchCount = 0;
+
+        await mainRepository.updateProduct(
+          _copyProduct(product, name: 'Repair Beans Renamed'),
+        );
+        await mainRepository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 1),
+        ]);
+        await _flushStream();
+
+        final gapStatuses = await Future.wait([
+          client.applyCashierProjectionMessage(
+            peer.deviceId,
+            jsonEncode(updates[1]),
+          ),
+          client.applyCashierProjectionMessage(
+            peer.deviceId,
+            jsonEncode(updates[0]),
+          ),
+          client.applyCashierProjectionMessage(
+            peer.deviceId,
+            jsonEncode(updates[1]),
+          ),
+        ]);
+        final gapRepairedProduct = await cashierRepository.productById(
+          product.productId,
+        );
+        final gapRepairedVersion = await cashierRepository
+            .createSyncStore()
+            .lastAppliedCashierProjectionVersion();
+
+        expect(gapStatuses, [
+          CashierProjectionApplyStatus.gap,
+          CashierProjectionApplyStatus.duplicate,
+          CashierProjectionApplyStatus.duplicate,
+        ]);
+        expect(snapshotFetchCount, 1);
+        expect(gapRepairedProduct?.name, 'Repair Beans Renamed');
+        expect(gapRepairedProduct?.quantity, 9);
+        expect(gapRepairedVersion, 4);
+
+        updates.clear();
+        snapshotFetchCount = 0;
+        final afterRepair = await mainRepository.productById(product.productId);
+        await mainRepository.updateProduct(
+          _copyProduct(afterRepair!, name: 'Snapshot Coalesced Beans'),
+        );
+        await _flushStream();
+        final snapshotProjectionVersion =
+            updates.single['projection_version'] as int;
+        final snapshotMessage = jsonEncode(
+          serializeCashierSnapshotRequiredMessage(
+            projectionVersion: snapshotProjectionVersion,
+          ),
+        );
+
+        final snapshotStatuses = await Future.wait([
+          client.applyCashierProjectionMessage(peer.deviceId, snapshotMessage),
+          client.applyCashierProjectionMessage(peer.deviceId, snapshotMessage),
+        ]);
+        final snapshotProduct = await cashierRepository.productById(
+          product.productId,
+        );
+        final snapshotVersion = await cashierRepository
+            .createSyncStore()
+            .lastAppliedCashierProjectionVersion();
+
+        expect(snapshotStatuses, [
+          CashierProjectionApplyStatus.snapshotRequired,
+          CashierProjectionApplyStatus.duplicate,
+        ]);
+        expect(snapshotFetchCount, 1);
+        expect(snapshotProduct?.name, 'Snapshot Coalesced Beans');
+        expect(snapshotVersion, snapshotProjectionVersion);
+      } finally {
+        await subscription.cancel();
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
+  test('client bounds the projection message queue', () async {
+    final db = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final repository = await DekonRepository.open(database: db);
+    final store = repository.createSyncStore();
+    final snapshotCompleter = Completer<http.Response>();
+    final client = LanSyncClient(
+      store: store,
+      client: MockClient((request) {
+        if (request.url.path == '/cashier/inventory-snapshot') {
+          return snapshotCompleter.future;
+        }
+        return Future.value(http.Response('not found', 404));
+      }),
+      now: () => _now,
+    );
+    try {
+      await store.trustPeer(
+        deviceId: _peerDeviceId,
+        displayName: 'Main',
+        sharedSecret: _sharedSecret,
+        baseUrl: 'http://main.local',
+      );
+      final message = jsonEncode(
+        serializeCashierSnapshotRequiredMessage(projectionVersion: 1),
+      );
+      final queued = [
+        for (var i = 0; i < 32; i++)
+          client.applyCashierProjectionMessage(_peerDeviceId, message),
+      ];
+
+      await expectLater(
+        client.applyCashierProjectionMessage(_peerDeviceId, message),
+        throwsA(isA<SyncClientException>()),
+      );
+      snapshotCompleter.complete(
+        http.Response(
+          jsonEncode({'projection_version': 1, 'products': const []}),
+          200,
+        ),
+      );
+      final statuses = await Future.wait(queued);
+
+      expect(statuses.first, CashierProjectionApplyStatus.snapshotRequired);
+      expect(
+        statuses.skip(1),
+        everyElement(CashierProjectionApplyStatus.duplicate),
+      );
+    } finally {
+      client.close();
+      await repository.close();
+    }
+  });
+
   test(
     'projection WebSocket authenticates and streams sanitized updates',
     () async {
@@ -2294,8 +2570,12 @@ class _Harness {
   }
 }
 
-MockClient _serverBackedClient(LanSyncServer server) {
+MockClient _serverBackedClient(
+  LanSyncServer server, {
+  void Function(http.Request request)? onRequest,
+}) {
   return MockClient((request) async {
+    onRequest?.call(request);
     final response = await server.handler(
       Request(
         request.method,
