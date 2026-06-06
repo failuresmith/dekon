@@ -222,6 +222,14 @@ void main() {
           displayName: 'Side Register',
           sharedSecret: 'disconnected-secret',
         );
+        await repository.createProduct(
+          name: 'Lag Diagnostic Tea',
+          salePriceMinor: 100,
+        );
+        await store.markPeerSuccess(
+          connectedCashierId,
+          lastAppliedCashierProjectionVersion: 0,
+        );
         syncServer.connectedCashierDeviceIds.add(connectedCashierId);
 
         await tester.pumpWidget(
@@ -262,6 +270,7 @@ void main() {
 
         expect(connectedDecoration.color, Colors.green.shade600);
         expect(disconnectedDecoration.color, Colors.grey.shade500);
+        expect(find.textContaining('Inventory update pending'), findsOneWidget);
         expect(
           unpairButton.style?.foregroundColor?.resolve(const <WidgetState>{}),
           Theme.of(unpairContext).colorScheme.error,

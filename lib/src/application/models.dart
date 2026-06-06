@@ -152,10 +152,22 @@ enum ReportCalendar { gregorian, persian }
 enum ReportTrendPeriod { day, week, month, year }
 
 class CashierReportFilter {
-  const CashierReportFilter({required this.deviceId, required this.label});
+  const CashierReportFilter({
+    required this.deviceId,
+    required this.label,
+    this.lastAppliedProjectionVersion,
+    this.currentProjectionVersion = 0,
+  });
 
   final String deviceId;
   final String label;
+  final int? lastAppliedProjectionVersion;
+  final int currentProjectionVersion;
+
+  bool get projectionLagging {
+    final applied = lastAppliedProjectionVersion;
+    return applied != null && applied < currentProjectionVersion;
+  }
 }
 
 class TransactionHistoryLine {

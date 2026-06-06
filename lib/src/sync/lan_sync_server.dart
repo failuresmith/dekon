@@ -569,7 +569,12 @@ class LanSyncServer {
   }
 
   Future<Response> _syncState(Request request, TrustedPeer peer) async {
-    await store.markPeerSuccess(peer.deviceId);
+    await store.markPeerSuccess(
+      peer.deviceId,
+      lastAppliedCashierProjectionVersion: _lastAppliedCashierProjectionVersion(
+        request,
+      ),
+    );
     final body = await store.state().then((state) => state.toJson());
     final nonce = request.url.queryParameters['nonce'];
     if (nonce != null && nonce.trim().isNotEmpty) {
@@ -583,6 +588,14 @@ class LanSyncServer {
       };
     }
     return _json(body, request: request);
+  }
+
+  int? _lastAppliedCashierProjectionVersion(Request request) {
+    final value =
+        request.url.queryParameters['last_applied_cashier_projection_version'];
+    final parsed = int.tryParse(value ?? '');
+    if (parsed == null || parsed < 0) return null;
+    return parsed;
   }
 
   Future<TrustedPeer?> _authenticate(

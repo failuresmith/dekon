@@ -499,7 +499,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
                     isConnected: isConnected,
                   ),
                   title: Text(cashier.label),
-                  subtitle: Text(strings.trustedCashierDevice),
+                  subtitle: Text(_cashierDeviceSubtitle(cashier, strings)),
                   trailing: OutlinedButton(
                     key: Key('unpair-cashier-${cashier.deviceId}'),
                     style: _unpairButtonStyle(context),
@@ -519,6 +519,17 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
         ],
       ],
     );
+  }
+
+  String _cashierDeviceSubtitle(
+    CashierReportFilter cashier,
+    UiStrings strings,
+  ) {
+    if (cashier.projectionLagging) {
+      return '${strings.trustedCashierDevice} - '
+          '${strings.cashierInventoryUpdatePending}';
+    }
+    return strings.trustedCashierDevice;
   }
 
   ButtonStyle _unpairButtonStyle(BuildContext context) {

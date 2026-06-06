@@ -378,8 +378,10 @@ void main() {
         final response = await harness.server.handler(
           Request('GET', uri, headers: _authHeaders('GET', uri, const [])),
         );
+        final peer = await harness.store.trustedPeer(_peerDeviceId);
 
         expect(response.statusCode, 200);
+        expect(peer?.lastAppliedCashierProjectionVersion, isNull);
       });
     },
   );
@@ -2100,6 +2102,80 @@ void main() {
         expect(message, isNot(contains('purchase_cost_minor')));
         expect(message, isNot(contains('PRIVATE-SOCKET-SKU')));
       } finally {
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
+  test(
+    'cashier reports applied projection version and main distinguishes lag',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final server = mainRepository.createLanSyncServer();
+      final client = cashierRepository.createLanSyncClient();
+      WebSocket? socket;
+      try {
+        final product = await mainRepository.createProduct(
+          name: 'Ack Tea',
+          barcode: 'ACK-TEA',
+          salePriceMinor: 1200,
+          purchaseCostMinor: 500,
+        );
+        await mainRepository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 4),
+        ]);
+        final mainVersion = await mainRepository
+            .createSyncStore()
+            .cashierInventoryProjectionVersion();
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+        await client.pingPeer(peer.deviceId);
+
+        final currentFilter =
+            (await mainRepository.cashierReportFilters()).single;
+        final cashierDeviceId = cashierRepository
+            .createSyncStore()
+            .localDeviceId;
+        socket = await client.openCashierProjectionStream(peer.deviceId);
+        expect(server.isCashierConnected(cashierDeviceId), true);
+
+        await mainRepository.updateProduct(
+          _copyProduct(product, name: 'Lagging Ack Tea'),
+        );
+        final laggingFilter =
+            (await mainRepository.cashierReportFilters()).single;
+
+        await client.fetchAndApplyCashierInventorySnapshot(peer.deviceId);
+        await client.pingPeer(peer.deviceId);
+        final repairedFilter =
+            (await mainRepository.cashierReportFilters()).single;
+
+        expect(currentFilter.lastAppliedProjectionVersion, mainVersion);
+        expect(currentFilter.currentProjectionVersion, mainVersion);
+        expect(currentFilter.projectionLagging, false);
+        expect(laggingFilter.lastAppliedProjectionVersion, mainVersion);
+        expect(laggingFilter.currentProjectionVersion, mainVersion + 1);
+        expect(laggingFilter.projectionLagging, true);
+        expect(repairedFilter.lastAppliedProjectionVersion, mainVersion + 1);
+        expect(repairedFilter.currentProjectionVersion, mainVersion + 1);
+        expect(repairedFilter.projectionLagging, false);
+      } finally {
+        await socket?.close();
         client.close();
         await server.stop();
         await mainRepository.close();

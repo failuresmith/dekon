@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 9 - complete
+Current phase: Phase 10 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -45,6 +45,11 @@ Last updated: 2026-06-06
 - Phase 9: added a bounded per-client projection message queue with a depth limit of 32.
 - Phase 9: projection updates now check the latest applied projection version immediately before applying, so messages made stale by a newer snapshot are treated as duplicates.
 - Phase 9: concurrent gap and duplicate `snapshot_required` messages now produce one snapshot fetch, with later stale queued messages skipped.
+- Phase 10 scope: add nullable per-Cashier applied projection acknowledgement for Main-side diagnostics.
+- Phase 10: schema version 7 adds `sync_peers.last_applied_cashier_projection_version`.
+- Phase 10: Cashier `/sync/state` pings include signed `last_applied_cashier_projection_version` query data.
+- Phase 10: Main records the applied version when present and exposes lag through `CashierReportFilter`.
+- Phase 10: Settings Device Sync shows a low-emphasis `Inventory update pending` diagnostic for lagging Cashiers.
 
 ## Decisions
 
@@ -64,6 +69,8 @@ Last updated: 2026-06-06
 - Phase 8: projection version advances from the current Main setting, not from restored data, so restore cannot move Main's projection version backward.
 - Phase 9: the queue lives in `LanSyncClient`, the production boundary used by the controller and direct sync tests. The controller may still dispatch stream callbacks without awaiting each one; the client serializes the actual mutation and repair work.
 - Phase 9: queue overflow fails loudly with `SyncClientException` instead of allowing unbounded memory growth.
+- Phase 10: missing or invalid applied-version query values are ignored so older paired Cashiers remain compatible.
+- Phase 10: applied-version diagnostics do not block Cashier sales; they are surfaced only in Settings/diagnostics.
 
 ## Tests Added
 
@@ -108,6 +115,11 @@ Last updated: 2026-06-06
 - Older queued projection messages are ignored after a newer snapshot has been applied.
 - Version gaps trigger one snapshot repair instead of one repair per queued stale message.
 - Projection message queue overflow is bounded and reported as a client error.
+- Cashier reports applied projection version on ping.
+- Main records applied projection version per Cashier.
+- Connected-but-lagging Cashier can be distinguished from connected-and-current.
+- Older signed pings without applied-version diagnostics still authenticate.
+- Settings Device Sync surfaces lag as a diagnostic subtitle.
 
 ## Validation Log
 
@@ -118,6 +130,14 @@ Commands run:
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/persistence/core_migrations.dart lib/src/application/models.dart lib/src/sync/sync_protocol.dart lib/src/sync/sync_store.dart lib/src/sync/lan_sync_client.dart lib/src/sync/lan_sync_server.dart lib/src/application/dekon_repository.dart lib/src/ui/ui_strings.dart lib/src/ui/settings_screen.dart test/sync/lan_sync_server_test.dart test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/persistence/core_database_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/sync_store.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/ui/cashier_sync_controller.dart lib/src/ui/cashier_sync_indicator.dart`
@@ -232,6 +252,12 @@ Results:
 - Phase 9 focused `flutter test test/sync/lan_sync_server_test.dart` passed again after adding bounded-queue coverage.
 - Phase 9 `flutter analyze` passed with no issues.
 - Phase 9 `git diff --check` passed.
+- Phase 10 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 10 focused `flutter test test/persistence/core_database_test.dart` passed.
+- Phase 10 focused `flutter test test/ui/backup_recovery_ui_test.dart` passed.
+- Phase 10 first analyzer run reported a null-aware map-entry style issue; updated `markPeerSuccess` to use the project style.
+- Phase 10 `flutter analyze` passed with no issues after the style fix.
+- Phase 10 `git diff --check` passed.
 
 ## Manual QA
 
@@ -243,7 +269,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 10 through Phase 11 are not implemented yet.
+- Phase 11 is not implemented yet.
 - No manual multi-device QA has been run.
 
 ---

@@ -105,7 +105,8 @@ class SyncStore {
     final rows = await _db.rawQuery(
       '''
       SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
-             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc
+             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc,
+             p.last_applied_cashier_projection_version
       FROM devices d
       JOIN sync_peers p ON p.peer_device_id = d.device_id
       WHERE d.device_id = ? AND d.trust_status = 'trusted'
@@ -151,7 +152,8 @@ class SyncStore {
     final rows = await _db.rawQuery(
       '''
       SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
-             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc
+             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc,
+             p.last_applied_cashier_projection_version
       FROM devices d
       JOIN sync_peers p ON p.peer_device_id = d.device_id
       WHERE d.device_id = ? AND d.trust_status = 'revoked'
@@ -166,7 +168,8 @@ class SyncStore {
   Future<List<TrustedPeer>> trustedPeers() async {
     final rows = await _db.rawQuery('''
       SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
-             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc
+             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc,
+             p.last_applied_cashier_projection_version
       FROM devices d
       JOIN sync_peers p ON p.peer_device_id = d.device_id
       WHERE d.trust_status = 'trusted'
@@ -212,11 +215,30 @@ class SyncStore {
       baseUrl: row['base_url'] as String?,
       lastPulledCursor: SyncCursor.parse(row['last_pulled_hlc'] as String?),
       lastPushedCursor: SyncCursor.parse(row['last_pushed_hlc'] as String?),
+      lastAppliedCashierProjectionVersion:
+          row['last_applied_cashier_projection_version'] as int?,
     );
   }
 
-  Future<void> markPeerSuccess(String deviceId) async {
+  Future<void> markPeerSuccess(
+    String deviceId, {
+    int? lastAppliedCashierProjectionVersion,
+  }) async {
     final now = _now().toUtc().toIso8601String();
+    if (lastAppliedCashierProjectionVersion != null &&
+        lastAppliedCashierProjectionVersion < 0) {
+      throw ArgumentError.value(
+        lastAppliedCashierProjectionVersion,
+        'lastAppliedCashierProjectionVersion',
+      );
+    }
+    final peerUpdate = <String, Object?>{
+      'last_successful_sync_at': now,
+      'last_error': null,
+      'updated_at': now,
+      'last_applied_cashier_projection_version':
+          ?lastAppliedCashierProjectionVersion,
+    };
     await _db.update(
       'devices',
       {'last_seen_at': now, 'updated_at': now},
@@ -225,7 +247,7 @@ class SyncStore {
     );
     await _db.update(
       'sync_peers',
-      {'last_successful_sync_at': now, 'last_error': null, 'updated_at': now},
+      peerUpdate,
       where: 'peer_device_id = ?',
       whereArgs: [deviceId],
     );

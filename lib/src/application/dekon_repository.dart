@@ -822,11 +822,15 @@ class DekonRepository {
   }
 
   Future<List<CashierReportFilter>> cashierReportFilters() async {
+    final currentProjectionVersion = await createSyncStore()
+        .cashierInventoryProjectionVersion();
     final rows = await _db.rawQuery('''
-      SELECT device_id, display_name
-      FROM devices
-      WHERE trust_status = 'trusted'
-      ORDER BY LOWER(COALESCE(NULLIF(display_name, ''), device_id)) ASC
+      SELECT d.device_id, d.display_name,
+             p.last_applied_cashier_projection_version
+      FROM devices d
+      LEFT JOIN sync_peers p ON p.peer_device_id = d.device_id
+      WHERE d.trust_status = 'trusted'
+      ORDER BY LOWER(COALESCE(NULLIF(d.display_name, ''), d.device_id)) ASC
       ''');
     return [
       for (final row in rows)
@@ -836,6 +840,9 @@ class DekonRepository {
             row['device_id'] as String,
             row['display_name'] as String?,
           ),
+          lastAppliedProjectionVersion:
+              row['last_applied_cashier_projection_version'] as int?,
+          currentProjectionVersion: currentProjectionVersion,
         ),
     ];
   }

@@ -580,6 +580,13 @@ class UiStrings {
     return _text(en: 'Paired cashier device', fa: 'دستگاه صندوق جفت شده');
   }
 
+  String get cashierInventoryUpdatePending {
+    return _text(
+      en: 'Inventory update pending',
+      fa: 'به روز رسانی موجودی در انتظار است',
+    );
+  }
+
   String get unpairCashierQuestion {
     return _text(en: 'Unpair cashier device?', fa: 'جفت سازی صندوق قطع شود؟');
   }

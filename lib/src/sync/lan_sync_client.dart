@@ -221,7 +221,14 @@ class LanSyncClient {
 
   Future<void> _pingPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
-    final uri = Uri.parse(peer.baseUrl!).resolve('/sync/state');
+    final lastApplied = await store.lastAppliedCashierProjectionVersion();
+    final uri = Uri.parse(peer.baseUrl!)
+        .resolve('/sync/state')
+        .replace(
+          queryParameters: {
+            'last_applied_cashier_projection_version': lastApplied.toString(),
+          },
+        );
     final response = await _authenticatedGet(
       uri,
       peer,
@@ -631,6 +638,8 @@ class LanSyncClient {
       baseUrl: baseUrl,
       lastPulledCursor: trustedPeer.lastPulledCursor,
       lastPushedCursor: trustedPeer.lastPushedCursor,
+      lastAppliedCashierProjectionVersion:
+          trustedPeer.lastAppliedCashierProjectionVersion,
     );
     try {
       final response = await _authenticatedGet(

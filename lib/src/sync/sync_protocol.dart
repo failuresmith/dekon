@@ -410,6 +410,7 @@ class TrustedPeer {
     this.baseUrl,
     this.lastPulledCursor,
     this.lastPushedCursor,
+    this.lastAppliedCashierProjectionVersion,
   });
 
   final String deviceId;
@@ -418,6 +419,7 @@ class TrustedPeer {
   final String? baseUrl;
   final SyncCursor? lastPulledCursor;
   final SyncCursor? lastPushedCursor;
+  final int? lastAppliedCashierProjectionVersion;
 }
 
 Map<String, Object?> _stringMap(Object? value, String label) {

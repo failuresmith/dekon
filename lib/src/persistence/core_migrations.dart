@@ -19,7 +19,7 @@ class CoreMigration {
 }
 
 abstract final class CoreMigrations {
-  static const currentVersion = 6;
+  static const currentVersion = 7;
 
   static final List<CoreMigration> migrations = [
     CoreMigration(
@@ -47,6 +47,11 @@ abstract final class CoreMigrations {
       version: 6,
       name: 'cashier_sale_command_outbox',
       apply: _cashierSaleCommandOutbox,
+    ),
+    CoreMigration(
+      version: 7,
+      name: 'cashier_applied_projection_ack',
+      apply: _cashierAppliedProjectionAck,
     ),
   ];
 
@@ -333,6 +338,13 @@ abstract final class CoreMigrations {
       CREATE INDEX IF NOT EXISTS cashier_sale_outbox_lines_product_idx
       ON cashier_sale_command_outbox_lines (product_id)
     ''');
+  }
+
+  static Future<void> _cashierAppliedProjectionAck(DatabaseExecutor db) async {
+    await db.execute(
+      'ALTER TABLE sync_peers ADD COLUMN '
+      'last_applied_cashier_projection_version INTEGER',
+    );
   }
 
   static Future<void> _backfillInventoryLots(DatabaseExecutor db) async {
