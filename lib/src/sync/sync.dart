@@ -1,5 +1,6 @@
 export 'lan_sync_client.dart';
 export 'lan_sync_server.dart';
+export 'cashier_product_projection.dart';
 export 'sync_access_control.dart';
 export 'sync_activity.dart';
 export 'sync_protocol.dart';
