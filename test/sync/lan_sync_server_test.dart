@@ -742,7 +742,7 @@ void main() {
     }
   });
 
-  test('pairing pushes cashier events and pulls main inventory', () async {
+  test('pairing pulls inventory and sale commands update Main', () async {
     final mainDb = await CoreDatabase.open(
       path: inMemoryDatabasePath,
       factory: databaseFactoryFfi,
@@ -775,33 +775,31 @@ void main() {
         TransactionLineDraft(product: product, quantity: 5),
       ]);
       final cashierStore = cashierRepository.createSyncStore();
-      final cashierSale = makeTestEvent(
-        eventId: '019e9239-2222-7000-8000-000000600001',
-        deviceId: cashierStore.localDeviceId,
-        type: EventTypes.inventorySaleRecorded,
-        entityId: 'cashier-sale-1',
-        physicalTimeMillis: _now
-            .add(const Duration(minutes: 1))
-            .millisecondsSinceEpoch,
-        createdAt: _now.add(const Duration(minutes: 1)),
-        payload: {
-          'occurred_at': _now.add(const Duration(minutes: 1)).toIso8601String(),
-          'total_minor': 800,
-          'line_items': [
-            {
-              'product_id': product.productId,
-              'quantity': 2,
-              'unit_price_minor': 400,
-            },
-          ],
-        },
-      );
-      expect((await cashierStore.importEvents([cashierSale])).accepted, [
-        cashierSale.eventId,
-      ]);
 
       final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
-      await client.pairWithServer(pairing, displayName: 'Front Register');
+      final peer = await client.pairWithServer(
+        pairing,
+        displayName: 'Front Register',
+      );
+      await cashierStore.enqueueCashierSaleCommand(
+        command: CashierSaleCommand(
+          commandId: '019e9239-2222-7000-8000-000000600001',
+          occurredAt: _now.add(const Duration(minutes: 1)),
+          lines: [
+            CashierSaleCommandLine(productId: product.productId, quantity: 2),
+          ],
+        ),
+        lines: [
+          CashierSaleOutboxLine(
+            productId: product.productId,
+            productName: 'Pairing Tea',
+            quantity: 2,
+            unitPriceMinor: 400,
+            lineTotalMinor: 800,
+          ),
+        ],
+      );
+      await client.drainCashierSaleOutbox(peer.deviceId);
       final reportRange = _dayRange(_now);
       final mainProduct = await mainRepository.productById(product.productId);
       final cashierProduct = await cashierRepository.productById(
@@ -836,6 +834,11 @@ void main() {
   test('cashier sale command is idempotent and uses Main prices', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
+      final updates = <Map<String, Object?>>[];
+      final subscription = harness.activityBus.cashierProjectionUpdates.listen(
+        updates.add,
+      );
+      addTearDown(subscription.cancel);
       await harness.store.importEvents([
         _productCreated(
           20,
@@ -860,6 +863,7 @@ void main() {
       );
       final first = await harness.postCashierSale(command);
       final second = await harness.postCashierSale(command);
+      await _flushStream();
       final inventory = (await harness.db.query(
         'inventory_projection',
         where: 'product_id = ?',
@@ -868,10 +872,14 @@ void main() {
       final event = first['event'] as Map<String, Object?>;
       final payload = event['payload'] as Map<String, Object?>;
       final line = (payload['line_items'] as List).single as Map;
+      final projectionVersion = await harness.store
+          .cashierInventoryProjectionVersion();
 
       expect(first['duplicate'], false);
       expect(second['duplicate'], true);
       expect(inventory['quantity'], 3);
+      expect(projectionVersion, 1);
+      expect(updates, hasLength(1));
       expect(payload['total_minor'], 200);
       expect(line['unit_price_minor'], 100);
       expect(line['cost_total_minor'], 100);
@@ -1245,17 +1253,53 @@ void main() {
     }
   });
 
-  test('duplicate POST is idempotent and reports duplicate IDs', () async {
+  test('cashier POST events sale is rejected without stock mutation', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
-      final event = _saleRecorded(1);
-      final first = await harness.postEvents([event]);
-      final second = await harness.postEvents([event]);
-      final state = await harness.store.state();
+      const productId = 'legacy-sale-product-1';
+      await harness.store.importEvents([
+        _productCreated(
+          40,
+          deviceId: harness.localDeviceId,
+          entityId: productId,
+          barcode: 'LEGACY-SALE-1',
+        ),
+        _purchaseRecorded(
+          41,
+          deviceId: harness.localDeviceId,
+          productId: productId,
+          quantity: 5,
+        ),
+      ]);
+      final projectionVersionBefore = await harness.store
+          .cashierInventoryProjectionVersion();
+      final updates = <Map<String, Object?>>[];
+      final subscription = harness.activityBus.cashierProjectionUpdates.listen(
+        updates.add,
+      );
+      addTearDown(subscription.cancel);
 
-      expect(first['accepted'], [event.eventId]);
-      expect(second['duplicate'], [event.eventId]);
-      expect(state.eventCount, 1);
+      final event = _saleRecorded(42, productId: productId, quantity: 2);
+      final response = await harness.postEvents([event]);
+      await _flushStream();
+      final state = await harness.store.state();
+      final projectionVersionAfter = await harness.store
+          .cashierInventoryProjectionVersion();
+      final inventory = (await harness.db.query(
+        'inventory_projection',
+        where: 'product_id = ?',
+        whereArgs: [productId],
+      )).single;
+
+      expect(response['accepted'], isEmpty);
+      expect(response['duplicate'], isEmpty);
+      expect(response['rejected'], [
+        {'event_id': event.eventId, 'reason': 'permission_denied'},
+      ]);
+      expect(inventory['quantity'], 5);
+      expect(projectionVersionAfter, projectionVersionBefore);
+      expect(updates, isEmpty);
+      expect(state.eventCount, 2);
     });
   });
 
@@ -1658,7 +1702,7 @@ void main() {
     });
   });
 
-  test('future schema events are stored as unsupported', () async {
+  test('future schema sale events are rejected on legacy POST', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
       final event = _saleRecorded(
@@ -1669,8 +1713,13 @@ void main() {
       final response = await harness.postEvents([event]);
       final state = await harness.store.state();
 
-      expect(response['unsupported'], [event.eventId]);
-      expect(state.unsupportedEventCount, 1);
+      expect(response['accepted'], isEmpty);
+      expect(response['unsupported'], isEmpty);
+      expect(response['rejected'], [
+        {'event_id': event.eventId, 'reason': 'permission_denied'},
+      ]);
+      expect(state.eventCount, 0);
+      expect(state.unsupportedEventCount, 0);
     });
   });
 
@@ -1716,38 +1765,50 @@ void main() {
     });
   });
 
-  test('POST applies transactions in creation-time order', () async {
-    await _withHarness((harness) async {
-      await harness.trustPeer();
-      final productId = 'ordered-product-1';
-      final laterSale = _saleRecorded(
-        6,
-        eventId: _eventId(6),
-        productId: productId,
-        quantity: 1,
-        physicalTimeMillis: 1000,
-        createdAt: _now.add(const Duration(seconds: 1)),
-      );
-      final earlierSale = _saleRecorded(
-        7,
-        eventId: _eventId(7),
-        productId: productId,
-        quantity: 2,
-        physicalTimeMillis: 2000,
-        createdAt: _now,
-      );
+  test(
+    'cashier POST events sale batch is rejected before projection',
+    () async {
+      await _withHarness((harness) async {
+        await harness.trustPeer();
+        final productId = 'ordered-product-1';
+        final laterSale = _saleRecorded(
+          6,
+          eventId: _eventId(6),
+          productId: productId,
+          quantity: 1,
+          physicalTimeMillis: 1000,
+          createdAt: _now.add(const Duration(seconds: 1)),
+        );
+        final earlierSale = _saleRecorded(
+          7,
+          eventId: _eventId(7),
+          productId: productId,
+          quantity: 2,
+          physicalTimeMillis: 2000,
+          createdAt: _now,
+        );
 
-      final response = await harness.postEvents([laterSale, earlierSale]);
-      final inventory = (await harness.db.query(
-        'inventory_projection',
-        where: 'product_id = ?',
-        whereArgs: [productId],
-      )).single;
+        final response = await harness.postEvents([laterSale, earlierSale]);
+        final inventory = await harness.db.query(
+          'inventory_projection',
+          where: 'product_id = ?',
+          whereArgs: [productId],
+        );
+        final state = await harness.store.state();
 
-      expect(response['accepted'], [earlierSale.eventId, laterSale.eventId]);
-      expect(inventory['quantity'], -3);
-    });
-  });
+        expect(response['accepted'], isEmpty);
+        expect(
+          response['rejected'],
+          containsAll([
+            {'event_id': earlierSale.eventId, 'reason': 'permission_denied'},
+            {'event_id': laterSale.eventId, 'reason': 'permission_denied'},
+          ]),
+        );
+        expect(inventory, isEmpty);
+        expect(state.eventCount, 0);
+      });
+    },
+  );
 
   test('cashier cannot spoof another device ID in posted events', () async {
     await _withHarness((harness) async {

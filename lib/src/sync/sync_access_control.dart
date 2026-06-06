@@ -98,7 +98,7 @@ class AuthorizationService {
 
 Capability? capabilityForRemoteEvent(EventEnvelope event) {
   return switch (event.type) {
-    EventTypes.inventorySaleRecorded => Capability.recordSale,
+    EventTypes.inventorySaleRecorded => null,
     EventTypes.inventoryPurchaseRecorded => Capability.recordRestock,
     EventTypes.productCreated => Capability.createProduct,
     EventTypes.productFieldSet => Capability.modifyProduct,
