@@ -64,8 +64,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
                           _lineTile(index, _lines[index]),
                     ),
             ),
-            const SizedBox(height: 12),
-            _summaryPanel(),
+            if (_lines.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _summaryPanel(),
+            ],
           ],
         ),
       ),

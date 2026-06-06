@@ -107,7 +107,7 @@ void main() {
     expect(find.byKey(const Key('open-settings')), findsOneWidget);
     expect(find.byKey(const Key('sell-empty-title')), findsOneWidget);
     expect(find.byKey(const Key('sell-empty-help')), findsOneWidget);
-    expect(_filledButton(find.byKey(const Key('finish-sale'))).onPressed, null);
+    expect(find.byKey(const Key('finish-sale')), findsNothing);
 
     await tester.tap(find.text('Restock'));
     await tester.pumpAndSettle();
@@ -116,16 +116,55 @@ void main() {
     expect(find.byKey(const Key('restock-history')), findsOneWidget);
     expect(find.byKey(const Key('restock-empty-title')), findsOneWidget);
     expect(find.byKey(const Key('restock-empty-help')), findsOneWidget);
-    expect(
-      _filledButton(find.byKey(const Key('finish-purchase'))).onPressed,
-      null,
-    );
+    expect(find.byKey(const Key('finish-purchase')), findsNothing);
 
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('sell-history')), findsNothing);
     expect(find.byKey(const Key('restock-history')), findsNothing);
+  });
+
+  testWidgets('transaction summary appears only after adding an item', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository(onboarded: true);
+    await repository.createProduct(
+      name: 'Summary Tea',
+      barcode: 'SUMMARY-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sale-total')), findsNothing);
+    expect(find.byKey(const Key('finish-sale')), findsNothing);
+
+    await _submitLookup(tester, 'SUMMARY-TEA');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sale-total')), findsOneWidget);
+    expect(find.byKey(const Key('finish-sale')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('remove-line-0')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sale-total')), findsNothing);
+    expect(find.byKey(const Key('finish-sale')), findsNothing);
+
+    await tester.tap(find.text('Restock'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('purchase-total')), findsNothing);
+    expect(find.byKey(const Key('finish-purchase')), findsNothing);
+
+    await _submitLookup(tester, 'SUMMARY-TEA');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('purchase-total')), findsOneWidget);
+    expect(find.byKey(const Key('finish-purchase')), findsOneWidget);
   });
 
   testWidgets('Settings language choice updates copy and persists', (
@@ -1169,10 +1208,6 @@ void main() {
 
     expect(find.text('Sale completed'), findsOneWidget);
   });
-}
-
-FilledButton _filledButton(Finder finder) {
-  return finder.evaluate().single.widget as FilledButton;
 }
 
 Future<void> _submitLookup(WidgetTester tester, String query) async {
