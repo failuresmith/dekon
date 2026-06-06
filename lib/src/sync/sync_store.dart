@@ -232,6 +232,17 @@ class SyncStore {
     activityBus?.notifySyncStateChanged();
   }
 
+  Future<void> markPeerFailure(String deviceId, String errorCode) async {
+    final now = _now().toUtc().toIso8601String();
+    await _db.update(
+      'sync_peers',
+      {'last_error': errorCode, 'updated_at': now},
+      where: 'peer_device_id = ?',
+      whereArgs: [deviceId],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
   Future<void> updatePullCursor(String deviceId, SyncCursor? cursor) {
     return _updateCursor(deviceId, 'last_pulled_hlc', cursor);
   }

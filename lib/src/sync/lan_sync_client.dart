@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,11 +12,38 @@ import 'sync_security.dart';
 import 'sync_service_discovery.dart';
 import 'sync_store.dart';
 
+typedef CashierProjectionWebSocketConnector =
+    Future<WebSocket> Function(String url, {Map<String, dynamic>? headers});
+
+class LanSyncTimeouts {
+  const LanSyncTimeouts({
+    this.ping = const Duration(seconds: 2),
+    this.pairing = const Duration(seconds: 8),
+    this.saleCommand = const Duration(seconds: 8),
+    this.inventorySnapshot = const Duration(seconds: 15),
+    this.eventPull = const Duration(seconds: 8),
+    this.eventPush = const Duration(seconds: 8),
+    this.longPollTransportMargin = const Duration(seconds: 5),
+    this.webSocketConnect = const Duration(seconds: 5),
+  });
+
+  final Duration ping;
+  final Duration pairing;
+  final Duration saleCommand;
+  final Duration inventorySnapshot;
+  final Duration eventPull;
+  final Duration eventPush;
+  final Duration longPollTransportMargin;
+  final Duration webSocketConnect;
+}
+
 class LanSyncClient {
   LanSyncClient({
     required this.store,
     this.serviceDiscovery,
+    this.timeouts = const LanSyncTimeouts(),
     http.Client? client,
+    this.webSocketConnector,
     DateTime Function()? now,
   }) : _client = client ?? http.Client(),
        _authenticator = SyncAuthenticator(now: now),
@@ -23,6 +51,8 @@ class LanSyncClient {
 
   final SyncStore store;
   final SyncServiceDiscovery? serviceDiscovery;
+  final LanSyncTimeouts timeouts;
+  final CashierProjectionWebSocketConnector? webSocketConnector;
   final http.Client _client;
   final SyncAuthenticator _authenticator;
   final DateTime Function() _now;
@@ -50,6 +80,9 @@ class LanSyncClient {
       headers: const {'content-type': 'application/json'},
       body: body,
       peerDeviceId: payload.serverDeviceId,
+      timeout: timeouts.pairing,
+      timeoutCode: SyncTimeoutException.pairing,
+      operation: 'Pairing',
     );
     if (response.statusCode != 200) {
       throw SyncClientException('Pairing failed with ${response.statusCode}.');
@@ -81,7 +114,12 @@ class LanSyncClient {
   }) async {
     final baseUrl = _normalizeManualAddress(address);
     final deviceUri = Uri.parse(baseUrl).resolve('/device');
-    final deviceResponse = await _get(deviceUri);
+    final deviceResponse = await _get(
+      deviceUri,
+      timeout: timeouts.pairing,
+      timeoutCode: SyncTimeoutException.pairing,
+      operation: 'Pairing device lookup',
+    );
     if (deviceResponse.statusCode != 200) {
       throw SyncClientException(
         'Main device lookup failed with ${deviceResponse.statusCode}.',
@@ -99,6 +137,9 @@ class LanSyncClient {
         'manual_pairing': true,
       }),
       peerDeviceId: deviceInfo.deviceId,
+      timeout: timeouts.pairing,
+      timeoutCode: SyncTimeoutException.pairing,
+      operation: 'Manual pairing',
     );
     if (response.statusCode != 200) {
       throw SyncClientException('Pairing failed with ${response.statusCode}.');
@@ -178,7 +219,13 @@ class LanSyncClient {
   Future<void> _pingPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final uri = Uri.parse(peer.baseUrl!).resolve('/sync/state');
-    final response = await _authenticatedGet(uri, peer);
+    final response = await _authenticatedGet(
+      uri,
+      peer,
+      timeout: timeouts.ping,
+      timeoutCode: SyncTimeoutException.ping,
+      operation: 'Main device ping',
+    );
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
       throw SyncClientException(
@@ -206,7 +253,18 @@ class LanSyncClient {
     final uri = Uri.parse(
       peer.baseUrl!,
     ).replace(path: '/events', queryParameters: query);
-    final response = await _authenticatedGet(uri, peer);
+    final response = await _authenticatedGet(
+      uri,
+      peer,
+      timeout: _eventPullTimeout(
+        waitForEvents: waitForEvents,
+        waitTimeout: waitTimeout,
+      ),
+      timeoutCode: waitForEvents
+          ? SyncTimeoutException.eventLongPoll
+          : SyncTimeoutException.eventPull,
+      operation: waitForEvents ? 'Long-poll event pull' : 'Event pull',
+    );
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
       throw SyncClientException('Pull failed with ${response.statusCode}.');
@@ -235,7 +293,13 @@ class LanSyncClient {
   ) async {
     final peer = await _requiredPeer(peerDeviceId);
     final uri = Uri.parse(peer.baseUrl!).resolve('/cashier/inventory-snapshot');
-    final response = await _authenticatedGet(uri, peer);
+    final response = await _authenticatedGet(
+      uri,
+      peer,
+      timeout: timeouts.inventorySnapshot,
+      timeoutCode: SyncTimeoutException.inventorySnapshot,
+      operation: 'Inventory snapshot',
+    );
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
       throw SyncClientException(
@@ -260,9 +324,17 @@ class LanSyncClient {
   Future<WebSocket> _openCashierProjectionStream(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final uri = _webSocketUri(peer.baseUrl!, '/cashier/projection-stream');
-    final socket = await WebSocket.connect(
-      uri.toString(),
-      headers: _authHeaders('GET', uri, const [], peer),
+    final headers = _authHeaders('GET', uri, const [], peer);
+    final connector = webSocketConnector;
+    final connect = connector == null
+        ? WebSocket.connect(uri.toString(), headers: headers)
+        : connector(uri.toString(), headers: headers);
+    final socket = await _withTimeout(
+      connect,
+      timeout: timeouts.webSocketConnect,
+      timeoutCode: SyncTimeoutException.projectionStream,
+      operation: 'Projection WebSocket connect',
+      peerDeviceId: peer.deviceId,
     );
     await store.markPeerSuccess(peer.deviceId);
     return socket;
@@ -276,7 +348,15 @@ class LanSyncClient {
     final uri = Uri.parse(peer.baseUrl!).resolve('/cashier/sales');
     final body = jsonEncode(command.toJson());
     final bodyBytes = utf8.encode(body);
-    final response = await _authenticatedPost(uri, body, bodyBytes, peer);
+    final response = await _authenticatedPost(
+      uri,
+      body,
+      bodyBytes,
+      peer,
+      timeout: timeouts.saleCommand,
+      timeoutCode: SyncTimeoutException.saleCommand,
+      operation: 'Sale command submission',
+    );
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
       final rejection = _cashierSaleCommandRejection(response.body);
@@ -382,7 +462,15 @@ class LanSyncClient {
       'events': [for (final event in events) EventCodec.toJson(event)],
     });
     final bodyBytes = utf8.encode(body);
-    final response = await _authenticatedPost(uri, body, bodyBytes, peer);
+    final response = await _authenticatedPost(
+      uri,
+      body,
+      bodyBytes,
+      peer,
+      timeout: timeouts.eventPush,
+      timeoutCode: SyncTimeoutException.eventPush,
+      operation: 'Event push',
+    );
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
       throw SyncClientException('Push failed with ${response.statusCode}.');
@@ -479,6 +567,8 @@ class LanSyncClient {
       return await operation();
     } on CashierUnpairedException {
       rethrow;
+    } on SyncTimeoutException {
+      rethrow;
     } catch (error, stackTrace) {
       final refreshed = await refreshPeerBaseUrlFromDiscovery(peerDeviceId);
       if (!refreshed) Error.throwWithStackTrace(error, stackTrace);
@@ -508,10 +598,13 @@ class LanSyncClient {
       lastPushedCursor: trustedPeer.lastPushedCursor,
     );
     try {
-      final request = _authenticatedGet(uri, peer);
-      final response = timeout == null
-          ? await request
-          : await request.timeout(timeout);
+      final response = await _authenticatedGet(
+        uri,
+        peer,
+        timeout: timeout ?? timeouts.ping,
+        timeoutCode: SyncTimeoutException.ping,
+        operation: 'Discovered Main verification',
+      );
       if (response.statusCode != 200) return false;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map || decoded['device_id'] != trustedPeer.deviceId) {
@@ -659,11 +752,20 @@ class LanSyncClient {
     return message;
   }
 
-  Future<http.Response> _authenticatedGet(Uri uri, TrustedPeer peer) async {
+  Future<http.Response> _authenticatedGet(
+    Uri uri,
+    TrustedPeer peer, {
+    required Duration timeout,
+    required String timeoutCode,
+    required String operation,
+  }) async {
     var response = await _get(
       uri,
       headers: _authHeaders('GET', uri, const [], peer),
       peerDeviceId: peer.deviceId,
+      timeout: timeout,
+      timeoutCode: timeoutCode,
+      operation: operation,
     );
     if (response.statusCode == 401 &&
         _updateClockOffsetFromBody(response.body)) {
@@ -671,6 +773,9 @@ class LanSyncClient {
         uri,
         headers: _authHeaders('GET', uri, const [], peer),
         peerDeviceId: peer.deviceId,
+        timeout: timeout,
+        timeoutCode: timeoutCode,
+        operation: operation,
       );
     }
     return response;
@@ -680,8 +785,11 @@ class LanSyncClient {
     Uri uri,
     String body,
     List<int> bodyBytes,
-    TrustedPeer peer,
-  ) async {
+    TrustedPeer peer, {
+    required Duration timeout,
+    required String timeoutCode,
+    required String operation,
+  }) async {
     Map<String, String> headers() => {
       'content-type': 'application/json',
       ..._authHeaders('POST', uri, bodyBytes, peer),
@@ -691,6 +799,9 @@ class LanSyncClient {
       headers: headers(),
       body: body,
       peerDeviceId: peer.deviceId,
+      timeout: timeout,
+      timeoutCode: timeoutCode,
+      operation: operation,
     );
     if (response.statusCode == 401 &&
         _updateClockOffsetFromBody(response.body)) {
@@ -699,6 +810,9 @@ class LanSyncClient {
         headers: headers(),
         body: body,
         peerDeviceId: peer.deviceId,
+        timeout: timeout,
+        timeoutCode: timeoutCode,
+        operation: operation,
       );
     }
     return response;
@@ -708,6 +822,9 @@ class LanSyncClient {
     Uri uri, {
     Map<String, String>? headers,
     String? peerDeviceId,
+    required Duration timeout,
+    required String timeoutCode,
+    required String operation,
   }) async {
     _recordPeerMessage(
       direction: SyncPeerMessageDirection.sent,
@@ -715,7 +832,13 @@ class LanSyncClient {
       uri: uri,
       peerDeviceId: peerDeviceId,
     );
-    final response = await _client.get(uri, headers: headers);
+    final response = await _withTimeout(
+      _client.get(uri, headers: headers),
+      timeout: timeout,
+      timeoutCode: timeoutCode,
+      operation: operation,
+      peerDeviceId: peerDeviceId,
+    );
     _recordPeerMessage(
       direction: SyncPeerMessageDirection.received,
       method: 'GET',
@@ -732,6 +855,9 @@ class LanSyncClient {
     required Map<String, String> headers,
     required String body,
     String? peerDeviceId,
+    required Duration timeout,
+    required String timeoutCode,
+    required String operation,
   }) async {
     _recordPeerMessage(
       direction: SyncPeerMessageDirection.sent,
@@ -740,7 +866,13 @@ class LanSyncClient {
       peerDeviceId: peerDeviceId,
       body: body,
     );
-    final response = await _client.post(uri, headers: headers, body: body);
+    final response = await _withTimeout(
+      _client.post(uri, headers: headers, body: body),
+      timeout: timeout,
+      timeoutCode: timeoutCode,
+      operation: operation,
+      peerDeviceId: peerDeviceId,
+    );
     _recordPeerMessage(
       direction: SyncPeerMessageDirection.received,
       method: 'POST',
@@ -821,6 +953,37 @@ class LanSyncClient {
         .toInt();
   }
 
+  Duration _eventPullTimeout({
+    required bool waitForEvents,
+    required Duration waitTimeout,
+  }) {
+    if (!waitForEvents) return timeouts.eventPull;
+    return Duration(milliseconds: _waitMilliseconds(waitTimeout)) +
+        timeouts.longPollTransportMargin;
+  }
+
+  Future<T> _withTimeout<T>(
+    Future<T> future, {
+    required Duration timeout,
+    required String timeoutCode,
+    required String operation,
+    String? peerDeviceId,
+  }) async {
+    try {
+      return await future.timeout(timeout);
+    } on TimeoutException catch (_, stackTrace) {
+      final exception = SyncTimeoutException(
+        code: timeoutCode,
+        operation: operation,
+        timeout: timeout,
+      );
+      if (peerDeviceId != null) {
+        await store.markPeerFailure(peerDeviceId, timeoutCode);
+      }
+      Error.throwWithStackTrace(exception, stackTrace);
+    }
+  }
+
   bool _updateClockOffsetFromBody(String body) {
     try {
       final decoded = jsonDecode(body);
@@ -893,6 +1056,30 @@ class SyncClientException implements Exception {
 
   @override
   String toString() => 'SyncClientException: $message';
+}
+
+class SyncTimeoutException extends SyncClientException {
+  SyncTimeoutException({
+    required this.code,
+    required this.operation,
+    required this.timeout,
+  }) : super('$operation timed out after ${timeout.inMilliseconds} ms.');
+
+  static const ping = 'ping_timeout';
+  static const pairing = 'pairing_timeout';
+  static const saleCommand = 'sale_command_timeout';
+  static const inventorySnapshot = 'inventory_snapshot_timeout';
+  static const eventPull = 'event_pull_timeout';
+  static const eventPush = 'event_push_timeout';
+  static const eventLongPoll = 'event_long_poll_timeout';
+  static const projectionStream = 'projection_stream_timeout';
+
+  final String code;
+  final String operation;
+  final Duration timeout;
+
+  @override
+  String toString() => 'SyncTimeoutException: $code';
 }
 
 class CashierSaleCommandRejectedException implements Exception {

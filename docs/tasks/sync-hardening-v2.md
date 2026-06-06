@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 1 - complete
+Current phase: Phase 2 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -16,12 +16,17 @@ Last updated: 2026-06-06
 ## Changes Made
 
 - Phase 1: remote Cashier `POST /events` no longer receives a capability for `inventory.sale_recorded`, so legacy sale events are rejected before import or projection.
+- Phase 2 scope: add bounded operation-specific client timeouts for pairing, ping, snapshot fetch, event push/pull, long-poll transport, sale-command submission, and projection WebSocket connect.
+- Phase 2 out-of-scope: UI sync-state redesign, app-level sync controller ownership, WebSocket heartbeat, discovery backoff, and protocol rewrites.
+- Phase 2: added `LanSyncTimeouts` defaults: ping 2s, pairing 8s, sale command 8s, inventory snapshot 15s, event pull 8s, event push 8s, long-poll transport margin 5s, WebSocket connect 5s.
+- Phase 2: added `SyncTimeoutException` with stable error codes and persisted trusted-peer timeout diagnostics in `sync_peers.last_error`.
 
 ## Decisions
 
 - Keep `Capability.recordSale` for the dedicated `/cashier/sales` command path.
 - Preserve legacy pull behavior through `GET /events`.
 - Treat legacy sale-event push as intentionally removed, including future-schema sale events, because it bypasses Main-side stock validation.
+- Phase 2: operation timeouts do not trigger immediate address-discovery retry or subnet probing; stale-address socket failures still do. This keeps timeout failures bounded and preserves the operation-specific timeout code. Discovery backoff and throttling remain Phase 11.
 
 ## Tests Added
 
@@ -31,6 +36,11 @@ Last updated: 2026-06-06
 - Future-schema sale events are rejected on legacy `POST /events`.
 - Sale-event batches are rejected before projection.
 - `/cashier/sales` still accepts, broadcasts once, and remains idempotent on retry.
+- Hung ping times out and a later ping can succeed.
+- Hung snapshot fetch times out explicitly.
+- Hung sale command times out without marking the outbox command accepted.
+- Hung WebSocket connect times out explicitly.
+- Long-poll uses server wait timeout plus transport margin.
 
 ## Validation Log
 
@@ -43,6 +53,12 @@ Commands run:
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_client.dart lib/src/sync/sync_store.dart test/sync/lan_sync_client_timeout_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_client_timeout_test.dart`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_client.dart && docker compose run --rm flutter-dev flutter test test/sync/lan_sync_client_timeout_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
 
 Results:
 - Host `dart` and `flutter` were not available on `PATH`.
@@ -52,6 +68,12 @@ Results:
 - Final focused `flutter test test/sync/lan_sync_server_test.dart` passed.
 - `flutter analyze` passed with no issues.
 - `git diff --check` passed.
+- Phase 2 first analyzer run found invalid const `Duration.isNegative` asserts; removed the const-incompatible asserts.
+- Phase 2 first timeout test run showed timeout-triggered discovery/subnet probing could overwrite operation-specific timeout diagnostics; fixed by not running discovery retry for `SyncTimeoutException`.
+- Final focused `flutter test test/sync/lan_sync_client_timeout_test.dart` passed.
+- Existing focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 2 `flutter analyze` passed with no issues.
+- Phase 2 `git diff --check` passed.
 
 ## Manual QA
 
