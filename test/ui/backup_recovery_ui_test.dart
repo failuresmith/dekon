@@ -195,6 +195,9 @@ void main() {
       await syncServer.handler(
         Request('GET', Uri.parse('http://localhost/health')),
       );
+      await syncServer.handler(
+        Request('GET', Uri.parse('http://localhost/device')),
+      );
       await tester.pumpWidget(
         _reportsApp(
           repository,
@@ -223,9 +226,24 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const Key('clear-sync-peer-messages')), findsOneWidget);
-      expect(find.textContaining('Received GET /health'), findsOneWidget);
+      expect(find.text('Sent'), findsOneWidget);
+      expect(find.text('Received'), findsOneWidget);
+      expect(find.text('Health check (1)'), findsOneWidget);
+      expect(find.text('Device info (1)'), findsOneWidget);
       expect(find.textContaining('Sent 200 GET /health'), findsOneWidget);
-      expect(find.text('No peer messages yet.'), findsNothing);
+      expect(find.textContaining('Sent 200 GET /device'), findsOneWidget);
+      expect(find.text('No sent peer messages yet.'), findsNothing);
+
+      await tester.tap(
+        find.byKey(const Key('sync-peer-messages-received-tab')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Health check (1)'), findsOneWidget);
+      expect(find.text('Device info (1)'), findsOneWidget);
+      expect(find.textContaining('Received GET /health'), findsOneWidget);
+      expect(find.textContaining('Received GET /device'), findsOneWidget);
+      expect(find.text('No received peer messages yet.'), findsNothing);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();

@@ -303,8 +303,27 @@ class UiStrings {
   }
 
   String get peerMessages => _text(en: 'Peer messages', fa: 'پیام های همتا');
+  String get peerMessagesSent => _text(en: 'Sent', fa: 'ارسال شده');
+  String get peerMessagesReceived {
+    return _text(en: 'Received', fa: 'دریافت شده');
+  }
+
   String get noPeerMessagesYet {
     return _text(en: 'No peer messages yet.', fa: 'هنوز پیامی وجود ندارد.');
+  }
+
+  String get noSentPeerMessagesYet {
+    return _text(
+      en: 'No sent peer messages yet.',
+      fa: 'هنوز پیام ارسالی وجود ندارد.',
+    );
+  }
+
+  String get noReceivedPeerMessagesYet {
+    return _text(
+      en: 'No received peer messages yet.',
+      fa: 'هنوز پیام دریافتی وجود ندارد.',
+    );
   }
 
   String get peerMessagesHint {
@@ -1101,6 +1120,41 @@ class UiStrings {
       en: 'Received $status$method $path',
       fa: 'دریافت شد $status$method $path',
     );
+  }
+
+  String syncMessageTypeGroup(String type, int count) {
+    return _text(
+      en: '$type (${integer(count)})',
+      fa: '$type (${integer(count)})',
+    );
+  }
+
+  String get syncMessageTypeHealth {
+    return _text(en: 'Health check', fa: 'بررسی سلامت');
+  }
+
+  String get syncMessageTypeDeviceInfo {
+    return _text(en: 'Device info', fa: 'اطلاعات دستگاه');
+  }
+
+  String get syncMessageTypePairing {
+    return _text(en: 'Pairing', fa: 'جفت سازی');
+  }
+
+  String get syncMessageTypeEventPull {
+    return _text(en: 'Event pull', fa: 'دریافت رویداد');
+  }
+
+  String get syncMessageTypeEventPush {
+    return _text(en: 'Event push', fa: 'ارسال رویداد');
+  }
+
+  String get syncMessageTypeSyncState {
+    return _text(en: 'Sync state', fa: 'وضعیت همگام سازی');
+  }
+
+  String syncMessageTypeHttp(String method, String path) {
+    return _text(en: '$method $path', fa: '$method $path');
   }
 
   String syncPeer(String peer) => _text(en: 'Peer $peer', fa: 'همتا $peer');
