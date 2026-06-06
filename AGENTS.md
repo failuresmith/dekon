@@ -45,7 +45,10 @@ Use:
 Domain: Buy transaction
 UI: Restock
 Primary action: Add to Inventory
+Reports amount label: Restock Amount
 ```
+
+Do not label the store's restock spending as `Purchase` or `Purchases` in visible UI. Use `Restock Amount` so operators do not confuse supplier restocking with end-customer purchases.
 
 ## Product and Stock
 
@@ -566,7 +569,7 @@ Prefer range-neutral labels when multiple periods are supported:
 
 ```text
 Revenue
-Purchases
+Restock Amount
 Gross Profit
 Low-stock Items
 ```

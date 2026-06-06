@@ -283,7 +283,7 @@ class UiStrings {
   String get all => _text(en: 'All', fa: 'همه');
   String get lowStock => _text(en: 'Low Stock', fa: 'موجودی کم');
   String get revenue => _text(en: 'Revenue', fa: 'درآمد');
-  String get purchases => _text(en: 'Purchases', fa: 'خریدها');
+  String get purchases => _text(en: 'Restock Amount', fa: 'مبلغ تأمین');
   String get grossProfit => _text(en: 'Gross Profit', fa: 'سود ناخالص');
   String get lowStockItems {
     return _text(en: 'Low-stock Items', fa: 'کالاهای کم موجودی');
@@ -1040,8 +1040,8 @@ class UiStrings {
 
   String get noSalesPurchasesInPeriod {
     return _text(
-      en: 'No sales or purchases in this period',
-      fa: 'در این بازه فروش یا خریدی وجود ندارد',
+      en: 'No sales or restocks in this period',
+      fa: 'در این بازه فروش یا تأمینی وجود ندارد',
     );
   }
 
@@ -1056,8 +1056,8 @@ class UiStrings {
     final displayRevenueAmount = digits(revenueAmount);
     final displayPurchasesAmount = digits(purchasesAmount);
     return _text(
-      en: '$label revenue $revenueAmount purchases $purchasesAmount',
-      fa: '$displayLabel درآمد $displayRevenueAmount خرید $displayPurchasesAmount',
+      en: '$label revenue $revenueAmount restock amount $purchasesAmount',
+      fa: '$displayLabel درآمد $displayRevenueAmount مبلغ تأمین $displayPurchasesAmount',
     );
   }
 
@@ -1068,8 +1068,8 @@ class UiStrings {
 
   String noSalesPurchasesInWindow(String window) {
     return _text(
-      en: 'No sales or purchases in $window.',
-      fa: 'در $window فروش یا خریدی وجود ندارد.',
+      en: 'No sales or restocks in $window.',
+      fa: 'در $window فروش یا تأمینی وجود ندارد.',
     );
   }
 
@@ -1084,8 +1084,8 @@ class UiStrings {
     final displayPurchasesAmount = digits(purchasesAmount);
     final displayNetAmount = digits(netAmount);
     return _text(
-      en: 'Sales trend for $window. Revenue: $revenueAmount. Purchases: $purchasesAmount. Net: $netAmount.',
-      fa: 'روند فروش برای $displayWindow. درآمد: $displayRevenueAmount. خریدها: $displayPurchasesAmount. خالص: $displayNetAmount.',
+      en: 'Sales trend for $window. Revenue: $revenueAmount. Restock amount: $purchasesAmount. Net: $netAmount.',
+      fa: 'روند فروش برای $displayWindow. درآمد: $displayRevenueAmount. مبلغ تأمین: $displayPurchasesAmount. خالص: $displayNetAmount.',
     );
   }
 

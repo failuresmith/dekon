@@ -892,7 +892,7 @@ void main() {
     await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Purchases'), findsOneWidget);
+    expect(find.text('Restock Amount'), findsOneWidget);
     expect(find.text('150 Rial'), findsOneWidget);
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
@@ -962,7 +962,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Revenue'), findsWidgets);
-    expect(find.text('Purchases'), findsWidgets);
+    expect(find.text('Restock Amount'), findsWidgets);
     expect(find.byKey(const Key('report-trend-text-summary')), findsOneWidget);
     final bucketFinder = find.byWidgetPredicate(
       (widget) => widget.key.toString().contains('report-trend-bucket-'),
