@@ -7,6 +7,7 @@ import '../backup/backup.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
 import 'cashier_sync_indicator.dart';
+import 'cashier_sync_status.dart';
 import 'device_onboarding_screen.dart';
 import 'inventory_screen.dart';
 import 'main_cashier_connection_indicator.dart';
@@ -22,6 +23,7 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.repository,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.backupService,
     this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
@@ -29,6 +31,7 @@ class AppShell extends StatefulWidget {
 
   final DekonRepository repository;
   final BarcodeScanLauncher scanBarcode;
+  final BackupRunner? backupService;
   final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
@@ -45,6 +48,7 @@ class _AppShellState extends State<AppShell> {
       .deviceRoleSettings();
   StreamSubscription<void>? _syncStateSubscription;
   var _startingSyncServer = false;
+  var _cashierSyncStatus = CashierSyncStatus.disconnected;
 
   @override
   void initState() {
@@ -98,6 +102,7 @@ class _AppShellState extends State<AppShell> {
         if (settings.cashierUnpairBackupRequired) {
           return CashierUnpairRecoveryScreen(
             repository: widget.repository,
+            backupService: widget.backupService,
             backupFiles: widget.backupFiles,
             onReset: _returnToCashierPairing,
           );
@@ -169,7 +174,10 @@ class _AppShellState extends State<AppShell> {
         ),
         if (showCashierSyncIndicator)
           IgnorePointer(
-            child: CashierSyncIndicator(repository: widget.repository),
+            child: CashierSyncIndicator(
+              repository: widget.repository,
+              onStatusChanged: _setCashierSyncStatus,
+            ),
           ),
         if (showMainCashierIndicator)
           IgnorePointer(
@@ -194,6 +202,9 @@ class _AppShellState extends State<AppShell> {
           repository: widget.repository,
           mode: TransactionMode.sell,
           scanBarcode: widget.scanBarcode,
+          cashierSyncStatus: isCashier && settings.locked
+              ? _cashierSyncStatus
+              : null,
         ),
         historyMode: TransactionMode.sell,
         destination: const NavigationDestination(
@@ -280,9 +291,15 @@ class _AppShellState extends State<AppShell> {
   void _returnToCashierPairing() {
     setState(() {
       _index = 0;
+      _cashierSyncStatus = CashierSyncStatus.disconnected;
       _onboardingCompletedLocally = false;
       _roleSettings = widget.repository.deviceRoleSettings();
     });
+  }
+
+  void _setCashierSyncStatus(CashierSyncStatus status) {
+    if (!mounted || _cashierSyncStatus == status) return;
+    setState(() => _cashierSyncStatus = status);
   }
 
   void _ensureMainSyncServerStarted() {
@@ -311,6 +328,7 @@ class _AppShellState extends State<AppShell> {
           body: SettingsScreen(
             repository: widget.repository,
             syncServer: _syncServer,
+            backupService: widget.backupService,
             backupFiles: widget.backupFiles,
             scanBarcode: widget.scanBarcode,
             pairWithMainDevice: widget.pairWithMainDevice,
@@ -326,11 +344,13 @@ class CashierUnpairRecoveryScreen extends StatefulWidget {
   const CashierUnpairRecoveryScreen({
     super.key,
     required this.repository,
+    this.backupService,
     this.backupFiles = const BackupFileActions(),
     required this.onReset,
   });
 
   final DekonRepository repository;
+  final BackupRunner? backupService;
   final BackupFileActions backupFiles;
   final VoidCallback onReset;
 
@@ -394,7 +414,8 @@ class _CashierUnpairRecoveryScreenState
       _status = strings.backingUpSaleHistory;
     });
     BackupExportDraft? draft;
-    final backupService = widget.repository.createBackupService();
+    final backupService =
+        widget.backupService ?? widget.repository.createBackupService();
     try {
       draft = await backupService.prepareExport();
       final savedFile = await widget.backupFiles.saveExportedBackup(

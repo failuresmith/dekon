@@ -366,10 +366,19 @@ void main() {
     final markedSettings = await repository.deviceRoleSettings();
     expect(markedSettings.onboardingCompleted, true);
     expect(markedSettings.cashierUnpairBackupRequired, true);
+    final backupService = _FakeBackupService(
+      exportResult: BackupExportResult(
+        path: '/tmp/dekon-backup.json',
+        fileName: 'dekon-backup.json',
+        eventCount: 1,
+        exportedAt: DateTime.utc(2026, 6, 4),
+      ),
+    );
     try {
       await tester.pumpWidget(
         testApp(
           repository,
+          backupService: backupService,
           backupFiles: const _FakeBackupFiles(
             saveResult: BackupSaveResult(
               path: '/storage/emulated/0/Download/dekon-backup.json',
@@ -378,32 +387,24 @@ void main() {
           ),
         ),
       );
-      await _pumpUntilFound(tester, find.text('Cashier unpaired'));
-      expect(find.text('Cashier unpaired'), findsWidgets);
-      if (!tester
-          .widget<FilledButton>(
-            find.byKey(const Key('cashier-unpair-backup-reset')),
-          )
-          .enabled) {
-        await tester.pump(const Duration(milliseconds: 500));
-      }
-      await tester.tap(find.byKey(const Key('cashier-unpair-backup-reset')));
-      await _pumpUntil(
-        tester,
-        () async {
-          final settings = await repository.deviceRoleSettings();
-          return settings.role == DeviceRole.cashierDevice &&
-              !settings.locked &&
-              !settings.onboardingCompleted &&
-              !settings.cashierUnpairBackupRequired;
-        },
-      );
-      await tester.pump();
+      await _pumpUntil(tester, () async {
+        final settings = await repository.deviceRoleSettings();
+        return settings.role == DeviceRole.cashierDevice &&
+            !settings.locked &&
+            !settings.onboardingCompleted &&
+            !settings.cashierUnpairBackupRequired;
+      });
+      await _pumpUntilFound(tester, find.byKey(const Key('pair-main-device')));
 
       final settings = await repository.deviceRoleSettings();
+      final status = tester.any(find.byKey(const Key('cashier-unpair-status')))
+          ? tester
+                .widget<Text>(find.byKey(const Key('cashier-unpair-status')))
+                .data
+          : 'no status';
 
       expect(settings.role, DeviceRole.cashierDevice);
-      expect(settings.locked, false);
+      expect(settings.locked, false, reason: status);
       expect(settings.onboardingCompleted, false);
       expect(settings.cashierUnpairBackupRequired, false);
       expect(find.byKey(const Key('pair-main-device')), findsOneWidget);

@@ -353,6 +353,14 @@ class UiStrings {
   }
 
   String get saleCompleted => _text(en: 'Sale completed', fa: 'فروش تکمیل شد');
+
+  String get cashierSaleConnectionWarning {
+    return _text(
+      en: 'Sales are blocked until this cashier reconnects to the main device. Check Device Sync in Settings.',
+      fa: 'تا اتصال دوباره این صندوق به دستگاه اصلی، فروش ثبت نمی شود. همگام سازی دستگاه را در تنظیمات بررسی کنید.',
+    );
+  }
+
   String get noProductsAddedYet {
     return _text(en: 'No products added yet', fa: 'هنوز کالایی اضافه نشده است');
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
+import 'cashier_sync_status.dart';
 import 'product_lookup_field.dart';
 import 'transaction_quantity_input.dart';
 import 'ui_strings.dart';
@@ -14,11 +15,13 @@ class TransactionScreen extends StatefulWidget {
     required this.repository,
     required this.mode,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.cashierSyncStatus,
   });
 
   final DekonRepository repository;
   final TransactionMode mode;
   final BarcodeScanLauncher scanBarcode;
+  final CashierSyncStatus? cashierSyncStatus;
 
   @override
   State<TransactionScreen> createState() => _TransactionScreenState();
@@ -30,6 +33,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
   var _saving = false;
 
   bool get _isSell => widget.mode == TransactionMode.sell;
+  bool get _cashierSaleDisconnected =>
+      _isSell && widget.cashierSyncStatus == CashierSyncStatus.disconnected;
   String get _emptyStateText => _isSell
       ? context.strings.sellEmptyState
       : context.strings.restockEmptyState;
@@ -53,6 +58,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
               scanBarcode: widget.scanBarcode,
               allowCreateProduct: !_isSell,
             ),
+            if (_cashierSaleDisconnected) ...[
+              const SizedBox(height: 12),
+              _cashierSyncWarning(),
+            ],
             const SizedBox(height: 16),
             Expanded(
               child: _lines.isEmpty
@@ -260,7 +269,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
             const SizedBox(height: 8),
             FilledButton.icon(
               key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
-              onPressed: _saving || _lines.isEmpty ? null : _finish,
+              onPressed: _saving || _lines.isEmpty || _cashierSaleDisconnected
+                  ? null
+                  : _finish,
               icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),
               label: Text(
                 _saving
@@ -268,6 +279,33 @@ class _TransactionScreenState extends State<TransactionScreen> {
                     : _isSell
                     ? context.strings.completeSale
                     : context.strings.addToInventory,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cashierSyncWarning() {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      key: const Key('cashier-sale-sync-warning'),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.error),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.sync_problem, color: colors.error, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                context.strings.cashierSaleConnectionWarning,
+                style: TextStyle(color: colors.error),
               ),
             ),
           ],

@@ -39,6 +39,7 @@ Future<DekonRepository> createEnglishTestRepository({
 Widget testApp(
   DekonRepository repository, {
   BarcodeScanLauncher? scanBarcode,
+  BackupRunner? backupService,
   BackupFileActions backupFiles = const BackupFileActions(),
   MainDevicePairer? pairWithMainDevice,
   MainDeviceAddressPairer? pairWithMainDeviceAddress,
@@ -46,6 +47,7 @@ Widget testApp(
   return MainApp(
     repositoryFactory: () async => repository,
     scanBarcode: scanBarcode,
+    backupService: backupService,
     backupFiles: backupFiles,
     pairWithMainDevice: pairWithMainDevice,
     pairWithMainDeviceAddress: pairWithMainDeviceAddress,

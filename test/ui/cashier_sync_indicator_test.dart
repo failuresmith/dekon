@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dekon/src/sync/sync.dart';
 import 'package:dekon/src/ui/cashier_sync_indicator.dart';
+import 'package:dekon/src/ui/cashier_sync_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -44,6 +45,7 @@ void main() {
     'indicator is solid green when connected with no event transfer',
     (tester) async {
       final repository = await createTestRepository();
+      final statuses = <CashierSyncStatus>[];
       try {
         await tester.pumpWidget(
           _indicatorApp(
@@ -52,6 +54,7 @@ void main() {
               pollInterval: null,
               pingMainDevice: () async {},
               syncWithMainDevice: () async {},
+              onStatusChanged: statuses.add,
             ),
           ),
         );
@@ -66,6 +69,7 @@ void main() {
           find.byKey(const Key('cashier-sync-indicator-breathing')),
           findsNothing,
         );
+        expect(statuses, [CashierSyncStatus.synced]);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await repository.close();

@@ -19,6 +19,7 @@ class MainApp extends StatefulWidget {
     super.key,
     this.repositoryFactory,
     this.scanBarcode,
+    this.backupService,
     this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
@@ -26,6 +27,7 @@ class MainApp extends StatefulWidget {
 
   final RepositoryFactory? repositoryFactory;
   final BarcodeScanLauncher? scanBarcode;
+  final BackupRunner? backupService;
   final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
@@ -91,6 +93,7 @@ class _MainAppState extends State<MainApp> {
               home: AppShell(
                 repository: startup.repository,
                 scanBarcode: widget.scanBarcode ?? showBarcodeScannerDialog,
+                backupService: widget.backupService,
                 backupFiles: widget.backupFiles,
                 pairWithMainDevice: widget.pairWithMainDevice,
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,

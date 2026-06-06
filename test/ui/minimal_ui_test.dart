@@ -448,6 +448,15 @@ void main() {
           .distance,
       lessThan(1),
     );
+    expect(find.byKey(const Key('cashier-sale-sync-warning')), findsOneWidget);
+
+    await _submitLookup(tester, 'CASHIER-TEA');
+    await tester.pumpAndSettle();
+
+    final finishSale = tester.widget<FilledButton>(
+      find.byKey(const Key('finish-sale')),
+    );
+    expect(finishSale.onPressed, isNull);
 
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();

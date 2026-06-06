@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import '../sync/sync.dart';
+import 'cashier_sync_status.dart';
 
 typedef CashierSyncOperation = Future<void> Function();
 typedef CashierProjectionStreamFactory = Future<Stream<Object?>> Function();
@@ -20,6 +21,7 @@ class CashierSyncIndicator extends StatefulWidget {
     this.openProjectionStream,
     this.applyProjectionMessage,
     this.syncTransfers,
+    this.onStatusChanged,
     this.pollInterval = const Duration(seconds: 1),
     this.syncWaitTimeout = const Duration(seconds: 25),
   });
@@ -30,6 +32,7 @@ class CashierSyncIndicator extends StatefulWidget {
   final CashierProjectionStreamFactory? openProjectionStream;
   final CashierProjectionMessageHandler? applyProjectionMessage;
   final Stream<SyncTransferActivity>? syncTransfers;
+  final ValueChanged<CashierSyncStatus>? onStatusChanged;
   final Duration? pollInterval;
   final Duration syncWaitTimeout;
 
@@ -126,9 +129,9 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   Widget build(BuildContext context) {
     final status = _status;
     final color = switch (status) {
-      _CashierSyncIndicatorStatus.disconnected => Colors.red.shade600,
-      _CashierSyncIndicatorStatus.syncing => Colors.green.shade600,
-      _CashierSyncIndicatorStatus.synced => Colors.green.shade600,
+      CashierSyncStatus.disconnected => Colors.red.shade600,
+      CashierSyncStatus.syncing => Colors.green.shade600,
+      CashierSyncStatus.synced => Colors.green.shade600,
     };
     final circle = DecoratedBox(
       key: Key('cashier-sync-indicator-${status.name}'),
@@ -138,7 +141,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       key: const Key('cashier-sync-indicator'),
       width: _size,
       height: _size,
-      child: status == _CashierSyncIndicatorStatus.syncing
+      child: status == CashierSyncStatus.syncing
           ? FadeTransition(
               key: const Key('cashier-sync-indicator-breathing'),
               opacity: _opacity,
@@ -190,11 +193,13 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
 
   void _showTransferActivity(SyncTransferActivity activity) {
     if (!mounted || activity.eventCount <= 0) return;
+    final previousStatus = _status;
     _transferHideTimer?.cancel();
     _connected = true;
     if (!_transferring) {
       setState(() => _transferring = true);
       _breathing.repeat(reverse: true);
+      _notifyStatusChanged(previousStatus);
     }
     _transferHideTimer = Timer(
       _minimumSyncVisibleDuration,
@@ -355,25 +360,35 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     }
   }
 
-  _CashierSyncIndicatorStatus get _status {
-    if (_transferring) return _CashierSyncIndicatorStatus.syncing;
+  CashierSyncStatus get _status {
+    if (_transferring) return CashierSyncStatus.syncing;
     return _connected
-        ? _CashierSyncIndicatorStatus.synced
-        : _CashierSyncIndicatorStatus.disconnected;
+        ? CashierSyncStatus.synced
+        : CashierSyncStatus.disconnected;
   }
 
   void _setConnected(bool connected) {
     if (!mounted || _connected == connected) return;
+    final previousStatus = _status;
     setState(() => _connected = connected);
+    _notifyStatusChanged(previousStatus);
   }
 
   void _hideTransferActivity() {
     if (!mounted || !_transferring) return;
+    final previousStatus = _status;
     _transferHideTimer?.cancel();
     _transferHideTimer = null;
     _breathing.stop();
     _breathing.value = 1;
     setState(() => _transferring = false);
+    _notifyStatusChanged(previousStatus);
+  }
+
+  void _notifyStatusChanged(CashierSyncStatus previousStatus) {
+    final status = _status;
+    if (status == previousStatus) return;
+    widget.onStatusChanged?.call(status);
   }
 
   void _scheduleNextRefresh() {
@@ -384,5 +399,3 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     });
   }
 }
-
-enum _CashierSyncIndicatorStatus { disconnected, syncing, synced }

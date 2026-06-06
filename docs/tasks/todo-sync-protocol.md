@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Retry-safe Cashier sale commands and unpair recovery implemented; stopped before broader sync-state UI cleanup and manual multi-device QA
+Current phase: Cashier UI restriction and sale-blocking sync-state warning implemented; stopped before manual multi-device QA and legacy event-transport cleanup
 Last updated: 2026-06-06
 
 ## Verified Existing Architecture
@@ -33,7 +33,7 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Phase 2 now persists Cashier projection versions in `app_settings`; Phase 3 applies full snapshots on Cashier sync, and the current phase repairs incremental version gaps by fetching a fresh Cashier-safe snapshot.
 - Local Main mutations now use a serialized append/project/version/publish path, and locked Cashier sales now submit dedicated sale commands instead of locally queuing arbitrary sale events.
 - Cashier sale commands use UUIDv7 command IDs as deterministic sale event IDs for retry deduplication.
-- Cashier sale submission is not disabled by a first-class synchronized/offline state model.
+- Cashier sale completion is blocked in the UI when the Cashier sync indicator reports a disconnected Main device, with a visible user-facing warning.
 
 ## Completed
 
@@ -62,9 +62,9 @@ The propagation defect is that Main has no push channel and no centralized repli
 - [x] Add Cashier sync lifecycle tests
 - [x] Add command IDs and sale deduplication
 - [x] Add Main-side Cashier unpair recovery
-- [ ] Restrict Cashier UI
-- [ ] Add sync-state UI
-- [ ] Add automated tests
+- [x] Restrict Cashier UI
+- [x] Add sync-state UI
+- [x] Add automated tests
 - [ ] Complete manual multi-device QA
 
 ## Decisions
@@ -100,14 +100,16 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Main rejects Cashier sale commands when a product is unavailable or Main-side stock is insufficient.
 - Accepted sale command responses include the accepted sale event so the Cashier can keep local sale history before refreshing its Cashier-safe inventory snapshot.
 - Main can revoke a paired Cashier; revoked devices receive `peer_unpaired`, and the Cashier blocks sale recording until sale history is backed up and local pairing state is reset.
+- Locked Cashier navigation exposes Sell and read-only Inventory only; Restock, global Reports, product creation, product editing, purchase cost, and Backup/Restore settings are hidden from ordinary Cashier flow.
+- The Cashier sync indicator now reports a small public `CashierSyncStatus`; the Sell screen uses it to block completion only while the Main connection is disconnected.
 
 ## Residual Risks
 
 - Main rename propagation is immediate while the Cashier shell is mounted and the authenticated WebSocket is connected; no background listener exists while the app is killed or not running.
-- Sync-state UI remains minimal and does not yet explain projection-stream fallback, gap repair, or sale-blocking state in plain language.
+- Sync-state UI remains intentionally small and does not yet explain projection-stream fallback or gap repair in detail.
 - The current event-log polling path still coexists with projection snapshots and pushes; cursor semantics and projection-authority handoff need a later cleanup decision before the old Cashier event serializer can be removed.
 - The current event-log sanitizer and generic `/events` sale acceptance still exist for compatibility; locked Cashier UI uses sale commands, but the legacy remote sale-event path should be removed or explicitly versioned in a later cleanup.
-- Cashier sale submission now fails closed when Main is unavailable, but the UI still reports this through the generic save-failed path rather than a dedicated sync-state blocker.
+- Cashier sale submission now fails closed when Main is unavailable; if the connection drops after the UI has already allowed submission, the fallback error is still the generic save-failed message.
 - No manual multi-device QA has been run.
 
 ## Verification Log
@@ -200,6 +202,19 @@ Cashier sale-command results:
 - The first full-suite reruns exposed concurrent compile gaps in the unpair/recovery changes; those were completed and the suite was rerun.
 - Final `flutter analyze` passed with no issues.
 - Final `flutter test` passed all tests.
+
+Cashier UI restriction and sync-state commands run:
+- `docker compose run --rm flutter-dev dart format .`
+- `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/minimal_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test`
+
+Cashier UI restriction and sync-state results:
+- Focused indicator tests passed, including public status callback delivery.
+- Focused UI tests passed, including locked-Cashier hidden admin flows, read-only Inventory, and disconnected sale-completion blocking.
+- `flutter analyze` passed with no issues.
+- Full `flutter test` passed all tests.
 
 # Task: Implement Secure Push-First Cashier Synchronization for Dekon
 
