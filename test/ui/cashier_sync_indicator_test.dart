@@ -77,6 +77,45 @@ void main() {
     },
   );
 
+  testWidgets(
+    'indicator stays connected when projection stream falls back after sync',
+    (tester) async {
+      final repository = await createTestRepository();
+      final statuses = <CashierSyncStatus>[];
+      try {
+        await tester.pumpWidget(
+          _indicatorApp(
+            CashierSyncIndicator(
+              repository: repository,
+              pollInterval: null,
+              pingMainDevice: () async {},
+              syncWithMainDevice: () async {},
+              openProjectionStream: () async {
+                throw SyncClientException('Projection stream unavailable.');
+              },
+              onStatusChanged: statuses.add,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-synced')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-disconnected')),
+          findsNothing,
+        );
+        expect(statuses, [CashierSyncStatus.synced]);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await repository.close();
+      }
+    },
+  );
+
   testWidgets('indicator breathes green for at least one second on transfer', (
     tester,
   ) async {

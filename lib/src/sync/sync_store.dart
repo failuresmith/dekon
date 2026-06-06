@@ -60,6 +60,7 @@ class SyncStore {
         now: now,
       );
     });
+    activityBus?.notifySyncStateChanged();
   }
 
   Future<String> trustCashierPeer({
@@ -71,7 +72,7 @@ class SyncStore {
       throw ArgumentError.value(deviceId, 'deviceId', 'Cannot trust self.');
     }
     final now = _now().toUtc().toIso8601String();
-    return _db.transaction((txn) async {
+    final assignedDisplayName = await _db.transaction((txn) async {
       final displayName = await _cashierDisplayNameForPairing(txn, deviceId);
       await _trustPeerInTransaction(
         txn,
@@ -84,6 +85,8 @@ class SyncStore {
       );
       return displayName;
     });
+    activityBus?.notifySyncStateChanged();
+    return assignedDisplayName;
   }
 
   Future<void> updateLocalDeviceDisplayName(String displayName) async {

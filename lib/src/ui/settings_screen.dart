@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -361,11 +363,30 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
       .deviceRoleSettings();
   late Future<List<CashierReportFilter>> _cashiersFuture = widget.repository
       .cashierReportFilters();
+  StreamSubscription<void>? _syncStateSubscription;
   DeviceRole? _role;
   bool? _roleLocked;
   var _serverBusy = false;
   String? _serverError;
   String? _unpairingDeviceId;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncStateSubscription = widget.repository.syncStateChanged.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _roleFuture = widget.repository.deviceRoleSettings();
+        _cashiersFuture = widget.repository.cashierReportFilters();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_syncStateSubscription?.cancel());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

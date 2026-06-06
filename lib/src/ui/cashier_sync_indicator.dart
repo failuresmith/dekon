@@ -62,6 +62,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   String? _projectionPeerDeviceId;
   var _openingProjectionStream = false;
   var _closingProjectionStream = false;
+  var _projectionStreamFallback = false;
 
   @override
   void initState() {
@@ -88,6 +89,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _timer?.cancel();
       _transferSubscription?.cancel();
       _eventsChangedSubscription?.cancel();
+      _projectionStreamFallback = false;
       _closeProjectionStream();
       _subscribeToRepository();
       unawaited(_refresh());
@@ -96,6 +98,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _subscribeToTransfers();
     } else if (oldWidget.openProjectionStream != widget.openProjectionStream ||
         oldWidget.applyProjectionMessage != widget.applyProjectionMessage) {
+      _projectionStreamFallback = false;
       _closeProjectionStream();
       unawaited(_startProjectionStream());
     }
@@ -116,6 +119,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _projectionStreamFallback = false;
       _closeProjectionStream();
       unawaited(_refresh());
     } else if (state == AppLifecycleState.paused ||
@@ -165,7 +169,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         _setConnected(true);
         await _syncWithMainDevice();
         _setConnected(true);
-        await _startProjectionStream();
+        await _startProjectionStream(keepConnectedOnFailure: true);
       } on CashierUnpairedException {
         await _handleUnpaired();
       } catch (_) {
@@ -219,14 +223,16 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     return _withMainPeer(
       (client, peer) => client.syncWithPeer(
         peer.deviceId,
-        waitForRemoteEvents: !_usesProjectionStream,
+        waitForRemoteEvents: !_shouldUseProjectionStream,
         waitTimeout: widget.syncWaitTimeout,
       ),
     );
   }
 
-  Future<void> _startProjectionStream() async {
-    if (!_usesProjectionStream ||
+  Future<void> _startProjectionStream({
+    bool keepConnectedOnFailure = false,
+  }) async {
+    if (!_shouldUseProjectionStream ||
         _openingProjectionStream ||
         _projectionSubscription != null) {
       return;
@@ -249,10 +255,18 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         onDone: _handleProjectionStreamClosed,
         cancelOnError: true,
       );
+      _projectionStreamFallback = false;
       _setConnected(true);
+    } on CashierUnpairedException {
+      await _handleUnpaired();
     } catch (_) {
       _closeProjectionStream();
-      _setConnected(false);
+      if (keepConnectedOnFailure) {
+        _projectionStreamFallback = true;
+        _setConnected(true);
+      } else {
+        _setConnected(false);
+      }
     } finally {
       _openingProjectionStream = false;
     }
@@ -336,6 +350,9 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     return widget.openProjectionStream != null ||
         (widget.pingMainDevice == null && widget.syncWithMainDevice == null);
   }
+
+  bool get _shouldUseProjectionStream =>
+      _usesProjectionStream && !_projectionStreamFallback;
 
   Future<void> _withMainPeer(
     Future<void> Function(LanSyncClient client, TrustedPeer peer) body,

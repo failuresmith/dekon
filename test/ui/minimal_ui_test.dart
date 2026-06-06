@@ -418,6 +418,34 @@ void main() {
     }
   });
 
+  testWidgets('Device Sync count updates when a cashier pairs while open', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository(onboarded: true);
+    try {
+      await tester.pumpWidget(testApp(repository));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0 devices connected'), findsOneWidget);
+
+      await repository.createSyncStore().trustCashierPeer(
+        deviceId: _frontRegisterDeviceId,
+        sharedSecret: 'shared-secret',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 device connected'), findsOneWidget);
+      expect(find.text('Cashier-1'), findsOneWidget);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
   testWidgets('cashier shell shows read-only Inventory and hides admin flows', (
     tester,
   ) async {
