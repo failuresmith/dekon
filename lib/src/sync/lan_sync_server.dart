@@ -98,6 +98,11 @@ class LanSyncServer {
         if (peer == null) return _unauthorized(request);
         return _events(request, peer);
       }
+      if (request.method == 'GET' && path == '/cashier/inventory-snapshot') {
+        final peer = await _authenticate(request, const []);
+        if (peer == null) return _unauthorized(request);
+        return _cashierInventorySnapshot(request, peer);
+      }
       if (request.method == 'POST' && path == '/events') {
         final bodyBytes = utf8.encode(body ?? '');
         final peer = await _authenticate(request, bodyBytes);
@@ -199,6 +204,22 @@ class LanSyncServer {
       'events': [for (final event in events) EventCodec.toJson(event)],
       'next_cursor': page.nextCursor?.encode(),
       'has_more': page.hasMore,
+    }, request: request);
+  }
+
+  Future<Response> _cashierInventorySnapshot(
+    Request request,
+    TrustedPeer peer,
+  ) async {
+    _authorization.requireCapability(
+      principal: _remoteCashierPrincipal(peer),
+      capability: Capability.viewCashierInventory,
+    );
+    final snapshot = await store.cashierInventorySnapshot();
+    await store.markPeerSuccess(peer.deviceId);
+    return _json({
+      ...snapshot.toJson(),
+      'server_time': _now().toUtc().toIso8601String(),
     }, request: request);
   }
 

@@ -25,12 +25,56 @@ class CashierProductProjection {
     );
   }
 
+  factory CashierProductProjection.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier product projection');
+    return CashierProductProjection(
+      productId: _stringField(map, 'product_id'),
+      barcode: _optionalStringField(map, 'barcode'),
+      name: _stringField(map, 'name'),
+      stockQuantity: _numberField(map, 'stock_quantity'),
+      salePriceMinor: _nonNegativeIntField(map, 'sale_price_minor'),
+      active: _boolField(map, 'active'),
+    );
+  }
+
   final String productId;
   final String? barcode;
   final String name;
   final double stockQuantity;
   final int salePriceMinor;
   final bool active;
+}
+
+class CashierInventorySnapshot {
+  const CashierInventorySnapshot({
+    required this.projectionVersion,
+    required this.products,
+  });
+
+  factory CashierInventorySnapshot.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier inventory snapshot');
+    final rawProducts = map['products'];
+    if (rawProducts is! List) {
+      throw const FormatException('products must be a list.');
+    }
+    return CashierInventorySnapshot(
+      projectionVersion: _projectionVersionField(map, 'projection_version'),
+      products: [
+        for (final rawProduct in rawProducts)
+          CashierProductProjection.fromJson(rawProduct),
+      ],
+    );
+  }
+
+  final int projectionVersion;
+  final List<CashierProductProjection> products;
+
+  Map<String, Object?> toJson() {
+    return serializeCashierInventorySnapshot(
+      projectionVersion: projectionVersion,
+      products: products,
+    );
+  }
 }
 
 class CashierInventoryPatchProduct {
@@ -132,4 +176,50 @@ Map<String, Object?> _serializeInventoryPatchProduct(
 String? _blankToNull(String? value) {
   final trimmed = value?.trim();
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+Map<String, Object?> _stringMap(Object? value, String label) {
+  if (value is! Map) {
+    throw FormatException('$label must be an object.');
+  }
+  return {
+    for (final entry in value.entries)
+      if (entry.key is String) entry.key as String: entry.value as Object?,
+  };
+}
+
+String _stringField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is String && value.trim().isNotEmpty) return value.trim();
+  throw FormatException('$field must be a non-empty string.');
+}
+
+String? _optionalStringField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value == null) return null;
+  if (value is String) return _blankToNull(value);
+  throw FormatException('$field must be a string or null.');
+}
+
+double _numberField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is num && value.isFinite) return value.toDouble();
+  throw FormatException('$field must be a finite number.');
+}
+
+int _nonNegativeIntField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is int && value >= 0) return value;
+  throw FormatException('$field must be a non-negative integer.');
+}
+
+int _projectionVersionField(Map<String, Object?> map, String field) {
+  final value = _nonNegativeIntField(map, field);
+  return _projectionVersion(value);
+}
+
+bool _boolField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is bool) return value;
+  throw FormatException('$field must be a boolean.');
 }

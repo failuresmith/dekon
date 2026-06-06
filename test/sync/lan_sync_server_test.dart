@@ -196,6 +196,12 @@ void main() {
               200,
             );
           }
+          if (request.url.path == '/cashier/inventory-snapshot') {
+            return http.Response(
+              jsonEncode({'projection_version': 0, 'products': const []}),
+              200,
+            );
+          }
           return http.Response('not found', 404);
         }),
       );
@@ -462,6 +468,127 @@ void main() {
     });
   });
 
+  test('inventory snapshot returns Cashier-safe product cache', () async {
+    final db = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final repository = await DekonRepository.open(database: db);
+    final store = repository.createSyncStore();
+    final server = LanSyncServer(store: store, now: () => _now);
+    try {
+      await store.trustPeer(
+        deviceId: _peerDeviceId,
+        displayName: 'Peer',
+        sharedSecret: _sharedSecret,
+        baseUrl: 'http://localhost',
+      );
+      final product = await repository.createProduct(
+        name: 'Snapshot Tea',
+        barcode: 'SNAP-TEA',
+        sku: 'PRIVATE-SKU',
+        salePriceMinor: 700,
+        purchaseCostMinor: 300,
+      );
+      await repository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 6),
+      ]);
+
+      final uri = Uri.parse('http://localhost/cashier/inventory-snapshot');
+      final response = await server.handler(
+        Request('GET', uri, headers: _authHeaders('GET', uri, const [])),
+      );
+      final body = await response.readAsString();
+      final decoded = jsonDecode(body) as Map<String, Object?>;
+      final products = decoded['products'] as List;
+      final snapshotProduct = products.single as Map<String, Object?>;
+
+      expect(response.statusCode, 200);
+      expect(decoded['projection_version'], 2);
+      expect(snapshotProduct['product_id'], product.productId);
+      expect(snapshotProduct['name'], 'Snapshot Tea');
+      expect(snapshotProduct['barcode'], 'SNAP-TEA');
+      expect(snapshotProduct['sale_price_minor'], 700);
+      expect(snapshotProduct['stock_quantity'], 6);
+      expect(body, isNot(contains('purchase_cost_minor')));
+      expect(body, isNot(contains('unit_cost_minor')));
+      expect(body, isNot(contains('PRIVATE-SKU')));
+    } finally {
+      await server.stop();
+      await repository.close();
+    }
+  });
+
+  test('client applies Cashier inventory snapshot transactionally', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = LanSyncServer(
+      store: mainRepository.createSyncStore(),
+      now: () => _now,
+    );
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+      now: () => _now,
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Snapshot Beans',
+        barcode: 'SNAP-BEANS',
+        salePriceMinor: 900,
+        purchaseCostMinor: 450,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 8),
+      ]);
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+
+      await mainRepository.updateProduct(
+        ProductSummary(
+          productId: product.productId,
+          name: 'Renamed Beans',
+          barcode: product.barcode,
+          sku: product.sku,
+          unit: product.unit,
+          salePriceMinor: product.salePriceMinor,
+          purchaseCostMinor: 600,
+          active: product.active,
+          quantity: product.quantity,
+        ),
+      );
+      await client.fetchAndApplyCashierInventorySnapshot(peer.deviceId);
+      final cashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final lastApplied = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(cashierProduct?.name, 'Renamed Beans');
+      expect(cashierProduct?.quantity, 8);
+      expect(cashierProduct?.salePriceMinor, 900);
+      expect(cashierProduct?.purchaseCostMinor, 0);
+      expect(lastApplied, 3);
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
   test('GET events resumes from returned cursor', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();
@@ -721,6 +848,17 @@ MockClient _serverBackedClient(LanSyncServer server) {
       headers: response.headers,
     );
   });
+}
+
+Map<String, String> _authHeaders(String method, Uri uri, List<int> bodyBytes) {
+  return SyncAuthenticator(now: () => _now).signHeaders(
+    method: method,
+    uri: uri,
+    bodyBytes: bodyBytes,
+    deviceId: _peerDeviceId,
+    sharedSecret: _sharedSecret,
+    timestamp: _now,
+  );
 }
 
 EventEnvelope _productCreated(

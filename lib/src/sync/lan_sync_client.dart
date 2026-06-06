@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'cashier_product_projection.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
@@ -123,6 +124,13 @@ class LanSyncClient {
       _throwIfRejected('Push', result);
       if (!result.hasEventOutcomes) break;
     }
+    while (true) {
+      final result = await pullFromPeer(peerDeviceId);
+      _throwIfRejected('Pull', result);
+      if (!result.hasEventOutcomes) break;
+    }
+    await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
+    if (!waitForRemoteEvents) return;
     var waitForNextPull = waitForRemoteEvents;
     while (true) {
       final result = await pullFromPeer(
@@ -132,6 +140,7 @@ class LanSyncClient {
       );
       _throwIfRejected('Pull', result);
       if (!result.hasEventOutcomes) break;
+      await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
       waitForNextPull = false;
     }
   }
@@ -187,6 +196,25 @@ class LanSyncClient {
       await store.markPeerSuccess(peer.deviceId);
     }
     return result;
+  }
+
+  Future<void> fetchAndApplyCashierInventorySnapshot(
+    String peerDeviceId,
+  ) async {
+    final peer = await _requiredPeer(peerDeviceId);
+    final uri = Uri.parse(peer.baseUrl!).resolve('/cashier/inventory-snapshot');
+    final response = await _authenticatedGet(uri, peer);
+    if (response.statusCode != 200) {
+      throw SyncClientException(
+        'Inventory snapshot failed with ${response.statusCode}.',
+      );
+    }
+    _updateClockOffsetFromBody(response.body);
+    final snapshot = CashierInventorySnapshot.fromJson(
+      jsonDecode(response.body),
+    );
+    await store.applyCashierInventorySnapshot(snapshot);
+    await store.markPeerSuccess(peer.deviceId);
   }
 
   Future<PostEventsResult> pushToPeer(String peerDeviceId) async {

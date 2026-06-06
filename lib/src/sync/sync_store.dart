@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../domain/events/events.dart';
 import '../persistence/persistence.dart';
+import 'cashier_product_projection.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
@@ -182,6 +183,82 @@ class SyncStore {
       version,
       now: _now().toUtc(),
     );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<CashierInventorySnapshot> cashierInventorySnapshot() {
+    return _db.transaction((txn) async {
+      final version = await readIntSetting(
+        txn,
+        cashierInventoryProjectionVersionSetting,
+      );
+      final rows = await txn.rawQuery('''
+        SELECT p.product_id, p.barcode, p.name, p.sale_price_minor, p.active,
+               COALESCE(i.quantity, 0) AS quantity
+        FROM products_projection p
+        LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+        ORDER BY p.active DESC, p.name ASC, p.product_id ASC
+        ''');
+      return CashierInventorySnapshot(
+        projectionVersion: version,
+        products: [
+          for (final row in rows)
+            CashierProductProjection(
+              productId: row['product_id'] as String,
+              barcode: row['barcode'] as String?,
+              name: row['name'] as String,
+              stockQuantity: (row['quantity'] as num).toDouble(),
+              salePriceMinor: row['sale_price_minor'] as int,
+              active: row['active'] == 1,
+            ),
+        ],
+      );
+    });
+  }
+
+  Future<void> applyCashierInventorySnapshot(
+    CashierInventorySnapshot snapshot,
+  ) async {
+    final now = _now().toUtc();
+    final nowText = now.toIso8601String();
+    final marker = 'cashier_snapshot:${snapshot.projectionVersion}';
+    await _db.transaction((txn) async {
+      await txn.delete('product_field_versions');
+      await txn.delete('inventory_projection');
+      await txn.delete('products_projection');
+      for (final product in snapshot.products) {
+        await txn.insert('products_projection', {
+          'product_id': product.productId,
+          'name': product.name,
+          'barcode': product.barcode,
+          'sku': null,
+          'unit': 'each',
+          'sale_price_minor': product.salePriceMinor,
+          'purchase_cost_minor': 0,
+          'active': product.active ? 1 : 0,
+          'created_at': nowText,
+          'updated_at': nowText,
+          'updated_hlc': marker,
+          'updated_device_id': localDeviceId,
+          'updated_event_id': marker,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('inventory_projection', {
+          'product_id': product.productId,
+          'quantity': product.stockQuantity,
+          'updated_at': nowText,
+          'updated_hlc': marker,
+          'updated_device_id': localDeviceId,
+          'updated_event_id': marker,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await writeIntSetting(
+        txn,
+        lastAppliedCashierProjectionVersionSetting,
+        snapshot.projectionVersion,
+        now: now,
+      );
+    });
+    activityBus?.notifyEventsChanged();
     activityBus?.notifySyncStateChanged();
   }
 
