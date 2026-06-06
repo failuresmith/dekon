@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 10 - complete
+Current phase: Phase 11 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -50,6 +50,10 @@ Last updated: 2026-06-06
 - Phase 10: Cashier `/sync/state` pings include signed `last_applied_cashier_projection_version` query data.
 - Phase 10: Main records the applied version when present and exposes lag through `CashierReportFilter`.
 - Phase 10: Settings Device Sync shows a low-emphasis `Inventory update pending` diagnostic for lagging Cashiers.
+- Phase 11 scope: throttle automatic Main-address rediscovery and fixed-port subnet probing after failed recovery attempts.
+- Phase 11: `LanSyncClient.refreshPeerBaseUrlFromDiscovery` now keeps per-peer discovery backoff state with a 5-second initial backoff, 1-minute cap, and 5-second negative-result cache.
+- Phase 11: automatic address-discovery retry skips mDNS and subnet scanning while backoff/cache is active.
+- Phase 11: explicit `forceScan` calls bypass automatic backoff for manual retry flows.
 
 ## Decisions
 
@@ -71,6 +75,8 @@ Last updated: 2026-06-06
 - Phase 9: queue overflow fails loudly with `SyncClientException` instead of allowing unbounded memory growth.
 - Phase 10: missing or invalid applied-version query values are ignored so older paired Cashiers remain compatible.
 - Phase 10: applied-version diagnostics do not block Cashier sales; they are surfaced only in Settings/diagnostics.
+- Phase 11: backoff is in-memory per `LanSyncClient`; this avoids noisy retry loops without adding persistent state or delaying app restart recovery.
+- Phase 11: manual Settings mDNS scan already exists as a direct discovery action. The client-level `forceScan` option preserves a bypass for explicit retry flows.
 
 ## Tests Added
 
@@ -120,6 +126,9 @@ Last updated: 2026-06-06
 - Connected-but-lagging Cashier can be distinguished from connected-and-current.
 - Older signed pings without applied-version diagnostics still authenticate.
 - Settings Device Sync surfaces lag as a diagnostic subtitle.
+- Repeated failed discovery attempts back off.
+- Fixed-port subnet scan is not repeated every second during automatic retry.
+- Manual/explicit discovery scan bypasses automatic backoff.
 
 ## Validation Log
 
@@ -140,6 +149,14 @@ Commands run:
 - `docker compose run --rm flutter-dev dart format lib/src/sync/sync_store.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_client_timeout_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format .`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test`
 - `docker compose run --rm flutter-dev dart format lib/src/ui/cashier_sync_controller.dart lib/src/ui/cashier_sync_indicator.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
@@ -258,6 +275,13 @@ Results:
 - Phase 10 first analyzer run reported a null-aware map-entry style issue; updated `markPeerSuccess` to use the project style.
 - Phase 10 `flutter analyze` passed with no issues after the style fix.
 - Phase 10 `git diff --check` passed.
+- Phase 11 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 11 focused `flutter test test/sync/lan_sync_client_timeout_test.dart` passed.
+- Phase 11 `flutter analyze` passed with no issues.
+- Phase 11 `git diff --check` passed.
+- Final repository-level `dart format .` completed with 0 changed files.
+- Final repository-level `flutter analyze` passed with no issues.
+- Final repository-level `flutter test` passed.
 
 ## Manual QA
 
@@ -269,7 +293,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 11 is not implemented yet.
+- All listed phases are implemented.
 - No manual multi-device QA has been run.
 
 ---

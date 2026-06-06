@@ -703,6 +703,112 @@ void main() {
   });
 
   test(
+    'failed discovery attempts back off and throttle subnet scans',
+    () async {
+      await _withHarness((harness) async {
+        await harness.store.trustPeer(
+          deviceId: _peerDeviceId,
+          displayName: 'Main',
+          sharedSecret: _sharedSecret,
+          baseUrl: 'http://192.168.55.10:1234',
+        );
+        final discovery = _FakeSyncServiceDiscovery();
+        var now = _now;
+        var probeCount = 0;
+        final client = LanSyncClient(
+          store: harness.store,
+          serviceDiscovery: discovery,
+          client: MockClient((_) async {
+            probeCount += 1;
+            throw const SocketException('No sync server at this address.');
+          }),
+          now: () => now,
+        );
+        try {
+          final first = await client.refreshPeerBaseUrlFromDiscovery(
+            _peerDeviceId,
+            timeout: const Duration(milliseconds: 20),
+          );
+          final firstDiscoverCount = discovery.discoverCount;
+          final firstProbeCount = probeCount;
+          final second = await client.refreshPeerBaseUrlFromDiscovery(
+            _peerDeviceId,
+            timeout: const Duration(milliseconds: 20),
+          );
+
+          now = now.add(const Duration(seconds: 6));
+          final third = await client.refreshPeerBaseUrlFromDiscovery(
+            _peerDeviceId,
+            timeout: const Duration(milliseconds: 20),
+          );
+          final thirdDiscoverCount = discovery.discoverCount;
+          final thirdProbeCount = probeCount;
+
+          now = now.add(const Duration(seconds: 6));
+          final fourth = await client.refreshPeerBaseUrlFromDiscovery(
+            _peerDeviceId,
+            timeout: const Duration(milliseconds: 20),
+          );
+
+          expect(first, false);
+          expect(second, false);
+          expect(third, false);
+          expect(fourth, false);
+          expect(firstDiscoverCount, 1);
+          expect(firstProbeCount, greaterThan(0));
+          expect(discovery.discoverCount, thirdDiscoverCount);
+          expect(probeCount, thirdProbeCount);
+          expect(thirdDiscoverCount, 2);
+          expect(thirdProbeCount, greaterThan(firstProbeCount));
+        } finally {
+          client.close();
+        }
+      });
+    },
+  );
+
+  test('manual discovery scan bypasses automatic backoff', () async {
+    await _withHarness((harness) async {
+      await harness.store.trustPeer(
+        deviceId: _peerDeviceId,
+        displayName: 'Main',
+        sharedSecret: _sharedSecret,
+        baseUrl: 'http://192.168.55.10:1234',
+      );
+      final discovery = _FakeSyncServiceDiscovery();
+      var probeCount = 0;
+      final client = LanSyncClient(
+        store: harness.store,
+        serviceDiscovery: discovery,
+        client: MockClient((_) async {
+          probeCount += 1;
+          throw const SocketException('No sync server at this address.');
+        }),
+      );
+      try {
+        await client.refreshPeerBaseUrlFromDiscovery(
+          _peerDeviceId,
+          timeout: const Duration(milliseconds: 20),
+        );
+        final automaticDiscoverCount = discovery.discoverCount;
+        final automaticProbeCount = probeCount;
+
+        final manual = await client.refreshPeerBaseUrlFromDiscovery(
+          _peerDeviceId,
+          timeout: const Duration(milliseconds: 20),
+          forceScan: true,
+        );
+
+        expect(manual, false);
+        expect(discovery.discoverCount, automaticDiscoverCount + 1);
+        expect(probeCount, greaterThan(automaticProbeCount));
+      } finally {
+        client.close();
+      }
+    });
+  });
+
+  test(
     'discovery parser keeps host and port when TXT attributes are absent',
     () {
       final service = DiscoveredSyncService.fromPlatformMap({

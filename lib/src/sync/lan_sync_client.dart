@@ -65,9 +65,13 @@ class LanSyncClient {
   static const _subnetProbeConcurrency = 32;
   static const _subnetProbePerHostTimeout = Duration(milliseconds: 250);
   static const _maxProjectionMessageQueueDepth = 32;
+  static const _initialDiscoveryBackoff = Duration(seconds: 5);
+  static const _maxDiscoveryBackoff = Duration(minutes: 1);
+  static const _negativeDiscoveryCacheTtl = Duration(seconds: 5);
 
   Future<void> _projectionMessageQueue = Future<void>.value();
   var _projectionMessageQueueDepth = 0;
+  final _discoveryBackoffByPeer = <String, _DiscoveryBackoffState>{};
 
   void close() => _client.close();
 
@@ -560,9 +564,37 @@ class LanSyncClient {
   Future<bool> refreshPeerBaseUrlFromDiscovery(
     String peerDeviceId, {
     Duration timeout = const Duration(seconds: 3),
+    bool forceScan = false,
   }) async {
     final trustedPeer = await store.trustedPeer(peerDeviceId);
     if (trustedPeer == null) return false;
+    final backoff = _discoveryBackoffByPeer.putIfAbsent(
+      peerDeviceId,
+      _DiscoveryBackoffState.new,
+    );
+    final now = _now().toUtc();
+    if (!forceScan && backoff.shouldSkip(now)) return false;
+    final refreshed = await _refreshPeerBaseUrlFromDiscovery(
+      trustedPeer,
+      timeout: timeout,
+    );
+    if (refreshed) {
+      _discoveryBackoffByPeer.remove(peerDeviceId);
+      return true;
+    }
+    backoff.recordFailure(
+      now,
+      initialBackoff: _initialDiscoveryBackoff,
+      maxBackoff: _maxDiscoveryBackoff,
+      negativeCacheTtl: _negativeDiscoveryCacheTtl,
+    );
+    return false;
+  }
+
+  Future<bool> _refreshPeerBaseUrlFromDiscovery(
+    TrustedPeer trustedPeer, {
+    required Duration timeout,
+  }) async {
     final discovery = serviceDiscovery;
     if (discovery == null) {
       return _refreshPeerBaseUrlFromFixedPortSubnet(
@@ -581,7 +613,8 @@ class LanSyncClient {
     }
     final tried = <String>{};
     for (final service in services) {
-      if ((service.deviceId.isNotEmpty && service.deviceId != peerDeviceId) ||
+      if ((service.deviceId.isNotEmpty &&
+              service.deviceId != trustedPeer.deviceId) ||
           (service.protocolVersion > 0 &&
               service.protocolVersion != syncProtocolVersion) ||
           !tried.add(service.baseUrl)) {
@@ -589,7 +622,7 @@ class LanSyncClient {
       }
       if (await _verifyDiscoveredPeerBaseUrl(trustedPeer, service.baseUrl)) {
         await store.updateTrustedPeerBaseUrl(
-          deviceId: peerDeviceId,
+          deviceId: trustedPeer.deviceId,
           baseUrl: service.baseUrl,
         );
         return true;
@@ -1090,6 +1123,34 @@ class LanSyncClient {
             reason: item['reason'] as String,
           ),
     ];
+  }
+}
+
+class _DiscoveryBackoffState {
+  int failedAttempts = 0;
+  DateTime? nextAutomaticAttemptAt;
+  DateTime? negativeCacheUntil;
+
+  bool shouldSkip(DateTime now) {
+    final retryAt = nextAutomaticAttemptAt;
+    if (retryAt != null && now.isBefore(retryAt)) return true;
+    final cachedUntil = negativeCacheUntil;
+    return cachedUntil != null && now.isBefore(cachedUntil);
+  }
+
+  void recordFailure(
+    DateTime now, {
+    required Duration initialBackoff,
+    required Duration maxBackoff,
+    required Duration negativeCacheTtl,
+  }) {
+    failedAttempts += 1;
+    final multiplier = 1 << (failedAttempts - 1).clamp(0, 10);
+    final backoff = initialBackoff * multiplier;
+    nextAutomaticAttemptAt = now.add(
+      backoff > maxBackoff ? maxBackoff : backoff,
+    );
+    negativeCacheUntil = now.add(negativeCacheTtl);
   }
 }
 
