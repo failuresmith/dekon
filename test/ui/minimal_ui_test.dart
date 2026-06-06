@@ -10,10 +10,29 @@ import '../helpers/test_app.dart';
 const _frontRegisterDeviceId = '018f2f12-7b60-7a15-8c7d-000000000002';
 
 void main() {
-  testWidgets('first run asks for device role and main enters app', (
+  testWidgets('first run defaults to Farsi when no language is saved', (
     tester,
   ) async {
     final repository = await createTestRepository();
+
+    expect(AppLanguage.fromStorage(null), AppLanguage.farsi);
+    expect(AppLanguage.fromStorage('unknown'), AppLanguage.farsi);
+    expect(AppLanguage.fromStorage('en'), AppLanguage.english);
+    expect(await repository.appLanguage(), AppLanguage.farsi);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+
+    expect(find.text('راه اندازی این دستگاه'), findsOneWidget);
+    expect(find.text('Set up this device'), findsNothing);
+    expect(find.byKey(const Key('onboarding-main-device')), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-cashier-device')), findsOneWidget);
+  });
+
+  testWidgets('first run asks for device role and main enters app', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository();
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -32,7 +51,7 @@ void main() {
   });
 
   testWidgets('cashier onboarding requires successful pairing', (tester) async {
-    final repository = await createTestRepository();
+    final repository = await createEnglishTestRepository();
     final payload = SyncPairingPayload(
       baseUrl: 'http://192.168.1.10:1234',
       serverDeviceId: '019e9239-1111-7000-8000-000000000001',
@@ -72,7 +91,7 @@ void main() {
   testWidgets('app shell shows focused navigation and settings gear', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -112,7 +131,7 @@ void main() {
   testWidgets('Settings language choice updates copy and persists', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -142,7 +161,7 @@ void main() {
   testWidgets('Settings money unit changes display while storing Rial', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Toman Tea',
       barcode: 'TOMAN-TEA',
@@ -199,7 +218,7 @@ void main() {
   testWidgets('product money fields select current value for replacement', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Price Tea',
       barcode: 'PRICE-TEA',
@@ -251,7 +270,7 @@ void main() {
   testWidgets('Farsi language renders app numbers with readable Persian font', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.setAppLanguage(AppLanguage.farsi);
     final product = await repository.createProduct(
       name: 'Tea',
@@ -305,7 +324,7 @@ void main() {
   testWidgets('root tab state is preserved while switching screens', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -325,7 +344,7 @@ void main() {
   testWidgets('main shell shows green indicator for connected cashier', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     try {
       await repository.createSyncStore().trustCashierPeer(
         deviceId: _frontRegisterDeviceId,
@@ -363,7 +382,7 @@ void main() {
   testWidgets('cashier shell shows Inventory and scopes Reports to device', (
     tester,
   ) async {
-    final repository = await createTestRepository();
+    final repository = await createEnglishTestRepository();
     await repository.lockDeviceRole(DeviceRole.cashierDevice);
 
     await tester.pumpWidget(testApp(repository));
@@ -396,7 +415,7 @@ void main() {
   testWidgets('unknown barcode opens product creation and adds the item', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -419,7 +438,7 @@ void main() {
   testWidgets('product search filters matching products by name', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Green Tea',
       barcode: 'GREEN-TEA',
@@ -442,7 +461,7 @@ void main() {
   });
 
   testWidgets('Sell does not create unknown products', (tester) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -460,7 +479,7 @@ void main() {
   testWidgets('Restock quantity count supports numeric replacement', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Bulk Rice',
       barcode: 'BULK-RICE',
@@ -509,7 +528,7 @@ void main() {
   testWidgets('Restock and Sell are the Inventory stock mutation path', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -559,7 +578,7 @@ void main() {
   testWidgets('Inventory delete is a soft delete for auditability', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Audit Beans',
       barcode: 'AUDIT-1',
@@ -592,7 +611,7 @@ void main() {
   testWidgets('Inventory search and low-stock filter use compact rows', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final stocked = await repository.createProduct(
       name: 'Stocked Tea',
       barcode: 'STOCKED-TEA',
@@ -649,7 +668,7 @@ void main() {
   });
 
   testWidgets('scanned known barcode adds item to Sell flow', (tester) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Scan Tea',
       barcode: 'TEA-SCAN-1',
@@ -670,7 +689,7 @@ void main() {
   testWidgets('scanned known barcode adds item to Restock flow', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Sugar',
       barcode: 'SUGAR-1',
@@ -693,7 +712,7 @@ void main() {
   testWidgets('scanner failure preserves manual barcode fallback', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Salt',
       barcode: 'SALT-1',
@@ -726,7 +745,7 @@ void main() {
   testWidgets('unknown scanned barcode opens product creation and adds item', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(
       testApp(repository, scanBarcode: (_) async => 'SCAN-1'),
@@ -756,7 +775,7 @@ void main() {
   testWidgets('Restock persists purchase and Reports show totals', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
 
     await tester.pumpWidget(testApp(repository));
     await tester.pumpAndSettle();
@@ -789,7 +808,7 @@ void main() {
   testWidgets('Reports use summary tiles and drill-down routes', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final tea = await repository.createProduct(
       name: 'Report Tea',
       barcode: 'REPORT-TEA',
@@ -895,7 +914,7 @@ void main() {
   testWidgets('Reports sync warning refreshes while the view stays open', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Live Sync Tea',
       barcode: 'LIVE-SYNC-TEA',
@@ -939,7 +958,7 @@ void main() {
   });
 
   testWidgets('Reports can filter performance by cashier', (tester) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Register Tea',
       barcode: 'REGISTER-TEA',
@@ -977,7 +996,7 @@ void main() {
   });
 
   testWidgets('Sell persists sale after stock check', (tester) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(
       name: 'Tea',
       barcode: 'TEA-1',
@@ -1013,7 +1032,7 @@ void main() {
   testWidgets('Transaction history opens readable sale and restock details', (
     tester,
   ) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     final tea = await repository.createProduct(
       name: 'Tea',
       barcode: 'DETAIL-TEA',
@@ -1105,7 +1124,7 @@ void main() {
   });
 
   testWidgets('Sell warns before allowing negative stock', (tester) async {
-    final repository = await createTestRepository(onboarded: true);
+    final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Rice',
       barcode: 'RICE-1',

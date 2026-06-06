@@ -81,7 +81,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
 
 @visibleForTesting
 String? scannerStatusMessageFor(Object error, {UiStrings? strings}) {
-  final text = strings ?? UiStrings.forLanguage(AppLanguage.english);
+  final text = strings ?? UiStrings.forLanguage(AppLanguage.defaultLanguage);
   if (error is MobileScannerBarcodeException) return null;
 
   if (error is MobileScannerException) {

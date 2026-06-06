@@ -23,6 +23,18 @@ Future<DekonRepository> createTestRepository({
   return repository;
 }
 
+Future<DekonRepository> createEnglishTestRepository({
+  bool onboarded = false,
+  DeviceRole role = DeviceRole.mainDevice,
+}) async {
+  final repository = await createTestRepository(
+    onboarded: onboarded,
+    role: role,
+  );
+  await repository.setAppLanguage(AppLanguage.english);
+  return repository;
+}
+
 Widget testApp(
   DekonRepository repository, {
   BarcodeScanLauncher? scanBarcode,

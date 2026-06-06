@@ -58,12 +58,14 @@ enum AppLanguage {
 
   const AppLanguage(this.storageValue);
 
+  static const defaultLanguage = AppLanguage.farsi;
+
   final String storageValue;
 
   static AppLanguage fromStorage(String? value) {
     return AppLanguage.values.firstWhere(
       (language) => language.storageValue == value,
-      orElse: () => AppLanguage.english,
+      orElse: () => AppLanguage.defaultLanguage,
     );
   }
 }

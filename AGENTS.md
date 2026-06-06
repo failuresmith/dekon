@@ -731,6 +731,8 @@ Use the existing localization system when available.
 
 If localization does not yet exist, centralize new visible UI strings instead of scattering them through widgets.
 
+The default application language is Farsi. Keep explicit saved language preferences working, including English, but treat an unset or unrecognized stored language as Farsi.
+
 Keep terminology consistent:
 
 ```text

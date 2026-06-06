@@ -18,9 +18,9 @@ void main() {
     );
     expect(
       permissionMessage,
-      contains('Camera permission denied. Enter barcode manually.'),
+      contains('اجازه دوربین داده نشده است. بارکد را دستی وارد کنید.'),
     );
-    expect(permissionMessage, contains('Scanner error: permissionDenied'));
+    expect(permissionMessage, contains('خطای اسکنر: permissionDenied'));
 
     final cameraMessage = scannerStatusMessageFor(
       const MobileScannerException(
@@ -29,8 +29,8 @@ void main() {
     );
     expect(
       cameraMessage,
-      contains('Camera unavailable. Enter barcode manually.'),
+      contains('دوربین در دسترس نیست. بارکد را دستی وارد کنید.'),
     );
-    expect(cameraMessage, contains('Scanner error: genericError'));
+    expect(cameraMessage, contains('خطای اسکنر: genericError'));
   });
 }

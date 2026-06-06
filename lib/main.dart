@@ -47,18 +47,17 @@ class _MainAppState extends State<MainApp> {
       future: _startup,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
+          final strings = UiStrings.forLanguage(AppLanguage.defaultLanguage);
           return MaterialApp(
             title: AppConfig.appName,
             theme: _theme(),
+            builder: (context, child) => Directionality(
+              textDirection: strings.textDirection,
+              child: child ?? const SizedBox.shrink(),
+            ),
             home: Scaffold(
               appBar: AppBar(title: const Text(AppConfig.appName)),
-              body: Center(
-                child: Text(
-                  UiStrings.forLanguage(
-                    AppLanguage.english,
-                  ).startupFailed(snapshot.error!),
-                ),
-              ),
+              body: Center(child: Text(strings.startupFailed(snapshot.error!))),
             ),
           );
         }
@@ -116,7 +115,7 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  ThemeData _theme({AppLanguage language = AppLanguage.english}) {
+  ThemeData _theme({AppLanguage language = AppLanguage.defaultLanguage}) {
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
       fontFamily: language == AppLanguage.farsi ? 'Vazirmatn' : null,
