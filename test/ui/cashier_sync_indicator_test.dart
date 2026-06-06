@@ -179,6 +179,84 @@ void main() {
       await repository.close();
     }
   });
+
+  testWidgets('indicator refreshes when the app resumes', (tester) async {
+    final repository = await createTestRepository();
+    var pingCount = 0;
+    var syncCount = 0;
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {
+              pingCount++;
+            },
+            syncWithMainDevice: () async {
+              syncCount++;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(pingCount, 1);
+      expect(syncCount, 1);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump();
+
+      expect(pingCount, 2);
+      expect(syncCount, 2);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
+  testWidgets('indicator applies messages from the projection stream', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    final stream = StreamController<Object?>.broadcast();
+    final messages = <Object?>[];
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {},
+            syncWithMainDevice: () async {},
+            openProjectionStream: () async => stream.stream,
+            applyProjectionMessage: (message) async {
+              messages.add(message);
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      stream.add('{"type":"snapshot_required","projection_version":1}');
+      await tester.pump();
+      await tester.pump();
+
+      expect(messages, ['{"type":"snapshot_required","projection_version":1}']);
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-synced')),
+        findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await stream.close();
+      await repository.close();
+    }
+  });
 }
 
 Widget _indicatorApp(Widget child) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,9 @@ import '../application/application.dart';
 import '../sync/sync.dart';
 
 typedef CashierSyncOperation = Future<void> Function();
+typedef CashierProjectionStreamFactory = Future<Stream<Object?>> Function();
+typedef CashierProjectionMessageHandler =
+    Future<void> Function(Object? message);
 
 class CashierSyncIndicator extends StatefulWidget {
   const CashierSyncIndicator({
@@ -13,6 +17,8 @@ class CashierSyncIndicator extends StatefulWidget {
     required this.repository,
     this.pingMainDevice,
     this.syncWithMainDevice,
+    this.openProjectionStream,
+    this.applyProjectionMessage,
     this.syncTransfers,
     this.pollInterval = const Duration(seconds: 1),
     this.syncWaitTimeout = const Duration(seconds: 25),
@@ -21,6 +27,8 @@ class CashierSyncIndicator extends StatefulWidget {
   final DekonRepository repository;
   final CashierSyncOperation? pingMainDevice;
   final CashierSyncOperation? syncWithMainDevice;
+  final CashierProjectionStreamFactory? openProjectionStream;
+  final CashierProjectionMessageHandler? applyProjectionMessage;
   final Stream<SyncTransferActivity>? syncTransfers;
   final Duration? pollInterval;
   final Duration syncWaitTimeout;
@@ -30,7 +38,7 @@ class CashierSyncIndicator extends StatefulWidget {
 }
 
 class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
-    with SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const _size = 8.0;
   static const _minimumSyncVisibleDuration = Duration(seconds: 1);
 
@@ -45,10 +53,17 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   Timer? _transferHideTimer;
   StreamSubscription<SyncTransferActivity>? _transferSubscription;
   StreamSubscription<void>? _eventsChangedSubscription;
+  StreamSubscription<Object?>? _projectionSubscription;
+  LanSyncClient? _projectionClient;
+  WebSocket? _projectionSocket;
+  String? _projectionPeerDeviceId;
+  var _openingProjectionStream = false;
+  var _closingProjectionStream = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _breathing = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -70,22 +85,41 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _timer?.cancel();
       _transferSubscription?.cancel();
       _eventsChangedSubscription?.cancel();
+      _closeProjectionStream();
       _subscribeToRepository();
       unawaited(_refresh());
     } else if (oldWidget.syncTransfers != widget.syncTransfers) {
       _transferSubscription?.cancel();
       _subscribeToTransfers();
+    } else if (oldWidget.openProjectionStream != widget.openProjectionStream ||
+        oldWidget.applyProjectionMessage != widget.applyProjectionMessage) {
+      _closeProjectionStream();
+      unawaited(_startProjectionStream());
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _transferHideTimer?.cancel();
     _transferSubscription?.cancel();
     _eventsChangedSubscription?.cancel();
+    _closeProjectionStream();
     _breathing.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _closeProjectionStream();
+      unawaited(_refresh());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _closeProjectionStream();
+    }
   }
 
   @override
@@ -128,6 +162,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         _setConnected(true);
         await _syncWithMainDevice();
         _setConnected(true);
+        await _startProjectionStream();
       } catch (_) {
         _setConnected(false);
       } finally {
@@ -177,10 +212,114 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     return _withMainPeer(
       (client, peer) => client.syncWithPeer(
         peer.deviceId,
-        waitForRemoteEvents: true,
+        waitForRemoteEvents: !_usesProjectionStream,
         waitTimeout: widget.syncWaitTimeout,
       ),
     );
+  }
+
+  Future<void> _startProjectionStream() async {
+    if (!_usesProjectionStream ||
+        _openingProjectionStream ||
+        _projectionSubscription != null) {
+      return;
+    }
+    _openingProjectionStream = true;
+    try {
+      final stream = await _openProjectionStream();
+      if (!mounted) {
+        _closeProjectionStream();
+        return;
+      }
+      _closingProjectionStream = false;
+      _projectionSubscription = stream.listen(
+        (message) {
+          unawaited(_applyProjectionMessage(message));
+        },
+        onError: (_) {
+          _handleProjectionStreamClosed();
+        },
+        onDone: _handleProjectionStreamClosed,
+        cancelOnError: true,
+      );
+      _setConnected(true);
+    } catch (_) {
+      _closeProjectionStream();
+      _setConnected(false);
+    } finally {
+      _openingProjectionStream = false;
+    }
+  }
+
+  Future<Stream<Object?>> _openProjectionStream() async {
+    final injected = widget.openProjectionStream;
+    if (injected != null) return injected();
+    final store = widget.repository.createSyncStore();
+    final peers = await store.trustedPeers();
+    TrustedPeer? peer;
+    for (final candidate in peers) {
+      if (candidate.baseUrl != null) {
+        peer = candidate;
+        break;
+      }
+    }
+    if (peer == null) {
+      throw SyncClientException('Main device is not paired.');
+    }
+    final client = LanSyncClient(store: store);
+    _projectionClient = client;
+    _projectionPeerDeviceId = peer.deviceId;
+    final socket = await client.openCashierProjectionStream(peer.deviceId);
+    _projectionSocket = socket;
+    return socket;
+  }
+
+  Future<void> _applyProjectionMessage(Object? message) async {
+    try {
+      final injected = widget.applyProjectionMessage;
+      if (injected != null) {
+        await injected(message);
+      } else {
+        final peerDeviceId = _projectionPeerDeviceId;
+        final client = _projectionClient;
+        if (peerDeviceId == null || client == null) {
+          throw SyncClientException('Projection stream is not connected.');
+        }
+        await client.applyCashierProjectionMessage(peerDeviceId, message);
+      }
+      _setConnected(true);
+    } catch (_) {
+      _setConnected(false);
+      unawaited(_refresh());
+    }
+  }
+
+  void _handleProjectionStreamClosed() {
+    if (_closingProjectionStream || !mounted) return;
+    _projectionSubscription = null;
+    _projectionSocket = null;
+    _projectionClient?.close();
+    _projectionClient = null;
+    _projectionPeerDeviceId = null;
+    if (mounted) unawaited(_refresh());
+  }
+
+  void _closeProjectionStream() {
+    _closingProjectionStream = true;
+    final subscription = _projectionSubscription;
+    _projectionSubscription = null;
+    unawaited(subscription?.cancel());
+    final socket = _projectionSocket;
+    _projectionSocket = null;
+    unawaited(socket?.close());
+    _projectionClient?.close();
+    _projectionClient = null;
+    _projectionPeerDeviceId = null;
+  }
+
+  bool get _usesProjectionStream {
+    return widget.openProjectionStream != null ||
+        (widget.pingMainDevice == null && widget.syncWithMainDevice == null);
   }
 
   Future<void> _withMainPeer(
