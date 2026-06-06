@@ -673,7 +673,10 @@ Future<void> showTransactionHistoryDialog({
   final kind = isSell
       ? TransactionHistoryKind.sale
       : TransactionHistoryKind.purchase;
-  final history = await repository.transactionHistory(kind);
+  final history = await repository.transactionHistory(
+    kind,
+    includePendingCashierSales: isSell,
+  );
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
@@ -767,7 +770,19 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
-            trailing: Icon(_detailIcon(context)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (entry.pendingMainApproval) ...[
+                  _PendingMainApprovalIcon(
+                    key: Key('transaction-history-pending-approval-$index'),
+                    strings: strings,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Icon(_detailIcon(context)),
+              ],
+            ),
             onTap: () => setState(() => _selectedEntry = entry),
           );
         },
@@ -820,6 +835,17 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(strings.timestamp(entry.occurredAt)),
+          if (entry.pendingMainApproval) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _PendingMainApprovalIcon(strings: strings),
+                const SizedBox(width: 8),
+                Expanded(child: Text(strings.salePendingMainApproval)),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
@@ -841,6 +867,24 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
         maxHeight: MediaQuery.sizeOf(context).height * 0.62,
       ),
       child: child,
+    );
+  }
+}
+
+class _PendingMainApprovalIcon extends StatelessWidget {
+  const _PendingMainApprovalIcon({super.key, required this.strings});
+
+  final UiStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: strings.salePendingMainApproval,
+      child: Icon(
+        Icons.warning_amber,
+        color: Colors.amber.shade700,
+        semanticLabel: strings.salePendingMainApproval,
+      ),
     );
   }
 }

@@ -479,6 +479,13 @@ void main() {
           .distance,
       lessThan(1),
     );
+
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+    expect(find.text('Stock: 3\nSale price: 400 Rial'), findsOneWidget);
+
+    await tester.tap(find.text('Sell'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('cashier-sale-sync-warning')), findsOneWidget);
 
     await _submitLookup(tester, 'CASHIER-TEA');
@@ -500,14 +507,36 @@ void main() {
     );
     expect((await repository.cashierSaleOutboxSummary()).queuedCount, 1);
 
+    await tester.tap(find.byKey(const Key('sell-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale history'), findsOneWidget);
+    expect(find.textContaining('Cashier Tea x1'), findsOneWidget);
+    expect(
+      find.byKey(const Key('transaction-history-pending-approval-0')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('transaction-history-entry-0')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale detail'), findsOneWidget);
+    expect(find.text('Not approved by main device yet'), findsOneWidget);
+
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('inventory-add-product')), findsNothing);
+    expect(find.text('Stock: 2\nSale price: 400 Rial'), findsOneWidget);
+    expect(find.text('Stock: 3\nSale price: 400 Rial'), findsNothing);
     await tester.tap(find.byKey(Key('inventory-product-${product.productId}')));
     await tester.pumpAndSettle();
 
     expect(find.text('Cashier Tea'), findsWidgets);
+    expect(find.text('Stock: 2'), findsOneWidget);
     expect(find.text('Sale price: 400 Rial'), findsOneWidget);
     expect(find.text('Barcode: CASHIER-TEA'), findsOneWidget);
     expect(find.text('Edit Product'), findsNothing);

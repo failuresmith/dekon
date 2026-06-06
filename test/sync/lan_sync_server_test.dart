@@ -732,11 +732,21 @@ void main() {
         ]);
         final updatedProduct = await repository.productById(product.productId);
         final summary = await repository.cashierSaleOutboxSummary();
+        final approvedHistory = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+        );
+        final cashierLocalHistory = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+          includePendingCashierSales: true,
+        );
 
         expect(result.status, SaleRecordStatus.queued);
         expect(summary.queuedCount, 1);
         expect(summary.conflictCount, 0);
         expect(updatedProduct?.quantity, 3);
+        expect(approvedHistory, isEmpty);
+        expect(cashierLocalHistory.single.totalMinor, 800);
+        expect(cashierLocalHistory.single.pendingMainApproval, isTrue);
       } finally {
         await repository.close();
       }

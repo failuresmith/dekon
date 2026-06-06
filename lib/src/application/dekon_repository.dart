@@ -878,6 +878,7 @@ class DekonRepository {
     ReportScope scope = ReportScope.allDevices,
     String? deviceId,
     int? limit = 20,
+    bool includePendingCashierSales = false,
   }) async {
     final source = _transactionSource(kind);
     final where = ['e.type = ?', '${source.alias}.${source.statusColumn} = 0'];
@@ -890,7 +891,11 @@ class DekonRepository {
         ..add(range.startUtc.toIso8601String())
         ..add(range.endUtcExclusive.toIso8601String());
     }
-    final sqlLimit = limit == null ? '' : 'LIMIT ${limit.clamp(1, 500)}';
+    final includePending =
+        includePendingCashierSales && kind == TransactionHistoryKind.sale;
+    final sqlLimit = limit == null || includePending
+        ? ''
+        : 'LIMIT ${limit.clamp(1, 500)}';
     final rows = await _db.rawQuery('''
       SELECT e.entity_id, e.payload_json, e.created_at
       FROM events e
@@ -903,6 +908,19 @@ class DekonRepository {
     final entries = <TransactionHistoryEntry>[];
     for (final row in rows) {
       entries.add(await _historyFromRow(kind, row));
+    }
+    if (includePending) {
+      entries.addAll(
+        await _pendingCashierSaleHistory(
+          range: range,
+          scope: scope,
+          deviceId: deviceId,
+        ),
+      );
+      entries.sort(_compareHistoryEntriesDescending);
+      if (limit != null && entries.length > limit.clamp(1, 500)) {
+        return entries.take(limit.clamp(1, 500)).toList(growable: false);
+      }
     }
     return entries;
   }
@@ -1242,6 +1260,84 @@ class DekonRepository {
       totalMinor: totalMinor,
       lines: lines,
     );
+  }
+
+  Future<List<TransactionHistoryEntry>> _pendingCashierSaleHistory({
+    ReportDateRange? range,
+    required ReportScope scope,
+    String? deviceId,
+  }) async {
+    final filterDeviceId = _filterDeviceId(scope, deviceId);
+    if (filterDeviceId != null && filterDeviceId != _deviceId) {
+      return const [];
+    }
+    final rows = await _db.rawQuery(
+      '''
+      SELECT c.command_id, c.command_json, c.local_total_minor, c.created_at
+      FROM cashier_sale_command_outbox c
+      WHERE c.status IN (?, ?, ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM events e WHERE e.event_id = c.command_id
+        )
+      ORDER BY c.created_at DESC, c.command_id DESC
+      ''',
+      const ['queued', 'syncing', 'conflict'],
+    );
+    final entries = <TransactionHistoryEntry>[];
+    for (final row in rows) {
+      final command = CashierSaleCommand.fromJson(
+        jsonDecode(row['command_json'] as String),
+      );
+      final occurredAt = command.occurredAt.toUtc();
+      if (range != null &&
+          (occurredAt.isBefore(range.startUtc) ||
+              !occurredAt.isBefore(range.endUtcExclusive))) {
+        continue;
+      }
+      final lines = await _pendingCashierSaleLines(command.commandId);
+      entries.add(
+        TransactionHistoryEntry(
+          id: command.commandId,
+          kind: TransactionHistoryKind.sale,
+          occurredAt: occurredAt,
+          totalMinor:
+              row['local_total_minor'] as int? ??
+              lines.fold<int>(0, (sum, line) => sum + line.lineTotalMinor),
+          lines: lines,
+          pendingMainApproval: true,
+        ),
+      );
+    }
+    return entries;
+  }
+
+  Future<List<TransactionHistoryLine>> _pendingCashierSaleLines(
+    String commandId,
+  ) async {
+    final rows = await _db.query(
+      'cashier_sale_command_outbox_lines',
+      columns: ['product_name', 'quantity', 'line_total_minor'],
+      where: 'command_id = ?',
+      whereArgs: [commandId],
+      orderBy: 'line_index ASC',
+    );
+    return [
+      for (final row in rows)
+        TransactionHistoryLine(
+          productName: row['product_name'] as String,
+          quantity: (row['quantity'] as num).toDouble(),
+          lineTotalMinor: row['line_total_minor'] as int,
+        ),
+    ];
+  }
+
+  int _compareHistoryEntriesDescending(
+    TransactionHistoryEntry left,
+    TransactionHistoryEntry right,
+  ) {
+    final occurred = right.occurredAt.compareTo(left.occurredAt);
+    if (occurred != 0) return occurred;
+    return right.id.compareTo(left.id);
   }
 
   Future<List<TransactionHistoryLine>> _historyLines(

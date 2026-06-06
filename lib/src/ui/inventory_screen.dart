@@ -32,6 +32,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   var _query = '';
   String? _barcodeForCreate;
   StreamSubscription<void>? _eventsChangedSubscription;
+  StreamSubscription<void>? _syncStateChangedSubscription;
 
   @override
   void initState() {
@@ -44,6 +45,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
       _eventsChangedSubscription?.cancel();
+      _syncStateChangedSubscription?.cancel();
       _future = widget.repository.products();
       _subscribeToRepository();
     }
@@ -52,6 +54,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   void dispose() {
     _eventsChangedSubscription?.cancel();
+    _syncStateChangedSubscription?.cancel();
     _queryController.dispose();
     super.dispose();
   }
@@ -370,6 +373,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   void _subscribeToRepository() {
     _eventsChangedSubscription = widget.repository.eventsChanged.listen((_) {
+      if (mounted) _reload();
+    });
+    _syncStateChangedSubscription = widget.repository.syncStateChanged.listen((
+      _,
+    ) {
       if (mounted) _reload();
     });
   }

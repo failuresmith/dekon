@@ -254,6 +254,13 @@ class UiStrings {
     return _text(en: 'Restock detail', fa: 'جزئیات تأمین');
   }
 
+  String get salePendingMainApproval {
+    return _text(
+      en: 'Not approved by main device yet',
+      fa: 'هنوز توسط دستگاه اصلی تأیید نشده است',
+    );
+  }
+
   String get scan => _text(en: 'Scan', fa: 'اسکن');
   String get scanBarcode => _text(en: 'Scan barcode', fa: 'اسکن بارکد');
   String get scanBarcodeOrSearchProduct {

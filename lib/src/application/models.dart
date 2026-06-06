@@ -177,6 +177,7 @@ class TransactionHistoryEntry {
     required this.occurredAt,
     required this.totalMinor,
     required this.lines,
+    this.pendingMainApproval = false,
   });
 
   final String id;
@@ -184,6 +185,7 @@ class TransactionHistoryEntry {
   final DateTime occurredAt;
   final int totalMinor;
   final List<TransactionHistoryLine> lines;
+  final bool pendingMainApproval;
 }
 
 class ReportDateRange {
