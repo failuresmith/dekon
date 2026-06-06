@@ -684,7 +684,7 @@ class SyncStore {
           (quantitiesByProductId[productId] ?? 0) + line.quantity;
     }
 
-    final saleLines = <_CashierSaleEventLine>[];
+    final requests = <InventorySaleCostRequest>[];
     final unavailable = <String>[];
     final insufficient = <String>[];
     for (final productId in quantitiesByProductId.keys.toList()..sort()) {
@@ -709,8 +709,8 @@ class SyncStore {
         insufficient.add(productId);
         continue;
       }
-      saleLines.add(
-        _CashierSaleEventLine(
+      requests.add(
+        InventorySaleCostRequest(
           productId: productId,
           quantity: quantity,
           unitPriceMinor: rows.single['sale_price_minor'] as int,
@@ -729,7 +729,17 @@ class SyncStore {
         productIds: insufficient,
       );
     }
-    return saleLines;
+    final costedLines = await allocateFifoInventoryLots(txn, requests);
+    return [
+      for (final line in costedLines)
+        _CashierSaleEventLine(
+          productId: line.productId,
+          quantity: line.quantity,
+          unitPriceMinor: line.unitPriceMinor,
+          costTotalMinor: line.costTotalMinor,
+          allocations: line.allocations,
+        ),
+    ];
   }
 
   Future<Map<String, Object?>> _cashierInventoryPatchMessage(
@@ -934,11 +944,15 @@ class _CashierSaleEventLine {
     required this.productId,
     required this.quantity,
     required this.unitPriceMinor,
+    required this.costTotalMinor,
+    required this.allocations,
   });
 
   final String productId;
   final double quantity;
   final int unitPriceMinor;
+  final int costTotalMinor;
+  final List<InventoryLotCostAllocation> allocations;
 
   int get lineTotalMinor => (quantity * unitPriceMinor).round();
 
@@ -946,5 +960,9 @@ class _CashierSaleEventLine {
     'product_id': productId,
     'quantity': quantity,
     'unit_price_minor': unitPriceMinor,
+    'cost_total_minor': costTotalMinor,
+    'cost_allocations': [
+      for (final allocation in allocations) allocation.toPayload(),
+    ],
   };
 }

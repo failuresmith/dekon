@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'cashier_product_projection.dart';
+import 'sync_access_control.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
@@ -250,7 +251,14 @@ class LanSyncClient {
     }
     _updateClockOffsetFromBody(response.body);
     final result = CashierSaleCommandResult.fromJson(jsonDecode(response.body));
-    final importResult = await store.importEvents([result.event]);
+    final localEvent = cashierSafeEventFor(
+      event: result.event,
+      cashierDeviceId: store.localDeviceId,
+    );
+    if (localEvent == null) {
+      throw SyncClientException('Sale command response malformed.');
+    }
+    final importResult = await store.importEvents([localEvent]);
     _throwIfRejected('Sale command import', importResult);
     await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
     await store.markPeerSuccess(peer.deviceId);

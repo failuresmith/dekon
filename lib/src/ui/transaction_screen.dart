@@ -154,12 +154,6 @@ class _TransactionScreenState extends State<TransactionScreen> {
                                 context.strings.quantity(line.product.quantity),
                               ),
                       ),
-                      if (!_isSell)
-                        Text(
-                          context.strings.purchaseCostEach(
-                            context.strings.money(line.unitCostMinor),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -172,7 +166,16 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+            if (!_isSell) ...[
+              const SizedBox(height: 8),
+              _RestockCostInput(
+                key: ValueKey('cost-input-${line.product.productId}'),
+                fieldKey: Key('line-unit-cost-$index'),
+                valueMinor: line.unitCostMinor,
+                onChanged: (value) => _setUnitCost(index, value),
+              ),
+            ],
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
               child: Text(
@@ -349,6 +352,19 @@ class _TransactionScreenState extends State<TransactionScreen> {
     });
   }
 
+  void _setUnitCost(int index, int unitCostMinor) {
+    if (unitCostMinor < 0) return;
+    final current = _lines[index];
+    setState(() {
+      _lines[index] = TransactionLineDraft(
+        product: current.product,
+        quantity: current.quantity,
+        unitPriceMinor: current.unitPriceMinor,
+        unitCostMinor: unitCostMinor,
+      );
+    });
+  }
+
   void _changeQuantity(int index, double delta) {
     final current = _lines[index];
     final nextQuantity = current.quantity + delta;
@@ -379,9 +395,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
               ..clear()
               ..addAll(negativeProductIds);
           });
-          final proceed = await _confirmNegativeStock(negativeProductIds);
-          if (!mounted) return;
-          if (proceed != true) return;
+          return;
         } else {
           setState(_negativeProductIds.clear);
         }
@@ -406,33 +420,140 @@ class _TransactionScreenState extends State<TransactionScreen> {
     }
   }
 
-  Future<bool?> _confirmNegativeStock(Set<String> productIds) {
-    final names = _lines
-        .where((line) => productIds.contains(line.product.productId))
-        .map((line) => line.product.name)
-        .join(', ');
-    return showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.strings.negativeStockWarning),
-        content: Text(context.strings.negativeStockContent(names)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(context.strings.cancel),
-          ),
-          FilledButton(
-            key: const Key('confirm-negative-stock'),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(context.strings.continueAction),
-          ),
-        ],
+  void _message(ScaffoldMessengerState messenger, String text) {
+    messenger.showSnackBar(SnackBar(content: Text(text)));
+  }
+}
+
+class _RestockCostInput extends StatefulWidget {
+  const _RestockCostInput({
+    super.key,
+    required this.fieldKey,
+    required this.valueMinor,
+    required this.onChanged,
+  });
+
+  final Key fieldKey;
+  final int valueMinor;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_RestockCostInput> createState() => _RestockCostInputState();
+}
+
+class _RestockCostInputState extends State<_RestockCostInput> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  MoneyUnit? _moneyUnit;
+  AppLanguage? _language;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+    _focusNode = FocusNode()..addListener(_handleFocusChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final strings = context.strings;
+    if (_moneyUnit == strings.moneyUnit && _language == strings.language) {
+      return;
+    }
+    _moneyUnit = strings.moneyUnit;
+    _language = strings.language;
+    if (!_focusNode.hasFocus) _syncText(widget.valueMinor);
+  }
+
+  @override
+  void didUpdateWidget(covariant _RestockCostInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.valueMinor == widget.valueMinor) return;
+    if (!_focusNode.hasFocus || _tracksValue(oldWidget.valueMinor)) {
+      _syncText(widget.valueMinor);
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocusChanged)
+      ..dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    return TextField(
+      key: widget.fieldKey,
+      controller: _controller,
+      focusNode: _focusNode,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      textInputAction: TextInputAction.done,
+      decoration: InputDecoration(
+        isDense: true,
+        border: const OutlineInputBorder(),
+        labelText:
+            '${strings.purchaseCost} (${strings.moneyUnitLabel(strings.moneyUnit)})',
       ),
+      onTap: _selectAll,
+      onChanged: _applyIfValid,
+      onSubmitted: (_) => _commitOrRevert(),
     );
   }
 
-  void _message(ScaffoldMessengerState messenger, String text) {
-    messenger.showSnackBar(SnackBar(content: Text(text)));
+  void _handleFocusChanged() {
+    if (_focusNode.hasFocus) {
+      _selectAll();
+      return;
+    }
+    _commitOrRevert();
+  }
+
+  void _selectAll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      );
+    });
+  }
+
+  void _applyIfValid(String input) {
+    final value = _parse(input);
+    if (value != null) widget.onChanged(value);
+  }
+
+  void _commitOrRevert() {
+    final value = _parse(_controller.text);
+    if (value == null) {
+      _syncText(widget.valueMinor);
+      return;
+    }
+    widget.onChanged(value);
+    _syncText(value);
+  }
+
+  bool _tracksValue(int value) => _parse(_controller.text) == value;
+
+  void _syncText(int value) {
+    final text = context.strings.moneyInput(value);
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  int? _parse(String input) {
+    try {
+      return parseMoneyRial(input, unit: context.strings.moneyUnit);
+    } on FormatException {
+      return null;
+    }
   }
 }
 

@@ -495,6 +495,54 @@ class DekonRepository {
     );
   }
 
+  Future<void> _commitSaleWithStockPatch(
+    List<TransactionLineDraft> lines,
+  ) async {
+    final productIds = {for (final line in lines) line.product.productId};
+    return _replicatedMutations.run(() async {
+      int? projectionVersion;
+      var committed = false;
+      await _db.transaction((txn) async {
+        final saleLines = await allocateFifoInventoryLots(txn, [
+          for (final line in lines)
+            InventorySaleCostRequest(
+              productId: line.product.productId,
+              quantity: line.quantity,
+              unitPriceMinor: line.unitPriceMinor,
+            ),
+        ]);
+        final event = _event(
+          type: EventTypes.inventorySaleRecorded,
+          entityId: _uuid.v7(),
+          payload: {
+            'occurred_at': _now().toUtc().toIso8601String(),
+            'total_minor': saleLines.fold<int>(
+              0,
+              (sum, line) => sum + line.saleTotalMinor,
+            ),
+            'line_items': [for (final line in saleLines) line.toPayload()],
+          },
+        );
+        final write = await _eventStore.appendInTransaction(txn, event);
+        if (write.status == EventWriteStatus.duplicate) return;
+        committed = true;
+        await _projector.applyInTransaction(txn, event);
+        projectionVersion =
+            await SyncStore.incrementCashierProjectionVersionInTransaction(
+              txn,
+              now: _now().toUtc(),
+            );
+      });
+      if (!committed) return;
+      _syncActivityBus.notifyEventsChanged();
+      final version = projectionVersion;
+      if (version == null) return;
+      _syncActivityBus.notifyCashierProjectionUpdate(
+        await _cashierInventoryPatchMessage(version, productIds),
+      );
+    });
+  }
+
   Future<ProductSummary?> productByBarcodeOrSku(String query) async {
     final value = query.trim();
     if (value.isEmpty) return null;
@@ -580,28 +628,7 @@ class DekonRepository {
       await _submitCashierSaleCommand(lines);
       return;
     }
-    await _commitWithStockPatch(
-      _event(
-        type: EventTypes.inventorySaleRecorded,
-        entityId: _uuid.v7(),
-        payload: {
-          'occurred_at': _now().toUtc().toIso8601String(),
-          'total_minor': lines.fold<int>(
-            0,
-            (sum, line) => sum + line.saleTotalMinor,
-          ),
-          'line_items': [
-            for (final line in lines)
-              {
-                'product_id': line.product.productId,
-                'quantity': line.quantity,
-                'unit_price_minor': line.unitPriceMinor,
-              },
-          ],
-        },
-      ),
-      lines,
-    );
+    await _commitSaleWithStockPatch(lines);
   }
 
   Future<bool> _shouldSubmitCashierSaleCommand() async {
@@ -1023,14 +1050,38 @@ class DekonRepository {
       final payload = jsonDecode(row['payload_json'] as String) as Map;
       final lines = payload['line_items'] as List;
       for (final line in lines.cast<Map>()) {
-        final product = await productById(line['product_id'] as String);
         final quantity = (line['quantity'] as num).toDouble();
         final price = line['unit_price_minor'] as int;
-        final cost = product?.purchaseCostMinor ?? 0;
-        margin += (quantity * (price - cost)).round();
+        final revenue = (quantity * price).round();
+        margin += revenue - _saleLineCostMinor(line);
       }
     }
     return margin;
+  }
+
+  int _saleLineCostMinor(Map line) {
+    final costTotal = line['cost_total_minor'];
+    if (costTotal is int) return costTotal;
+    final allocations = line['cost_allocations'];
+    if (allocations is List) {
+      return allocations.fold<int>(0, (sum, raw) {
+        if (raw is! Map) return sum;
+        final cost = raw['cost_minor'];
+        if (cost is int) return sum + cost;
+        final quantity = raw['quantity'];
+        final unitCost = raw['unit_cost_minor'];
+        if (quantity is num && unitCost is int) {
+          return sum + (quantity.toDouble() * unitCost).round();
+        }
+        return sum;
+      });
+    }
+    final unitCost = line['unit_cost_minor'];
+    final quantity = line['quantity'];
+    if (unitCost is int && quantity is num) {
+      return (quantity.toDouble() * unitCost).round();
+    }
+    return 0;
   }
 
   Future<DateTime?> _lastSyncAt() async {

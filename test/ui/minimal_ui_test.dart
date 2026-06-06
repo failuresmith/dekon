@@ -885,6 +885,8 @@ void main() {
     await tester.enterText(find.byKey(const Key('product-cost')), '150');
     await tester.tap(find.byKey(const Key('save-product')));
     await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('line-unit-cost-0')), '175');
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('finish-purchase')));
     await tester.pumpAndSettle();
 
@@ -893,7 +895,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Restock Amount'), findsOneWidget);
-    expect(find.text('150 Rial'), findsOneWidget);
+    expect(find.text('175 Rial'), findsOneWidget);
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
@@ -1061,6 +1063,9 @@ void main() {
       salePriceMinor: 400,
       purchaseCostMinor: 150,
     );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 1),
+    ]);
     await repository.recordSale([
       TransactionLineDraft(product: product, quantity: 1),
     ]);
@@ -1219,7 +1224,7 @@ void main() {
     );
   });
 
-  testWidgets('Sell warns before allowing negative stock', (tester) async {
+  testWidgets('Sell blocks negative stock before completion', (tester) async {
     final repository = await createEnglishTestRepository(onboarded: true);
     await repository.createProduct(
       name: 'Rice',
@@ -1235,15 +1240,13 @@ void main() {
     await tester.tap(find.byKey(const Key('finish-sale')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Negative stock warning'), findsOneWidget);
     expect(
-      find.textContaining('Only 0 is available in stock.'),
+      find.textContaining(
+        'Only 0 is available in stock. Restock this product before completing the sale.',
+      ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('confirm-negative-stock')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Sale completed'), findsOneWidget);
+    expect(find.text('Sale completed'), findsNothing);
   });
 }
 
@@ -1300,7 +1303,22 @@ Future<void> _importFrontRegisterTransactions(
         'occurred_at': now.toIso8601String(),
         'total_minor': 800,
         'line_items': [
-          {'product_id': productId, 'quantity': 2, 'unit_price_minor': 400},
+          {
+            'product_id': productId,
+            'quantity': 2,
+            'unit_price_minor': 400,
+            'cost_total_minor': 300,
+            'cost_allocations': [
+              {
+                'lot_id':
+                    'front-register-purchase-1:${EventTypes.inventoryPurchaseRecorded}:0',
+                'source_event_id': 'front-register-purchase-1',
+                'quantity': 2,
+                'unit_cost_minor': 150,
+                'cost_minor': 300,
+              },
+            ],
+          },
         ],
       },
     ),

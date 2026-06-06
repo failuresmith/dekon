@@ -918,8 +918,8 @@ class UiStrings {
   String availableStockWarning(String quantity) {
     final displayQuantity = digits(quantity);
     return _text(
-      en: 'Only $quantity is available in stock. The sale needs confirmation before completion.',
-      fa: 'فقط $displayQuantity عدد در موجودی است. فروش پیش از تکمیل نیاز به تایید دارد.',
+      en: 'Only $quantity is available in stock. Restock this product before completing the sale.',
+      fa: 'فقط $displayQuantity عدد در موجودی است. پیش از تکمیل فروش، این کالا را تأمین کنید.',
     );
   }
 

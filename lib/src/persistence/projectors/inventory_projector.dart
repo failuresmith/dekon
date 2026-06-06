@@ -11,8 +11,18 @@ class InventoryProjector {
   Future<void> applyPurchase(EventEnvelope event) async {
     final total = _int(event.payload, 'total_minor', fallback: 0);
     await _upsertPurchase(event, totalMinor: total, corrected: 0);
-    for (final line in _lineItems(event.payload)) {
+    final lines = _lineItems(event.payload);
+    for (var index = 0; index < lines.length; index++) {
+      final line = lines[index];
       await _addInventory(event, _productId(line), _positive(line, 'quantity'));
+      await _addLot(
+        event,
+        line,
+        lineIndex: index,
+        sourceType: EventTypes.inventoryPurchaseRecorded,
+        quantity: _positive(line, 'quantity'),
+        unitCostMinor: _optionalInt(line, 'unit_cost_minor') ?? 0,
+      );
     }
   }
 
@@ -20,6 +30,7 @@ class InventoryProjector {
     final total = _int(event.payload, 'total_minor', fallback: 0);
     await _upsertSale(event, totalMinor: total, voided: null);
     for (final line in _lineItems(event.payload)) {
+      await _consumeSaleLots(line);
       await _addInventory(
         event,
         _productId(line),
@@ -29,31 +40,197 @@ class InventoryProjector {
   }
 
   Future<void> applyAdjustment(EventEnvelope event) async {
-    for (final line in _lineItems(event.payload)) {
-      await _addInventory(
-        event,
-        _productId(line),
-        _number(line, 'quantity_delta'),
-      );
+    final lines = _lineItems(event.payload);
+    for (var index = 0; index < lines.length; index++) {
+      final line = lines[index];
+      final delta = _number(line, 'quantity_delta');
+      if (delta > 0) {
+        await _addLot(
+          event,
+          line,
+          lineIndex: index,
+          sourceType: EventTypes.inventoryAdjustmentRecorded,
+          quantity: delta,
+          unitCostMinor: _optionalInt(line, 'unit_cost_minor') ?? 0,
+        );
+      } else if (delta < 0) {
+        await _consumeFifoLots(_productId(line), -delta, strict: false);
+      }
+      await _addInventory(event, _productId(line), delta);
     }
   }
 
   Future<void> applySaleVoided(EventEnvelope event) async {
     await _markSaleVoided(event);
-    for (final line in _lineItems(event.payload)) {
+    final lines = _lineItems(event.payload);
+    for (var index = 0; index < lines.length; index++) {
+      final line = lines[index];
+      if (!await _restoreAllocatedLots(line)) {
+        await _addLot(
+          event,
+          line,
+          lineIndex: index,
+          sourceType: EventTypes.saleVoided,
+          quantity: _positive(line, 'quantity'),
+          unitCostMinor: _optionalInt(line, 'unit_cost_minor') ?? 0,
+        );
+      }
       await _addInventory(event, _productId(line), _positive(line, 'quantity'));
     }
   }
 
   Future<void> applyPurchaseCorrected(EventEnvelope event) async {
     await _markPurchaseCorrected(event);
-    for (final line in _lineItems(event.payload)) {
-      await _addInventory(
-        event,
-        _productId(line),
-        _number(line, 'quantity_delta'),
+    final lines = _lineItems(event.payload);
+    for (var index = 0; index < lines.length; index++) {
+      final line = lines[index];
+      final delta = _number(line, 'quantity_delta');
+      if (delta > 0) {
+        await _addLot(
+          event,
+          line,
+          lineIndex: index,
+          sourceType: EventTypes.purchaseCorrected,
+          quantity: delta,
+          unitCostMinor: _optionalInt(line, 'unit_cost_minor') ?? 0,
+        );
+      } else if (delta < 0) {
+        await _consumeFifoLots(_productId(line), -delta, strict: false);
+      }
+      await _addInventory(event, _productId(line), delta);
+    }
+  }
+
+  Future<void> _addLot(
+    EventEnvelope event,
+    Map<String, Object?> line, {
+    required int lineIndex,
+    required String sourceType,
+    required double quantity,
+    required int unitCostMinor,
+  }) async {
+    await _txn.insert('inventory_lots_projection', {
+      'lot_id': '${event.entityId}:$sourceType:$lineIndex',
+      'source_event_id': event.entityId,
+      'source_line_index': lineIndex,
+      'source_type': sourceType,
+      'product_id': _productId(line),
+      'received_at': _occurredAt(event),
+      'initial_quantity': quantity,
+      'remaining_quantity': quantity,
+      'unit_cost_minor': unitCostMinor,
+      'updated_at': event.createdAt.toIso8601String(),
+      'updated_hlc': event.hlc.toString(),
+      'updated_device_id': event.deviceId,
+      'updated_event_id': event.eventId,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> _consumeSaleLots(Map<String, Object?> line) async {
+    if (await _consumeAllocatedLots(line)) return;
+    await _consumeFifoLots(_productId(line), _positive(line, 'quantity'));
+  }
+
+  Future<bool> _consumeAllocatedLots(Map<String, Object?> line) async {
+    final allocations = line['cost_allocations'];
+    if (allocations is! List) return false;
+    for (final raw in allocations) {
+      if (raw is! Map) {
+        throw ProjectionException('cost_allocations entries must be objects.');
+      }
+      final allocation = Map<String, Object?>.from(raw);
+      await _consumeLotById(
+        _string(allocation, 'lot_id'),
+        _positive(allocation, 'quantity'),
       );
     }
+    return true;
+  }
+
+  Future<bool> _restoreAllocatedLots(Map<String, Object?> line) async {
+    final allocations = line['cost_allocations'];
+    if (allocations is! List) return false;
+    for (final raw in allocations) {
+      if (raw is! Map) {
+        throw ProjectionException('cost_allocations entries must be objects.');
+      }
+      final allocation = Map<String, Object?>.from(raw);
+      final lotId = _string(allocation, 'lot_id');
+      final quantity = _positive(allocation, 'quantity');
+      final rows = await _txn.query(
+        'inventory_lots_projection',
+        columns: ['remaining_quantity'],
+        where: 'lot_id = ?',
+        whereArgs: [lotId],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw ProjectionException('Sale void references an unknown lot.');
+      }
+      final current = (rows.single['remaining_quantity'] as num).toDouble();
+      await _txn.update(
+        'inventory_lots_projection',
+        {'remaining_quantity': current + quantity},
+        where: 'lot_id = ?',
+        whereArgs: [lotId],
+      );
+    }
+    return true;
+  }
+
+  Future<void> _consumeFifoLots(
+    String productId,
+    double quantity, {
+    bool strict = false,
+  }) async {
+    var remaining = quantity;
+    final rows = await _txn.query(
+      'inventory_lots_projection',
+      columns: ['lot_id', 'remaining_quantity'],
+      where: 'product_id = ? AND remaining_quantity > 0',
+      whereArgs: [productId],
+      orderBy: 'received_at ASC, updated_hlc ASC, lot_id ASC',
+    );
+    for (final row in rows) {
+      if (remaining <= 0) break;
+      final current = (row['remaining_quantity'] as num).toDouble();
+      final consumed = current < remaining ? current : remaining;
+      await _txn.update(
+        'inventory_lots_projection',
+        {'remaining_quantity': current - consumed},
+        where: 'lot_id = ?',
+        whereArgs: [row['lot_id']],
+      );
+      remaining -= consumed;
+    }
+    if (strict && remaining > 0.000000001) {
+      throw ProjectionException('Sale exceeds available inventory lots.');
+    }
+  }
+
+  Future<void> _consumeLotById(String lotId, double quantity) async {
+    final rows = await _txn.query(
+      'inventory_lots_projection',
+      columns: ['remaining_quantity'],
+      where: 'lot_id = ?',
+      whereArgs: [lotId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      throw ProjectionException('Sale references an unknown inventory lot.');
+    }
+    final current = (rows.single['remaining_quantity'] as num).toDouble();
+    if (current + 0.000000001 < quantity) {
+      throw ProjectionException(
+        'Sale exceeds available inventory lot quantity.',
+      );
+    }
+    await _txn.update(
+      'inventory_lots_projection',
+      {'remaining_quantity': current - quantity},
+      where: 'lot_id = ?',
+      whereArgs: [lotId],
+    );
   }
 
   Future<void> _addInventory(

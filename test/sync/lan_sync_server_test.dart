@@ -479,6 +479,8 @@ void main() {
       expect(inventory['quantity'], 3);
       expect(payload['total_minor'], 200);
       expect(line['unit_price_minor'], 100);
+      expect(line['cost_total_minor'], 100);
+      expect(line['cost_allocations'], isNotEmpty);
       expect(await EventStore(harness.db).count(), 3);
     });
   });

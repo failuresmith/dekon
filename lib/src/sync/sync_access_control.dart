@@ -135,7 +135,7 @@ EventEnvelope? cashierSafeEventFor({
     ),
     EventTypes.inventorySaleRecorded =>
       event.deviceId == cashierDeviceId
-          ? event
+          ? _cashierSafeSaleEvent(event)
           : _stockOnlyAdjustment(
               event,
               quantityField: 'quantity',
@@ -158,6 +158,39 @@ EventEnvelope? cashierSafeEventFor({
     ),
     _ => null,
   };
+}
+
+EventEnvelope? _cashierSafeSaleEvent(EventEnvelope event) {
+  final rawLines = event.payload['line_items'];
+  if (rawLines is! List) return null;
+  final lines = <Map<String, Object?>>[];
+  for (final rawLine in rawLines) {
+    if (rawLine is! Map) return null;
+    final line = Map<String, Object?>.from(rawLine);
+    final productId = line['product_id'];
+    final quantity = line['quantity'];
+    final unitPriceMinor = line['unit_price_minor'];
+    if (productId is! String || productId.trim().isEmpty) return null;
+    if (quantity is! num || !quantity.isFinite || quantity <= 0) return null;
+    if (unitPriceMinor is! int || unitPriceMinor < 0) return null;
+    lines.add({
+      'product_id': productId,
+      'quantity': quantity,
+      'unit_price_minor': unitPriceMinor,
+    });
+  }
+  return _copyEvent(
+    event,
+    payload: {
+      'occurred_at': _string(
+        event.payload,
+        'occurred_at',
+        fallback: event.createdAt.toIso8601String(),
+      ),
+      'total_minor': _int(event.payload, 'total_minor', fallback: 0),
+      'line_items': lines,
+    },
+  );
 }
 
 EventEnvelope? _cashierSafeProductFieldSet(EventEnvelope event) {

@@ -167,6 +167,97 @@ void main() {
   );
 
   test(
+    'gross profit uses sale cost snapshots instead of current product cost',
+    () async {
+      final repository = await createTestRepository(onboarded: true);
+      final product = await repository.createProduct(
+        name: 'Costed Tea',
+        barcode: 'COSTED-TEA',
+        salePriceMinor: 400,
+        purchaseCostMinor: 100,
+      );
+      await repository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 1),
+      ]);
+      await repository.updateProduct(
+        ProductSummary(
+          productId: product.productId,
+          name: product.name,
+          barcode: product.barcode,
+          sku: product.sku,
+          unit: product.unit,
+          salePriceMinor: product.salePriceMinor,
+          purchaseCostMinor: 900,
+          active: product.active,
+          quantity: product.quantity,
+        ),
+      );
+      await repository.recordSale([
+        TransactionLineDraft(product: product, quantity: 1),
+      ]);
+
+      final summary = await repository.reportSummary();
+
+      expect(summary.salesMinor, 400);
+      expect(summary.grossMarginMinor, 300);
+    },
+  );
+
+  test(
+    'FIFO sale costing spans multiple restock lots with exact cost total',
+    () async {
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
+      final repository = await DekonRepository.open(database: db);
+      try {
+        await repository.completeDeviceOnboarding(DeviceRole.mainDevice);
+        final product = await repository.createProduct(
+          name: 'FIFO Rice',
+          barcode: 'FIFO-RICE',
+          salePriceMinor: 500,
+          purchaseCostMinor: 100,
+        );
+        await repository.recordPurchase([
+          TransactionLineDraft(
+            product: product,
+            quantity: 1,
+            unitCostMinor: 100,
+          ),
+        ]);
+        await repository.recordPurchase([
+          TransactionLineDraft(
+            product: product,
+            quantity: 2,
+            unitCostMinor: 200,
+          ),
+        ]);
+        await repository.recordSale([
+          TransactionLineDraft(product: product, quantity: 2),
+        ]);
+
+        final summary = await repository.reportSummary();
+        final saleEvent = (await db.query(
+          'events',
+          where: 'type = ?',
+          whereArgs: [EventTypes.inventorySaleRecorded],
+        )).single;
+        final payload = EventEnvelope.fromStorage(saleEvent).payload;
+        final line = (payload['line_items'] as List).single as Map;
+        final allocations = line['cost_allocations'] as List;
+
+        expect(summary.salesMinor, 1000);
+        expect(summary.grossMarginMinor, 700);
+        expect(line['cost_total_minor'], 300);
+        expect(allocations, hasLength(2));
+      } finally {
+        await repository.close();
+      }
+    },
+  );
+
+  test(
     'local-device report scope excludes transactions from other devices',
     () async {
       final db = await CoreDatabase.open(
@@ -279,7 +370,22 @@ Future<void> _appendRemoteTransactions(Database db, String productId) async {
       'occurred_at': now.toIso8601String(),
       'total_minor': 800,
       'line_items': [
-        {'product_id': productId, 'quantity': 2, 'unit_price_minor': 400},
+        {
+          'product_id': productId,
+          'quantity': 2,
+          'unit_price_minor': 400,
+          'cost_total_minor': 300,
+          'cost_allocations': [
+            {
+              'lot_id':
+                  'remote-purchase-1:${EventTypes.inventoryPurchaseRecorded}:0',
+              'source_event_id': 'remote-purchase-1',
+              'quantity': 2,
+              'unit_cost_minor': 150,
+              'cost_minor': 300,
+            },
+          ],
+        },
       ],
     },
   );
