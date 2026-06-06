@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/domain/events/events.dart';
@@ -588,6 +589,66 @@ void main() {
       await cashierRepository.close();
     }
   });
+
+  test(
+    'projection WebSocket authenticates and streams sanitized updates',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final server = mainRepository.createLanSyncServer();
+      final client = cashierRepository.createLanSyncClient();
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final wsUri = Uri.parse(
+          server.serverUrl!,
+        ).replace(scheme: 'ws', path: '/cashier/projection-stream');
+
+        await expectLater(
+          WebSocket.connect(wsUri.toString()),
+          throwsA(isA<WebSocketException>()),
+        );
+
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+        final socket = await client.openCashierProjectionStream(peer.deviceId);
+        addTearDown(socket.close);
+        final nextMessage = socket.first.timeout(const Duration(seconds: 2));
+
+        await mainRepository.createProduct(
+          name: 'Socket Tea',
+          barcode: 'SOCKET-TEA',
+          sku: 'PRIVATE-SOCKET-SKU',
+          salePriceMinor: 1200,
+          purchaseCostMinor: 500,
+        );
+        final message = await nextMessage;
+        final decoded = jsonDecode(message as String) as Map<String, Object?>;
+        final payload = decoded['payload'] as Map<String, Object?>;
+        final product = payload['product'] as Map<String, Object?>;
+
+        expect(decoded['type'], cashierProjectionProductUpsert);
+        expect(product['name'], 'Socket Tea');
+        expect(product['sale_price_minor'], 1200);
+        expect(message, isNot(contains('purchase_cost_minor')));
+        expect(message, isNot(contains('PRIVATE-SOCKET-SKU')));
+      } finally {
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
 
   test('GET events resumes from returned cursor', () async {
     await _withHarness((harness) async {

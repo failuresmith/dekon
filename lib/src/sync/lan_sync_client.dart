@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -217,6 +218,17 @@ class LanSyncClient {
     await store.markPeerSuccess(peer.deviceId);
   }
 
+  Future<WebSocket> openCashierProjectionStream(String peerDeviceId) async {
+    final peer = await _requiredPeer(peerDeviceId);
+    final uri = _webSocketUri(peer.baseUrl!, '/cashier/projection-stream');
+    final socket = await WebSocket.connect(
+      uri.toString(),
+      headers: _authHeaders('GET', uri, const [], peer),
+    );
+    await store.markPeerSuccess(peer.deviceId);
+    return socket;
+  }
+
   Future<PostEventsResult> pushToPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final events = await store.fetchLocalEventsAfter(
@@ -272,6 +284,15 @@ class LanSyncClient {
       throw SyncClientException('Trusted peer is missing a base URL.');
     }
     return peer;
+  }
+
+  Uri _webSocketUri(String baseUrl, String path) {
+    final base = Uri.parse(baseUrl);
+    final scheme = switch (base.scheme) {
+      'https' => 'wss',
+      _ => 'ws',
+    };
+    return base.replace(scheme: scheme, path: path, query: null);
   }
 
   Future<http.Response> _authenticatedGet(Uri uri, TrustedPeer peer) async {

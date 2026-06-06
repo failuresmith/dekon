@@ -27,6 +27,8 @@ class LanSyncServer {
   final DateTime Function() _now;
   HttpServer? _server;
   SyncPairingPayload? _pairingPayload;
+  StreamSubscription<Map<String, Object?>>? _projectionSubscription;
+  final _projectionSockets = <WebSocket>{};
 
   bool get isRunning => _server != null;
   String? get serverUrl => _pairingPayload?.baseUrl;
@@ -39,12 +41,16 @@ class LanSyncServer {
     Duration pairingTtl = const Duration(minutes: 10),
   }) async {
     if (_server != null) return;
-    final server = await shelf_io.serve(
-      handler,
+    final server = await HttpServer.bind(
       address ?? InternetAddress.anyIPv4,
       port,
     );
     _server = server;
+    _projectionSubscription = store.activityBus?.cashierProjectionUpdates
+        .listen(_broadcastProjectionUpdate);
+    server.listen((request) {
+      unawaited(_handleHttpRequest(request));
+    });
     final host = await _displayHost(server);
     createPairingPayload(
       baseUrl: 'http://$host:${server.port}',
@@ -70,7 +76,22 @@ class LanSyncServer {
     final server = _server;
     _server = null;
     _pairingPayload = null;
+    await _projectionSubscription?.cancel();
+    _projectionSubscription = null;
+    for (final socket in _projectionSockets.toList()) {
+      await socket.close();
+    }
+    _projectionSockets.clear();
     await server?.close(force: true);
+  }
+
+  Future<void> _handleHttpRequest(HttpRequest request) async {
+    if (request.method == 'GET' &&
+        request.uri.path == '/cashier/projection-stream') {
+      await _projectionStream(request);
+      return;
+    }
+    await shelf_io.handleRequest(request, handler);
   }
 
   Future<Response> _handle(Request request) async {
@@ -223,6 +244,40 @@ class LanSyncServer {
     }, request: request);
   }
 
+  Future<void> _projectionStream(HttpRequest request) async {
+    if (!WebSocketTransformer.isUpgradeRequest(request)) {
+      await _rawJson(request, {
+        'error': 'websocket_upgrade_required',
+      }, status: HttpStatus.badRequest);
+      return;
+    }
+    final peer = await _authenticateRaw(request);
+    if (peer == null) {
+      await _rawJson(request, {
+        'error': 'unauthorized',
+        'server_time': _now().toUtc().toIso8601String(),
+      }, status: HttpStatus.unauthorized);
+      return;
+    }
+    try {
+      _authorization.requireCapability(
+        principal: _remoteCashierPrincipal(peer),
+        capability: Capability.viewCashierInventory,
+      );
+    } on AuthorizationException {
+      await _rawJson(request, {
+        'error': AuthorizationException.permissionDenied,
+      }, status: HttpStatus.forbidden);
+      return;
+    }
+    final socket = await WebSocketTransformer.upgrade(request);
+    _projectionSockets.add(socket);
+    await store.markPeerSuccess(peer.deviceId);
+    socket.done.whenComplete(() {
+      _projectionSockets.remove(socket);
+    });
+  }
+
   Future<Response> _postEvents(
     Request request,
     String body,
@@ -317,6 +372,34 @@ class LanSyncServer {
     return valid ? peer : null;
   }
 
+  Future<TrustedPeer?> _authenticateRaw(HttpRequest request) async {
+    final deviceId = request.headers.value(SyncAuthHeaders.deviceId);
+    if (deviceId == null) return null;
+    final peer = await store.trustedPeer(deviceId);
+    if (peer == null) return null;
+    final valid = _authenticator.verify(
+      headers: _rawHeaders(request),
+      method: request.method,
+      uri: request.requestedUri,
+      bodyBytes: const [],
+      sharedSecret: peer.sharedSecret,
+    );
+    return valid ? peer : null;
+  }
+
+  Map<String, String> _rawHeaders(HttpRequest request) {
+    return {
+      for (final name in [
+        SyncAuthHeaders.deviceId,
+        SyncAuthHeaders.timestamp,
+        SyncAuthHeaders.bodyHash,
+        SyncAuthHeaders.signature,
+      ])
+        if (request.headers.value(name) != null)
+          name: request.headers.value(name)!,
+    };
+  }
+
   Response _unauthorized(Request request) {
     return _json(
       {
@@ -326,6 +409,32 @@ class LanSyncServer {
       status: HttpStatus.unauthorized,
       request: request,
     );
+  }
+
+  Future<void> _rawJson(
+    HttpRequest request,
+    Object body, {
+    required int status,
+  }) async {
+    final encoded = jsonEncode(body);
+    request.response
+      ..statusCode = status
+      ..headers.contentType = ContentType.json
+      ..write(encoded);
+    await request.response.close();
+  }
+
+  void _broadcastProjectionUpdate(Map<String, Object?> update) {
+    if (_projectionSockets.isEmpty) return;
+    final encoded = jsonEncode(update);
+    for (final socket in _projectionSockets.toList()) {
+      try {
+        socket.add(encoded);
+      } on Object {
+        _projectionSockets.remove(socket);
+        unawaited(socket.close());
+      }
+    }
   }
 
   DevicePrincipal _remoteCashierPrincipal(TrustedPeer peer) {
