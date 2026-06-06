@@ -69,7 +69,7 @@ void main() {
           find.byKey(const Key('cashier-sync-indicator-breathing')),
           findsNothing,
         );
-        expect(statuses, [CashierSyncStatus.synced]);
+        expect(statuses.last.visualState, CashierSyncVisualState.synced);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await repository.close();
@@ -101,20 +101,104 @@ void main() {
         await tester.pump();
 
         expect(
-          find.byKey(const Key('cashier-sync-indicator-synced')),
+          find.byKey(const Key('cashier-sync-indicator-degraded')),
           findsOneWidget,
         );
         expect(
           find.byKey(const Key('cashier-sync-indicator-disconnected')),
           findsNothing,
         );
-        expect(statuses, [CashierSyncStatus.synced]);
+        expect(statuses.last.visualState, CashierSyncVisualState.degraded);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await repository.close();
       }
     },
   );
+
+  testWidgets('indicator shows conflict state when outbox is conflicted', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    const commandId = '019e9239-2222-7000-8000-000000000101';
+    try {
+      final store = repository.createSyncStore();
+      await store.enqueueCashierSaleCommand(
+        command: CashierSaleCommand(
+          commandId: commandId,
+          occurredAt: DateTime.utc(2026, 6, 4, 12),
+          lines: const [
+            CashierSaleCommandLine(productId: 'product-1', quantity: 1),
+          ],
+        ),
+        lines: const [
+          CashierSaleOutboxLine(
+            productId: 'product-1',
+            productName: 'Tea',
+            quantity: 1,
+            unitPriceMinor: 100,
+            lineTotalMinor: 100,
+          ),
+        ],
+      );
+      await store.markCashierSaleCommandConflict(
+        commandId: commandId,
+        errorCode: CashierSaleCommandException.insufficientStock,
+        productIds: const ['product-1'],
+      );
+
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {},
+            syncWithMainDevice: () async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-conflicted')),
+        findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
+  testWidgets('indicator shows unpaired state when main revokes cashier', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {
+              throw const CashierUnpairedException();
+            },
+            syncWithMainDevice: () async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-unpaired')),
+        findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
 
   testWidgets('indicator retries projection stream after fallback', (
     tester,
@@ -145,7 +229,7 @@ void main() {
 
       expect(projectionAttempts, 1);
       expect(
-        find.byKey(const Key('cashier-sync-indicator-synced')),
+        find.byKey(const Key('cashier-sync-indicator-degraded')),
         findsOneWidget,
       );
 
@@ -225,7 +309,7 @@ void main() {
   });
 
   testWidgets(
-    'indicator stays green when sync fails after successful ping and transfer',
+    'indicator is degraded when sync fails after successful ping and transfer',
     (tester) async {
       final repository = await createTestRepository();
       final transfers = StreamController<SyncTransferActivity>.broadcast();
@@ -261,7 +345,7 @@ void main() {
         await tester.pump();
 
         expect(
-          find.byKey(const Key('cashier-sync-indicator-synced')),
+          find.byKey(const Key('cashier-sync-indicator-degraded')),
           findsOneWidget,
         );
         expect(

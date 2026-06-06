@@ -199,6 +199,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           IgnorePointer(
             child: MainCashierConnectionIndicator(
               repository: widget.repository,
+              isCashierConnected: _hasLiveCashierConnection,
             ),
           ),
       ],
@@ -316,6 +317,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void _setCashierSyncStatus(CashierSyncStatus status) {
     if (!mounted || _cashierSyncStatus == status) return;
     setState(() => _cashierSyncStatus = status);
+  }
+
+  Future<bool> _hasLiveCashierConnection() async {
+    if (!_syncServer.isRunning) return false;
+    final peers = await widget.repository.createSyncStore().trustedPeers();
+    return peers.any((peer) => _syncServer.isCashierConnected(peer.deviceId));
   }
 
   void _ensureMainSyncServerStarted() {

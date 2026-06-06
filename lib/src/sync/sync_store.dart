@@ -243,6 +243,19 @@ class SyncStore {
     activityBus?.notifySyncStateChanged();
   }
 
+  Future<String?> firstTrustedPeerLastError() async {
+    final rows = await _db.rawQuery('''
+      SELECT p.last_error
+      FROM sync_peers p
+      JOIN devices d ON d.device_id = p.peer_device_id
+      WHERE d.trust_status = 'trusted' AND p.last_error IS NOT NULL
+      ORDER BY p.updated_at DESC, p.peer_device_id ASC
+      LIMIT 1
+      ''');
+    if (rows.isEmpty) return null;
+    return rows.single['last_error'] as String?;
+  }
+
   Future<void> updatePullCursor(String deviceId, SyncCursor? cursor) {
     return _updateCursor(deviceId, 'last_pulled_hlc', cursor);
   }

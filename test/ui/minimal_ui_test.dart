@@ -380,43 +380,37 @@ void main() {
     expect(barcodeField.controller?.text, 'STATE-1');
   });
 
-  testWidgets('main shell shows green indicator for connected cashier', (
-    tester,
-  ) async {
-    final repository = await createEnglishTestRepository(onboarded: true);
-    try {
-      await repository.createSyncStore().trustCashierPeer(
-        deviceId: _frontRegisterDeviceId,
-        sharedSecret: 'shared-secret',
-      );
+  testWidgets(
+    'main shell hides connection indicator without live cashier socket',
+    (tester) async {
+      final repository = await createEnglishTestRepository(onboarded: true);
+      try {
+        await repository.createSyncStore().trustCashierPeer(
+          deviceId: _frontRegisterDeviceId,
+          sharedSecret: 'shared-secret',
+        );
 
-      await tester.pumpWidget(testApp(repository));
-      await _pumpUntilFound(
-        tester,
-        find.byKey(const Key('main-cashier-connection-indicator-connected')),
-      );
+        await tester.pumpWidget(testApp(repository));
+        await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('main-cashier-connection-indicator-connected')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('cashier-sync-indicator-disconnected')),
-        findsNothing,
-      );
-      expect(
-        (tester.getCenter(
-                  find.byKey(const Key('main-cashier-connection-indicator')),
-                ) -
-                tester.getCenter(find.byKey(const Key('open-settings'))))
-            .distance,
-        lessThan(1),
-      );
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await repository.close();
-    }
-  });
+        expect(
+          find.byKey(const Key('main-cashier-connection-indicator-connected')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-disconnected')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const Key('main-cashier-connection-indicator')),
+          findsNothing,
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await repository.close();
+      }
+    },
+  );
 
   testWidgets('Device Sync count updates when a cashier pairs while open', (
     tester,
@@ -1299,13 +1293,6 @@ Future<void> _submitLookup(WidgetTester tester, String query) async {
   await tester.enterText(field, query);
   await tester.testTextInput.receiveAction(TextInputAction.search);
   await tester.pumpAndSettle();
-}
-
-Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
-  for (var i = 0; i < 20; i++) {
-    await tester.pump(const Duration(milliseconds: 50));
-    if (finder.evaluate().isNotEmpty) return;
-  }
 }
 
 Future<void> _importFrontRegisterTransactions(

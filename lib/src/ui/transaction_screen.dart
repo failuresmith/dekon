@@ -38,11 +38,22 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   bool get _isSell => widget.mode == TransactionMode.sell;
   bool get _isCashierSell => _isSell && widget.cashierSyncStatus != null;
-  bool get _cashierSaleDisconnected =>
-      _isCashierSell &&
-      widget.cashierSyncStatus == CashierSyncStatus.disconnected;
+  CashierSyncStatus? get _cashierStatus => widget.cashierSyncStatus;
+  bool get _cashierSaleNeedsSyncWarning {
+    final status = _cashierStatus;
+    return _isCashierSell &&
+        status != null &&
+        status.needsAttention &&
+        !_cashierSaleHasConflict;
+  }
+
   bool get _cashierSaleHasConflict =>
-      _isCashierSell && _outboxSummary.hasConflict;
+      _isCashierSell &&
+      (_outboxSummary.hasConflict ||
+          (widget.cashierSyncStatus?.hasOutboxConflict ?? false));
+  bool get _cashierSaleBlocked =>
+      _cashierSaleHasConflict ||
+      (widget.cashierSyncStatus?.blocksNormalCashierUse ?? false);
   String get _emptyStateText => _isSell
       ? context.strings.sellEmptyState
       : context.strings.restockEmptyState;
@@ -92,7 +103,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
             if (_cashierSaleHasConflict) ...[
               const SizedBox(height: 12),
               _cashierConflictWarning(),
-            ] else if (_cashierSaleDisconnected) ...[
+            ] else if (_cashierSaleNeedsSyncWarning) ...[
               const SizedBox(height: 12),
               _cashierSyncWarning(),
             ],
@@ -306,7 +317,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
             const SizedBox(height: 8),
             FilledButton.icon(
               key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
-              onPressed: _saving || _lines.isEmpty || _cashierSaleHasConflict
+              onPressed: _saving || _lines.isEmpty || _cashierSaleBlocked
                   ? null
                   : _finish,
               icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),

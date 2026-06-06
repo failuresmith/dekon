@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 2 - complete
+Current phase: Phase 3 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -20,6 +20,10 @@ Last updated: 2026-06-06
 - Phase 2 out-of-scope: UI sync-state redesign, app-level sync controller ownership, WebSocket heartbeat, discovery backoff, and protocol rewrites.
 - Phase 2: added `LanSyncTimeouts` defaults: ping 2s, pairing 8s, sale command 8s, inventory snapshot 15s, event pull 8s, event push 8s, long-poll transport margin 5s, WebSocket connect 5s.
 - Phase 2: added `SyncTimeoutException` with stable error codes and persisted trusted-peer timeout diagnostics in `sync_peers.last_error`.
+- Phase 3: replaced the old three-value Cashier sync enum with an explicit `CashierSyncStatus` model covering transport reachability, projection stream connection, snapshot sync progress, last applied projection version, pending/conflicted outbox counts, stale/degraded flags, last error code, and unpaired state.
+- Phase 3: Cashier indicator now shows degraded amber when ping succeeds but sync freshness or projection stream health is missing.
+- Phase 3: Cashier indicator now shows conflicted and unpaired visual states.
+- Phase 3: Main app-bar Cashier connection indicator now uses live projection WebSocket presence from `LanSyncServer`, not recent `last_seen_at`.
 
 ## Decisions
 
@@ -27,6 +31,8 @@ Last updated: 2026-06-06
 - Preserve legacy pull behavior through `GET /events`.
 - Treat legacy sale-event push as intentionally removed, including future-schema sale events, because it bypasses Main-side stock validation.
 - Phase 2: operation timeouts do not trigger immediate address-discovery retry or subnet probing; stale-address socket failures still do. This keeps timeout failures bounded and preserves the operation-specific timeout code. Discovery backoff and throttling remain Phase 11.
+- Phase 3: `last_seen_at` remains diagnostic state only; the Main app-bar live connection dot requires an active authenticated projection WebSocket.
+- Phase 3: the indicator does not breathe merely because a sync future is in progress; breathing remains tied to actual transfer activity.
 
 ## Tests Added
 
@@ -41,6 +47,11 @@ Last updated: 2026-06-06
 - Hung sale command times out without marking the outbox command accepted.
 - Hung WebSocket connect times out explicitly.
 - Long-poll uses server wait timeout plus transport margin.
+- Ping success plus projection stream fallback shows degraded, not synced.
+- Sync failure after successful ping shows degraded, not synced.
+- Outbox conflict shows a conflicted indicator state.
+- Unpaired Cashier shows an unpaired indicator state.
+- Main shell does not show a live Cashier connection dot for a merely trusted/recently seen Cashier without a live socket.
 
 ## Validation Log
 
@@ -51,6 +62,19 @@ Commands run:
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/ui/cashier_sync_status.dart lib/src/ui/cashier_sync_indicator.dart lib/src/ui/transaction_screen.dart lib/src/ui/app_shell.dart lib/src/sync/sync_store.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev dart format test/ui/cashier_sync_indicator_test.dart lib/src/ui/cashier_sync_indicator.dart lib/src/ui/cashier_sync_status.dart`
+- `docker compose run --rm flutter-dev dart format test/ui/cashier_sync_indicator_test.dart && docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/minimal_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/main_cashier_connection_indicator_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev dart format test/ui/minimal_ui_test.dart && docker compose run --rm flutter-dev flutter test test/ui/minimal_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev dart format test/ui/minimal_ui_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_client.dart lib/src/sync/sync_store.dart test/sync/lan_sync_client_timeout_test.dart`
@@ -74,6 +98,14 @@ Results:
 - Existing focused `flutter test test/sync/lan_sync_server_test.dart` passed.
 - Phase 2 `flutter analyze` passed with no issues.
 - Phase 2 `git diff --check` passed.
+- Phase 3 first focused indicator run exposed old assertions that expected green/synced when freshness was missing; tests were updated to assert degraded.
+- Phase 3 first minimal UI run exposed a test that treated trusted/recently seen Cashier state as live connected; updated to assert no live dot without an active socket.
+- Phase 3 analyzer found an unused helper left from the old Main indicator test; removed it.
+- Final focused `flutter test test/ui/cashier_sync_indicator_test.dart` passed.
+- Final focused `flutter test test/ui/minimal_ui_test.dart` passed.
+- Focused `flutter test test/ui/main_cashier_connection_indicator_test.dart` passed.
+- Phase 3 `flutter analyze` passed with no issues.
+- Phase 3 `git diff --check` passed.
 
 ## Manual QA
 
@@ -85,7 +117,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 2 through Phase 11 are not implemented yet.
+- Phase 4 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---

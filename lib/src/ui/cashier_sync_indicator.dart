@@ -53,8 +53,14 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
 
   var _connected = false;
   var _transferring = false;
+  var _snapshotSyncInProgress = false;
   var _refreshing = false;
   var _refreshAgain = false;
+  var _unpaired = false;
+  int? _lastAppliedProjectionVersion;
+  var _pendingOutboxCount = 0;
+  var _conflictedOutboxCount = 0;
+  String? _lastErrorCode;
   Timer? _timer;
   Timer? _transferHideTimer;
   StreamSubscription<SyncTransferActivity>? _transferSubscription;
@@ -137,20 +143,24 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   @override
   Widget build(BuildContext context) {
     final status = _status;
-    final color = switch (status) {
-      CashierSyncStatus.disconnected => Colors.red.shade600,
-      CashierSyncStatus.syncing => Colors.green.shade600,
-      CashierSyncStatus.synced => Colors.green.shade600,
+    final visualState = _visualStateFor(status);
+    final color = switch (visualState) {
+      CashierSyncVisualState.disconnected => Colors.red.shade600,
+      CashierSyncVisualState.syncing => Colors.green.shade600,
+      CashierSyncVisualState.synced => Colors.green.shade600,
+      CashierSyncVisualState.degraded => Colors.amber.shade700,
+      CashierSyncVisualState.conflicted => Colors.red.shade600,
+      CashierSyncVisualState.unpaired => Colors.red.shade600,
     };
     final circle = DecoratedBox(
-      key: Key('cashier-sync-indicator-${status.name}'),
+      key: Key('cashier-sync-indicator-${visualState.name}'),
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
     return SizedBox(
       key: const Key('cashier-sync-indicator'),
       width: _size,
       height: _size,
-      child: status == CashierSyncStatus.syncing
+      child: visualState == CashierSyncVisualState.syncing
           ? FadeTransition(
               key: const Key('cashier-sync-indicator-breathing'),
               opacity: _opacity,
@@ -175,21 +185,27 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         await _handleUnpaired();
         _refreshing = false;
         continue;
-      } catch (_) {
+      } catch (error) {
+        _setLastErrorCode(_syncErrorCode(error));
         _setConnected(false);
         _refreshing = false;
         continue;
       }
+      _unpaired = false;
       _setConnected(true);
       try {
+        _setSnapshotSyncInProgress(true);
         await _syncWithMainDevice();
+        await _refreshStatusDetails(clearLastError: true);
         _setConnected(true);
         await _startProjectionStream(keepConnectedOnFailure: true);
       } on CashierUnpairedException {
         await _handleUnpaired();
-      } catch (_) {
+      } catch (error) {
+        await _refreshStatusDetails(errorCode: _syncErrorCode(error));
         _setConnected(true);
       } finally {
+        _setSnapshotSyncInProgress(false);
         _refreshing = false;
       }
     } while (mounted && _refreshAgain);
@@ -274,7 +290,8 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _setConnected(true);
     } on CashierUnpairedException {
       await _handleUnpaired();
-    } catch (_) {
+    } catch (error) {
+      _setLastErrorCode(_syncErrorCode(error));
       _closeProjectionStream();
       if (keepConnectedOnFailure) {
         _projectionStreamFallback = true;
@@ -330,7 +347,8 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _setConnected(true);
     } on CashierUnpairedException {
       await _handleUnpaired();
-    } catch (_) {
+    } catch (error) {
+      _setLastErrorCode(_syncErrorCode(error));
       _setConnected(true);
       unawaited(_refresh());
     }
@@ -340,6 +358,8 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     _clearProjectionStreamFallback();
     _closeProjectionStream();
     await widget.repository.markCashierUnpairBackupRequired();
+    _unpaired = true;
+    _setLastErrorCode('peer_unpaired');
     _setConnected(false);
   }
 
@@ -391,6 +411,35 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   bool get _shouldUseProjectionStream =>
       _usesProjectionStream && !_projectionStreamFallback;
 
+  Future<void> _refreshStatusDetails({
+    String? errorCode,
+    bool clearLastError = false,
+  }) async {
+    final store = widget.repository.createSyncStore();
+    final counts = await store.cashierSaleOutboxCounts();
+    final lastApplied = await store.lastAppliedCashierProjectionVersion();
+    final peerError = await store.firstTrustedPeerLastError();
+    final pending =
+        (counts[CashierSaleCommandOutboxStatus.queued] ?? 0) +
+        (counts[CashierSaleCommandOutboxStatus.syncing] ?? 0);
+    final conflicted = counts[CashierSaleCommandOutboxStatus.conflict] ?? 0;
+    if (!mounted) return;
+    final previousStatus = _status;
+    setState(() {
+      _pendingOutboxCount = pending;
+      _conflictedOutboxCount = conflicted;
+      _lastAppliedProjectionVersion = lastApplied;
+      if (clearLastError) {
+        _lastErrorCode = peerError;
+      } else if (errorCode != null) {
+        _lastErrorCode = errorCode;
+      } else {
+        _lastErrorCode ??= peerError;
+      }
+    });
+    _notifyStatusChanged(previousStatus);
+  }
+
   Future<void> _withMainPeer(
     Future<void> Function(LanSyncClient client, TrustedPeer peer) body,
   ) async {
@@ -418,10 +467,40 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   }
 
   CashierSyncStatus get _status {
-    if (_transferring) return CashierSyncStatus.syncing;
-    return _connected
-        ? CashierSyncStatus.synced
-        : CashierSyncStatus.disconnected;
+    final projectionStreamConnected =
+        !_usesProjectionStream || _projectionSubscription != null;
+    final stale =
+        !_connected ||
+        (_connected && _usesProjectionStream && !projectionStreamConnected);
+    final degraded =
+        _connected &&
+        !_unpaired &&
+        (_projectionStreamFallback || stale || _lastErrorCode != null);
+    return CashierSyncStatus(
+      transportReachable: _connected,
+      projectionStreamConnected: projectionStreamConnected,
+      snapshotSyncInProgress: _transferring || _snapshotSyncInProgress,
+      lastAppliedProjectionVersion: _lastAppliedProjectionVersion,
+      pendingOutboxCount: _pendingOutboxCount,
+      conflictedOutboxCount: _conflictedOutboxCount,
+      stale: stale,
+      degraded: degraded,
+      lastErrorCode: _lastErrorCode,
+      unpaired: _unpaired,
+    );
+  }
+
+  CashierSyncVisualState _visualStateFor(CashierSyncStatus status) {
+    if (_transferring) return CashierSyncVisualState.syncing;
+    if (status.unpaired) return CashierSyncVisualState.unpaired;
+    if (status.hasOutboxConflict) return CashierSyncVisualState.conflicted;
+    if (!status.transportReachable) {
+      return CashierSyncVisualState.disconnected;
+    }
+    if (status.stale || status.degraded || !status.projectionStreamConnected) {
+      return CashierSyncVisualState.degraded;
+    }
+    return CashierSyncVisualState.synced;
   }
 
   void _setConnected(bool connected) {
@@ -429,6 +508,27 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     final previousStatus = _status;
     setState(() => _connected = connected);
     _notifyStatusChanged(previousStatus);
+  }
+
+  void _setSnapshotSyncInProgress(bool inProgress) {
+    if (!mounted || _snapshotSyncInProgress == inProgress) return;
+    final previousStatus = _status;
+    setState(() => _snapshotSyncInProgress = inProgress);
+    _notifyStatusChanged(previousStatus);
+  }
+
+  void _setLastErrorCode(String? code) {
+    if (!mounted || _lastErrorCode == code) return;
+    final previousStatus = _status;
+    setState(() => _lastErrorCode = code);
+    _notifyStatusChanged(previousStatus);
+  }
+
+  String _syncErrorCode(Object error) {
+    if (error is SyncTimeoutException) return error.code;
+    if (error is CashierSaleCommandRejectedException) return error.code;
+    if (error is CashierUnpairedException) return 'peer_unpaired';
+    return 'sync_failed';
   }
 
   void _hideTransferActivity() {
