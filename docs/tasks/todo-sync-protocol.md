@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 1 complete; stopped before Phase 2
+Current phase: Phase 2 local publishing slice implemented; stopped before WebSocket transport and snapshots
 Last updated: 2026-06-06
 
 ## Verified Existing Architecture
@@ -30,8 +30,8 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Cashier-visible data is currently derived from rich domain events and filtered afterward; this is harder to audit than a dedicated projection serializer.
 - There is no Cashier-safe snapshot endpoint yet.
 - There is no WebSocket transport or WebSocket authentication yet.
-- There is no persisted Cashier projection version on Main or last-applied projection cursor on Cashier.
-- Local Main mutations are not wrapped in one transaction that appends, projects, allocates a Cashier projection version, commits, and then publishes.
+- Phase 2 now persists Cashier projection versions in `app_settings`, but there is no network protocol that applies them on Cashier yet.
+- Local Main mutations now use a serialized append/project/version/publish path, but remote posted sale events still use the current event-import path until the later sale-command phase replaces it.
 - Cashier sales rely on event IDs for duplicate handling; dedicated command IDs are not implemented yet.
 - Cashier sale submission is not disabled by a first-class synchronized/offline state model.
 
@@ -43,9 +43,11 @@ The propagation defect is that Main has no push channel and no centralized repli
 - [x] Identify trusted paired-device identity source
 - [x] Add Cashier-safe product projection
 - [x] Add Phase 1 serializer redaction tests
-- [ ] Add persisted Cashier-projection version on Main
-- [ ] Add persisted last-applied projection version on Cashier
-- [ ] Route replicated Main mutations through one publishing path
+- [x] Add persisted Cashier-projection version on Main
+- [x] Add persisted last-applied projection version on Cashier
+- [x] Route local replicated Main mutations through one publishing path
+- [x] Add sanitized local product-upsert projection publisher
+- [x] Add sanitized local inventory-patch projection publisher
 - [ ] Add sanitized WebSocket projection updates
 - [ ] Add Cashier-safe snapshot endpoint
 - [ ] Apply snapshot on connect
@@ -67,12 +69,18 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Serializer JSON follows existing sync naming conventions: `product_id`, `stock_quantity`, `sale_price_minor`, `projection_version`.
 - The Cashier projection excludes `sku`, `unit`, `purchase_cost_minor`, margins, supplier data, notes, history, backup metadata, and device registry data.
 - Existing `/events` polling and access-control behavior was left intact except for adding the new projection module; transport replacement belongs to later phases.
+- Phase 2 stores `cashier_inventory_projection_version` and `last_applied_cashier_projection_version` in `app_settings` to avoid adding a new table before the snapshot protocol needs one.
+- Local repository mutations are serialized through one queue so local commit order, projection-version order, and local publication order match.
+- Private-only product edits, such as purchase-cost changes, do not advance the Cashier projection version.
+- Product edits that combine visible and private fields advance the Cashier projection version once and publish only the sanitized product projection.
+- Sales and restocks publish sanitized stock patches that contain product IDs and resulting stock quantities only.
 
 ## Residual Risks
 
-- Main rename propagation is still polling-based and not immediate.
-- Snapshot, WebSocket, projection-version, and gap-repair behavior remain unimplemented.
+- Main rename propagation is prepared for push through the local projection publisher, but LAN delivery is still not immediate until WebSocket transport is implemented.
+- Snapshot, WebSocket, and gap-repair behavior remain unimplemented.
 - The current event-log sanitizer still exists alongside the new projection serializer until later phases migrate the transport.
+- Remote posted events are not yet converted into command-ID sale submissions or projection publications; that belongs to the sale-command phase.
 - No manual multi-device QA has been run for Phase 1.
 
 ## Verification Log
@@ -98,7 +106,17 @@ Manual QA:
 - Not run for Phase 1.
 
 Remaining issues:
-- Phase 2 remains unimplemented: projection version persistence, centralized publishing, sanitized push, and rename propagation fix.
+- Phase 2 network delivery remains unimplemented: WebSocket transport, snapshot repair, and remote command flow are still pending.
+
+Phase 2 commands run:
+- `docker compose run --rm flutter-dev dart format .`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test`
+
+Phase 2 results:
+- `dart format .` formatted the Phase 2 repository, projection, and test files.
+- `flutter analyze` passed with no issues.
+- `flutter test` passed all tests, including `test/application/cashier_projection_publishing_test.dart`.
 
 # Task: Implement Secure Push-First Cashier Synchronization for Dekon
 

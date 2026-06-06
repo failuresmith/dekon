@@ -28,6 +28,11 @@ class SyncStore {
   final SyncActivityBus? activityBus;
   final DateTime Function() _now;
 
+  static const cashierInventoryProjectionVersionSetting =
+      'cashier_inventory_projection_version';
+  static const lastAppliedCashierProjectionVersionSetting =
+      'last_applied_cashier_projection_version';
+
   SyncDeviceInfo deviceInfo() {
     return SyncDeviceInfo(deviceId: localDeviceId, displayName: 'Dekon phone');
   }
@@ -157,6 +162,73 @@ class SyncStore {
 
   Future<void> updatePushCursor(String deviceId, SyncCursor? cursor) {
     return _updateCursor(deviceId, 'last_pushed_hlc', cursor);
+  }
+
+  Future<int> cashierInventoryProjectionVersion() {
+    return readIntSetting(_db, cashierInventoryProjectionVersionSetting);
+  }
+
+  Future<int> lastAppliedCashierProjectionVersion() {
+    return readIntSetting(_db, lastAppliedCashierProjectionVersionSetting);
+  }
+
+  Future<void> setLastAppliedCashierProjectionVersion(int version) async {
+    if (version < 0) {
+      throw ArgumentError.value(version, 'version');
+    }
+    await writeIntSetting(
+      _db,
+      lastAppliedCashierProjectionVersionSetting,
+      version,
+      now: _now().toUtc(),
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  static Future<int> incrementCashierProjectionVersionInTransaction(
+    Transaction txn, {
+    required DateTime now,
+  }) async {
+    final current = await readIntSetting(
+      txn,
+      cashierInventoryProjectionVersionSetting,
+    );
+    final next = current + 1;
+    await writeIntSetting(
+      txn,
+      cashierInventoryProjectionVersionSetting,
+      next,
+      now: now,
+    );
+    return next;
+  }
+
+  static Future<int> readIntSetting(DatabaseExecutor db, String key) async {
+    final rows = await db.query(
+      'app_settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return 0;
+    return int.tryParse(rows.single['value'] as String? ?? '') ?? 0;
+  }
+
+  static Future<void> writeIntSetting(
+    DatabaseExecutor db,
+    String key,
+    int value, {
+    required DateTime now,
+  }) async {
+    if (value < 0) {
+      throw ArgumentError.value(value, 'value');
+    }
+    await db.insert('app_settings', {
+      'key': key,
+      'value': value.toString(),
+      'updated_at': now.toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<EventEnvelope>> fetchEventsAfter(

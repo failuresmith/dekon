@@ -58,6 +58,24 @@ void main() {
       expect(message['payload'], isA<Map<String, Object?>>());
       _expectNoPrivateProductFields(encoded);
     });
+
+    test('redacts private fields from Cashier inventory patches', () {
+      final message = serializeCashierInventoryPatchMessage(
+        projectionVersion: 5,
+        products: const [
+          CashierInventoryPatchProduct(
+            productId: 'product-1',
+            stockQuantity: 3,
+          ),
+        ],
+      );
+      final encoded = jsonEncode(message);
+
+      expect(message['projection_version'], 5);
+      expect(message['type'], cashierProjectionInventoryPatch);
+      expect(encoded, contains('stock_quantity'));
+      _expectNoPrivateProductFields(encoded);
+    });
   });
 }
 
@@ -78,6 +96,8 @@ ProductSummary _privateProduct() {
 void _expectNoPrivateProductFields(String encoded) {
   expect(encoded, isNot(contains('purchase_cost_minor')));
   expect(encoded, isNot(contains('purchaseCostMinor')));
+  expect(encoded, isNot(contains('unit_cost_minor')));
+  expect(encoded, isNot(contains('unit_price_minor')));
   expect(encoded, isNot(contains('98765')));
   expect(encoded, isNot(contains('sku')));
   expect(encoded, isNot(contains('INTERNAL-SKU-1')));

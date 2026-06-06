@@ -10,12 +10,16 @@ class SyncActivityBus {
   final _syncStateChanged = StreamController<void>.broadcast();
   final _transfers = StreamController<SyncTransferActivity>.broadcast();
   final _peerMessages = StreamController<SyncPeerMessage>.broadcast();
+  final _cashierProjectionUpdates =
+      StreamController<Map<String, Object?>>.broadcast();
   final _peerMessageLog = ListQueue<SyncPeerMessage>();
 
   Stream<void> get eventsChanged => _eventsChanged.stream;
   Stream<void> get syncStateChanged => _syncStateChanged.stream;
   Stream<SyncTransferActivity> get transfers => _transfers.stream;
   Stream<SyncPeerMessage> get peerMessages => _peerMessages.stream;
+  Stream<Map<String, Object?>> get cashierProjectionUpdates =>
+      _cashierProjectionUpdates.stream;
 
   List<SyncPeerMessage> peerMessageSnapshot() {
     return List.unmodifiable(_peerMessageLog);
@@ -43,6 +47,11 @@ class SyncActivityBus {
     _peerMessages.add(message);
   }
 
+  void notifyCashierProjectionUpdate(Map<String, Object?> update) {
+    if (_cashierProjectionUpdates.isClosed) return;
+    _cashierProjectionUpdates.add(Map<String, Object?>.unmodifiable(update));
+  }
+
   void clearPeerMessages() {
     _peerMessageLog.clear();
   }
@@ -52,6 +61,7 @@ class SyncActivityBus {
     await _syncStateChanged.close();
     await _transfers.close();
     await _peerMessages.close();
+    await _cashierProjectionUpdates.close();
   }
 }
 

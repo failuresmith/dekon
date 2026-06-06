@@ -1,6 +1,7 @@
 import '../application/models.dart';
 
 const cashierProjectionProductUpsert = 'product_upsert';
+const cashierProjectionInventoryPatch = 'inventory_patch';
 
 class CashierProductProjection {
   const CashierProductProjection({
@@ -30,6 +31,16 @@ class CashierProductProjection {
   final double stockQuantity;
   final int salePriceMinor;
   final bool active;
+}
+
+class CashierInventoryPatchProduct {
+  const CashierInventoryPatchProduct({
+    required this.productId,
+    required this.stockQuantity,
+  });
+
+  final String productId;
+  final double stockQuantity;
 }
 
 Map<String, Object?> serializeCashierProductProjection(
@@ -70,6 +81,22 @@ Map<String, Object?> serializeCashierProductUpsertMessage({
   };
 }
 
+Map<String, Object?> serializeCashierInventoryPatchMessage({
+  required int projectionVersion,
+  required Iterable<CashierInventoryPatchProduct> products,
+}) {
+  return {
+    'projection_version': _projectionVersion(projectionVersion),
+    'type': cashierProjectionInventoryPatch,
+    'payload': {
+      'products': [
+        for (final product in products)
+          _serializeInventoryPatchProduct(product),
+      ],
+    },
+  };
+}
+
 void _validateCashierProduct(CashierProductProjection product) {
   if (product.productId.trim().isEmpty) {
     throw ArgumentError.value(product.productId, 'productId');
@@ -85,6 +112,21 @@ void _validateCashierProduct(CashierProductProjection product) {
 int _projectionVersion(int value) {
   if (value < 0) throw ArgumentError.value(value, 'projectionVersion');
   return value;
+}
+
+Map<String, Object?> _serializeInventoryPatchProduct(
+  CashierInventoryPatchProduct product,
+) {
+  if (product.productId.trim().isEmpty) {
+    throw ArgumentError.value(product.productId, 'productId');
+  }
+  if (!product.stockQuantity.isFinite) {
+    throw ArgumentError.value(product.stockQuantity, 'stockQuantity');
+  }
+  return {
+    'product_id': product.productId,
+    'stock_quantity': product.stockQuantity,
+  };
 }
 
 String? _blankToNull(String? value) {

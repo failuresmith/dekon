@@ -33,6 +33,14 @@ class DekonRepository {
   final DateTime Function() _now;
   final Uuid _uuid;
   final SyncActivityBus _syncActivityBus;
+  final _replicatedMutations = _SerializedAsyncQueue();
+
+  static const _cashierVisibleProductFields = {
+    'name',
+    'barcode',
+    'sale_price_minor',
+    'active',
+  };
 
   static Future<DekonRepository> open({Database? database}) async {
     final db = database ?? await AppDatabasePath.openCoreDatabase();
@@ -49,6 +57,8 @@ class DekonRepository {
   Stream<void> get syncStateChanged => _syncActivityBus.syncStateChanged;
   Stream<SyncTransferActivity> get syncTransfers => _syncActivityBus.transfers;
   Stream<SyncPeerMessage> get syncPeerMessages => _syncActivityBus.peerMessages;
+  Stream<Map<String, Object?>> get cashierProjectionUpdates =>
+      _syncActivityBus.cashierProjectionUpdates;
 
   List<SyncPeerMessage> recentSyncPeerMessages() {
     return _syncActivityBus.peerMessageSnapshot();
@@ -230,38 +240,168 @@ class DekonRepository {
         'active': true,
       },
     );
-    await _commit(event);
+    await _commitEvents(
+      [event],
+      buildCashierProjectionUpdate: (version) {
+        return _cashierProductUpsertMessage(version, productId);
+      },
+    );
     return (await productById(productId))!;
   }
 
   Future<void> updateProduct(ProductSummary product) async {
-    final fields = <String, Object?>{
-      'name': product.name,
-      'barcode': _blankToNull(product.barcode),
-      'sku': _blankToNull(product.sku),
-      'unit': product.unit,
-      'sale_price_minor': product.salePriceMinor,
-      'purchase_cost_minor': product.purchaseCostMinor,
-      'active': product.active,
-    };
-    for (final entry in fields.entries) {
-      await _commit(
+    final existing = await productById(product.productId);
+    if (existing == null) {
+      throw StateError('Product does not exist.');
+    }
+    final fields = _changedProductFields(existing, product);
+    if (fields.isEmpty) return;
+    final cashierVisible = fields.keys.any(
+      _cashierVisibleProductFields.contains,
+    );
+    final events = [
+      for (final entry in fields.entries)
         _event(
           type: EventTypes.productFieldSet,
           entityId: product.productId,
           payload: {'field': entry.key, 'value': entry.value},
         ),
-      );
-    }
+    ];
+    await _commitEvents(
+      events,
+      buildCashierProjectionUpdate: cashierVisible
+          ? (version) =>
+                _cashierProductUpsertMessage(version, product.productId)
+          : null,
+    );
   }
 
   Future<void> softDeleteProduct(String productId) async {
-    await _commit(
-      _event(
-        type: EventTypes.productDeactivated,
-        entityId: productId,
-        payload: const {'reason': 'soft_delete'},
-      ),
+    await _commitEvents(
+      [
+        _event(
+          type: EventTypes.productDeactivated,
+          entityId: productId,
+          payload: const {'reason': 'soft_delete'},
+        ),
+      ],
+      buildCashierProjectionUpdate: (version) {
+        return _cashierProductUpsertMessage(version, productId);
+      },
+    );
+  }
+
+  Map<String, Object?> _changedProductFields(
+    ProductSummary existing,
+    ProductSummary product,
+  ) {
+    final proposed = <String, Object?>{
+      'name': product.name.trim(),
+      'barcode': _blankToNull(product.barcode),
+      'sku': _blankToNull(product.sku),
+      'unit': product.unit.trim().isEmpty ? 'each' : product.unit.trim(),
+      'sale_price_minor': product.salePriceMinor,
+      'purchase_cost_minor': product.purchaseCostMinor,
+      'active': product.active,
+    };
+    final current = <String, Object?>{
+      'name': existing.name,
+      'barcode': _blankToNull(existing.barcode),
+      'sku': _blankToNull(existing.sku),
+      'unit': existing.unit,
+      'sale_price_minor': existing.salePriceMinor,
+      'purchase_cost_minor': existing.purchaseCostMinor,
+      'active': existing.active,
+    };
+    return {
+      for (final entry in proposed.entries)
+        if (current[entry.key] != entry.value) entry.key: entry.value,
+    };
+  }
+
+  Future<Map<String, Object?>?> _cashierProductUpsertMessage(
+    int projectionVersion,
+    String productId,
+  ) async {
+    final product = await productById(productId);
+    if (product == null) return null;
+    return serializeCashierProductUpsertMessage(
+      projectionVersion: projectionVersion,
+      product: CashierProductProjection.fromProductSummary(product),
+    );
+  }
+
+  Future<Map<String, Object?>> _cashierInventoryPatchMessage(
+    int projectionVersion,
+    Set<String> productIds,
+  ) async {
+    final products = <CashierInventoryPatchProduct>[];
+    for (final productId in productIds.toList()..sort()) {
+      products.add(
+        CashierInventoryPatchProduct(
+          productId: productId,
+          stockQuantity: await _stockFor(productId),
+        ),
+      );
+    }
+    return serializeCashierInventoryPatchMessage(
+      projectionVersion: projectionVersion,
+      products: products,
+    );
+  }
+
+  Future<void> _commitEvents(
+    List<EventEnvelope> events, {
+    Future<Map<String, Object?>?> Function(int projectionVersion)?
+    buildCashierProjectionUpdate,
+  }) {
+    if (events.isEmpty) return Future.value();
+    return _replicatedMutations.run(() async {
+      int? projectionVersion;
+      var committed = false;
+      await _db.transaction((txn) async {
+        for (final event in events) {
+          final write = await _eventStore.appendInTransaction(txn, event);
+          if (write.status == EventWriteStatus.duplicate) continue;
+          committed = true;
+          if (_isProjectable(event)) {
+            await _projector.applyInTransaction(txn, event);
+          }
+        }
+        if (committed && buildCashierProjectionUpdate != null) {
+          projectionVersion =
+              await SyncStore.incrementCashierProjectionVersionInTransaction(
+                txn,
+                now: _now().toUtc(),
+              );
+        }
+      });
+      if (!committed) return;
+      _syncActivityBus.notifyEventsChanged();
+      final version = projectionVersion;
+      if (version == null || buildCashierProjectionUpdate == null) return;
+      final update = await buildCashierProjectionUpdate(version);
+      if (update != null) {
+        _syncActivityBus.notifyCashierProjectionUpdate(update);
+      }
+    });
+  }
+
+  bool _isProjectable(EventEnvelope event) {
+    return EventSchema.isSupported(event.schemaVersion) &&
+        EventTypes.supported.contains(event.type);
+  }
+
+  Future<void> _commitWithStockPatch(
+    EventEnvelope event,
+    Iterable<TransactionLineDraft> lines,
+  ) async {
+    final productIds = {for (final line in lines) line.product.productId};
+    await _commitEvents(
+      [event],
+      buildCashierProjectionUpdate: (version) {
+        return _cashierInventoryPatchMessage(version, productIds);
+      },
     );
   }
 
@@ -346,7 +486,7 @@ class DekonRepository {
 
   Future<void> recordSale(List<TransactionLineDraft> lines) async {
     if (lines.isEmpty) throw StateError('Sale must have at least one item.');
-    await _commit(
+    await _commitWithStockPatch(
       _event(
         type: EventTypes.inventorySaleRecorded,
         entityId: _uuid.v7(),
@@ -366,6 +506,7 @@ class DekonRepository {
           ],
         },
       ),
+      lines,
     );
   }
 
@@ -373,7 +514,7 @@ class DekonRepository {
     if (lines.isEmpty) {
       throw StateError('Purchase must have at least one item.');
     }
-    await _commit(
+    await _commitWithStockPatch(
       _event(
         type: EventTypes.inventoryPurchaseRecorded,
         entityId: _uuid.v7(),
@@ -393,6 +534,7 @@ class DekonRepository {
           ],
         },
       ),
+      lines,
     );
   }
 
@@ -546,13 +688,6 @@ class DekonRepository {
       payload: payload,
       createdAt: _now().toUtc(),
     );
-  }
-
-  Future<void> _commit(EventEnvelope event) async {
-    final write = await _eventStore.append(event);
-    if (write.status == EventWriteStatus.duplicate) return;
-    await _projector.apply(event);
-    _syncActivityBus.notifyEventsChanged();
   }
 
   Future<double> _stockFor(String productId) async {
@@ -1001,4 +1136,14 @@ class _TransactionSource {
   final String alias;
   final String idColumn;
   final String statusColumn;
+}
+
+class _SerializedAsyncQueue {
+  Future<void> _tail = Future.value();
+
+  Future<T> run<T>(Future<T> Function() action) {
+    final run = _tail.then((_) => action());
+    _tail = run.then<void>((_) {}, onError: (_, _) {});
+    return run;
+  }
 }
