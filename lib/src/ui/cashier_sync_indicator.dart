@@ -168,14 +168,24 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _refreshAgain = false;
       try {
         await _pingMainDevice();
-        _setConnected(true);
+      } on CashierUnpairedException {
+        await _handleUnpaired();
+        _refreshing = false;
+        continue;
+      } catch (_) {
+        _setConnected(false);
+        _refreshing = false;
+        continue;
+      }
+      _setConnected(true);
+      try {
         await _syncWithMainDevice();
         _setConnected(true);
         await _startProjectionStream(keepConnectedOnFailure: true);
       } on CashierUnpairedException {
         await _handleUnpaired();
       } catch (_) {
-        _setConnected(false);
+        _setConnected(true);
       } finally {
         _refreshing = false;
       }
@@ -317,7 +327,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     } on CashierUnpairedException {
       await _handleUnpaired();
     } catch (_) {
-      _setConnected(false);
+      _setConnected(true);
       unawaited(_refresh());
     }
   }

@@ -647,6 +647,12 @@ Connected Cashier Devices
 
 Only show the QR code after pairing mode starts.
 
+In the paired Cashier device list, the green status inside the mobile icon means
+that Cashier has an active authenticated projection WebSocket connected to the
+Main device right now. Use gray when that live WebSocket is absent. Do not use
+recent HTTP polling, `last_seen_at`, or prior successful sync as the green state
+for this list.
+
 Use:
 
 ```text

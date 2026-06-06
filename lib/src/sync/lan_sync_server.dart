@@ -39,6 +39,10 @@ class LanSyncServer {
 
   bool get isRunning => _server != null;
   String? get serverUrl => _baseUrl;
+  bool isCashierConnected(String deviceId) {
+    return _projectionSockets.containsValue(deviceId.trim());
+  }
+
   String? get pairingQrData {
     final payload = _pairingPayload;
     if (payload == null || payload.expiresAt.isBefore(_now().toUtc())) {
@@ -118,7 +122,9 @@ class LanSyncServer {
     for (final socket in _projectionSockets.keys.toList()) {
       await socket.close();
     }
+    final hadProjectionSockets = _projectionSockets.isNotEmpty;
     _projectionSockets.clear();
+    if (hadProjectionSockets) store.activityBus?.notifySyncStateChanged();
     await server?.close(force: true);
   }
 
@@ -413,7 +419,9 @@ class LanSyncServer {
     _projectionSockets[socket] = peer.deviceId;
     await store.markPeerSuccess(peer.deviceId);
     socket.done.whenComplete(() {
-      _projectionSockets.remove(socket);
+      if (_projectionSockets.remove(socket) != null) {
+        store.activityBus?.notifySyncStateChanged();
+      }
     });
   }
 
@@ -636,7 +644,9 @@ class LanSyncServer {
       try {
         socket.add(encoded);
       } on Object {
-        _projectionSockets.remove(socket);
+        if (_projectionSockets.remove(socket) != null) {
+          store.activityBus?.notifySyncStateChanged();
+        }
         unawaited(socket.close());
       }
     }

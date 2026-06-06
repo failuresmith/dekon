@@ -186,6 +186,77 @@ void main() {
     }
   });
 
+  testWidgets(
+    'Device Sync colors cashier phone screen by live WebSocket and unpair is red',
+    (tester) async {
+      final repository = await createTestRepository();
+      final syncServer = _FakeLanSyncServer(repository);
+      const connectedCashierId = 'front-register';
+      const disconnectedCashierId = 'side-register';
+      try {
+        final store = repository.createSyncStore();
+        await store.trustPeer(
+          deviceId: connectedCashierId,
+          displayName: 'Front Register',
+          sharedSecret: 'connected-secret',
+        );
+        await store.trustPeer(
+          deviceId: disconnectedCashierId,
+          displayName: 'Side Register',
+          sharedSecret: 'disconnected-secret',
+        );
+        syncServer.connectedCashierDeviceIds.add(connectedCashierId);
+
+        await tester.pumpWidget(
+          _reportsApp(
+            repository,
+            backupFiles: const _FakeBackupFiles(),
+            syncServer: syncServer,
+          ),
+        );
+        await _pumpWork(tester);
+        await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+        await tester.pumpAndSettle();
+
+        final connectedDecoration =
+            tester
+                    .widget<DecoratedBox>(
+                      find.byKey(
+                        Key('cashier-connection-screen-$connectedCashierId'),
+                      ),
+                    )
+                    .decoration
+                as BoxDecoration;
+        final disconnectedDecoration =
+            tester
+                    .widget<DecoratedBox>(
+                      find.byKey(
+                        Key('cashier-connection-screen-$disconnectedCashierId'),
+                      ),
+                    )
+                    .decoration
+                as BoxDecoration;
+        final unpairButton = tester.widget<OutlinedButton>(
+          find.byKey(Key('unpair-cashier-$connectedCashierId')),
+        );
+        final unpairContext = tester.element(
+          find.byKey(Key('unpair-cashier-$connectedCashierId')),
+        );
+
+        expect(connectedDecoration.color, Colors.green.shade600);
+        expect(disconnectedDecoration.color, Colors.grey.shade500);
+        expect(
+          unpairButton.style?.foregroundColor?.resolve(const <WidgetState>{}),
+          Theme.of(unpairContext).colorScheme.error,
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await syncServer.stop();
+        await repository.close();
+      }
+    },
+  );
+
   testWidgets('Device Sync opens peer messages modal on demand', (
     tester,
   ) async {
@@ -611,6 +682,7 @@ class _FakeLanSyncServer extends LanSyncServer {
     : super(store: repository.createSyncStore());
 
   var _running = false;
+  final connectedCashierDeviceIds = <String>{};
 
   @override
   bool get isRunning => _running;
@@ -627,6 +699,11 @@ class _FakeLanSyncServer extends LanSyncServer {
           expiresAt: DateTime.utc(2026, 6, 5, 12),
         ).toQrJson()
       : null;
+
+  @override
+  bool isCashierConnected(String deviceId) {
+    return connectedCashierDeviceIds.contains(deviceId);
+  }
 
   @override
   Future<void> start({

@@ -478,25 +478,49 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
         if (cashiers.isNotEmpty) ...[
           const SizedBox(height: 8),
           for (final cashier in cashiers)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.phone_android),
-              title: Text(cashier.label),
-              subtitle: Text(strings.trustedCashierDevice),
-              trailing: OutlinedButton(
-                key: Key('unpair-cashier-${cashier.deviceId}'),
-                onPressed: _unpairingDeviceId == null
-                    ? () => _confirmUnpairCashier(cashier)
-                    : null,
-                child: Text(
-                  _unpairingDeviceId == cashier.deviceId
-                      ? strings.working
-                      : strings.unpair,
-                ),
-              ),
+            Builder(
+              builder: (context) {
+                final isConnected =
+                    widget.syncServer?.isCashierConnected(cashier.deviceId) ??
+                    false;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: _CashierDeviceIcon(
+                    deviceId: cashier.deviceId,
+                    isConnected: isConnected,
+                  ),
+                  title: Text(cashier.label),
+                  subtitle: Text(strings.trustedCashierDevice),
+                  trailing: OutlinedButton(
+                    key: Key('unpair-cashier-${cashier.deviceId}'),
+                    style: _unpairButtonStyle(context),
+                    onPressed: _unpairingDeviceId == null
+                        ? () => _confirmUnpairCashier(cashier)
+                        : null,
+                    child: Text(
+                      key: Key('unpair-cashier-label-${cashier.deviceId}'),
+                      _unpairingDeviceId == cashier.deviceId
+                          ? strings.working
+                          : strings.unpair,
+                    ),
+                  ),
+                );
+              },
             ),
         ],
       ],
+    );
+  }
+
+  ButtonStyle _unpairButtonStyle(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ButtonStyle(
+      foregroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return colors.onSurface.withValues(alpha: 0.38);
+        }
+        return colors.error;
+      }),
     );
   }
 
@@ -936,6 +960,40 @@ class _SettingsSectionTile extends StatelessWidget {
         subtitle: subtitle == null ? null : Text(subtitle!),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _CashierDeviceIcon extends StatelessWidget {
+  const _CashierDeviceIcon({required this.deviceId, required this.isConnected});
+
+  final String deviceId;
+  final bool isConnected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(
+            Icons.phone_android_outlined,
+            color: colors.onSurfaceVariant,
+            size: 34,
+          ),
+          DecoratedBox(
+            key: Key('cashier-connection-screen-$deviceId'),
+            decoration: BoxDecoration(
+              color: isConnected ? Colors.green.shade600 : Colors.grey.shade500,
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: const SizedBox(width: 11, height: 17),
+          ),
+        ],
       ),
     );
   }

@@ -175,6 +175,58 @@ void main() {
     }
   });
 
+  testWidgets(
+    'indicator stays green when sync fails after successful ping and transfer',
+    (tester) async {
+      final repository = await createTestRepository();
+      final transfers = StreamController<SyncTransferActivity>.broadcast();
+      try {
+        await tester.pumpWidget(
+          _indicatorApp(
+            CashierSyncIndicator(
+              repository: repository,
+              pollInterval: null,
+              syncTransfers: transfers.stream,
+              pingMainDevice: () async {},
+              syncWithMainDevice: () async {
+                transfers.add(
+                  const SyncTransferActivity(
+                    direction: SyncTransferDirection.received,
+                    eventCount: 1,
+                  ),
+                );
+                throw SyncClientException('sync failed');
+              },
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-syncing')),
+          findsOneWidget,
+        );
+
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-synced')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('cashier-sync-indicator-disconnected')),
+          findsNothing,
+        );
+      } finally {
+        await transfers.close();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await repository.close();
+      }
+    },
+  );
+
   testWidgets('indicator does not breathe only because sync is in progress', (
     tester,
   ) async {
@@ -293,6 +345,48 @@ void main() {
       expect(
         find.byKey(const Key('cashier-sync-indicator-synced')),
         findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await stream.close();
+      await repository.close();
+    }
+  });
+
+  testWidgets('indicator stays green when projection message handling fails', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    final stream = StreamController<Object?>.broadcast();
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {},
+            syncWithMainDevice: () async {},
+            openProjectionStream: () async => stream.stream,
+            applyProjectionMessage: (_) async {
+              throw SyncClientException('Projection apply failed.');
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      stream.add('{"type":"snapshot_required","projection_version":1}');
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-synced')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-disconnected')),
+        findsNothing,
       );
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());

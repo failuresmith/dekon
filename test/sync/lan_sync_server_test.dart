@@ -1326,8 +1326,13 @@ void main() {
 
         final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
         final peer = await client.pairWithServer(pairing);
+        final cashierDeviceId = cashierRepository
+            .createSyncStore()
+            .localDeviceId;
+        expect(server.isCashierConnected(cashierDeviceId), false);
         final socket = await client.openCashierProjectionStream(peer.deviceId);
         addTearDown(socket.close);
+        expect(server.isCashierConnected(cashierDeviceId), true);
         final nextMessage = socket.first.timeout(const Duration(seconds: 2));
 
         await mainRepository.createProduct(
