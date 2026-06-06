@@ -229,6 +229,26 @@ class LanSyncClient {
     return socket;
   }
 
+  Future<CashierProjectionApplyStatus> applyCashierProjectionMessage(
+    String peerDeviceId,
+    Object? message,
+  ) async {
+    final peer = await _requiredPeer(peerDeviceId);
+    final update = CashierProjectionUpdate.fromJson(
+      _decodeProjectionMessage(message),
+    );
+    final status = await store.applyCashierProjectionUpdate(update);
+    switch (status) {
+      case CashierProjectionApplyStatus.applied:
+      case CashierProjectionApplyStatus.duplicate:
+        await store.markPeerSuccess(peer.deviceId);
+      case CashierProjectionApplyStatus.gap:
+      case CashierProjectionApplyStatus.snapshotRequired:
+        await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
+    }
+    return status;
+  }
+
   Future<PostEventsResult> pushToPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final events = await store.fetchLocalEventsAfter(
@@ -293,6 +313,12 @@ class LanSyncClient {
       _ => 'ws',
     };
     return base.replace(scheme: scheme, path: path, query: null);
+  }
+
+  Object? _decodeProjectionMessage(Object? message) {
+    if (message is String) return jsonDecode(message);
+    if (message is List<int>) return jsonDecode(utf8.decode(message));
+    return message;
   }
 
   Future<http.Response> _authenticatedGet(Uri uri, TrustedPeer peer) async {

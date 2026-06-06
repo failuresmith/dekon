@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Authenticated WebSocket projection stream implemented; stopped before client reconciliation, app-resume sync, and gap repair
+Current phase: Cashier-side projection reconciliation and snapshot gap repair implemented; stopped before app-resume sync, long-running UI listener, and sale command IDs
 Last updated: 2026-06-06
 
 ## Verified Existing Architecture
@@ -30,7 +30,7 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Cashier-visible data is currently derived from rich domain events and filtered afterward; this is harder to audit than a dedicated projection serializer.
 - Phase 3 added a Cashier-safe HTTP snapshot endpoint; WebSocket `snapshot_required` delivery is not implemented yet.
 - Authenticated WebSocket projection transport exists for sanitized incremental updates, but the Cashier UI does not yet keep a continuous listener alive.
-- Phase 2 now persists Cashier projection versions in `app_settings`; Phase 3 applies full snapshots on Cashier sync, but incremental version gap repair is not implemented yet.
+- Phase 2 now persists Cashier projection versions in `app_settings`; Phase 3 applies full snapshots on Cashier sync, and the current phase repairs incremental version gaps by fetching a fresh Cashier-safe snapshot.
 - Local Main mutations now use a serialized append/project/version/publish path, but remote posted sale events still use the current event-import path until the later sale-command phase replaces it.
 - Cashier sales rely on event IDs for duplicate handling; dedicated command IDs are not implemented yet.
 - Cashier sale submission is not disabled by a first-class synchronized/offline state model.
@@ -53,10 +53,11 @@ The propagation defect is that Main has no push channel and no centralized repli
 - [x] Apply snapshot on connect
 - [x] Apply snapshot on reconnect
 - [ ] Apply snapshot on app resume
-- [ ] Repair revision gaps with a snapshot
+- [x] Repair revision gaps with a snapshot
 - [x] Authenticate Cashier HTTP requests
 - [x] Authenticate Cashier WebSocket connections
 - [x] Enforce Cashier sale-only authorization
+- [x] Add projection reconciliation and gap-repair tests
 - [ ] Add command IDs and sale deduplication
 - [ ] Restrict Cashier UI
 - [ ] Add sync-state UI
@@ -82,11 +83,17 @@ The propagation defect is that Main has no push channel and no centralized repli
 - `LanSyncServer.start` now binds the Dart `HttpServer` directly so WebSocket upgrades can be handled before ordinary requests are passed to the existing Shelf handler.
 - WebSocket broadcasts reuse the sanitized projection messages emitted by the local publishing path; no administrative product serializer is used.
 - `LanSyncClient.openCashierProjectionStream` opens an authenticated WebSocket for later reconciliation work, but it does not yet own a long-running listener.
+- Cashier projection updates are parsed into explicit typed payloads before they can mutate the local database.
+- Cashier cache reconciliation applies only contiguous projection versions (`last_applied + 1`) transactionally.
+- Duplicate or older projection versions are ignored without mutating inventory.
+- Projection gaps, explicit `snapshot_required` messages, and stock patches for unknown local products trigger a full authenticated Cashier-safe snapshot fetch.
+- `LanSyncClient.applyCashierProjectionMessage` verifies the peer is trusted before applying a pushed projection message.
 
 ## Residual Risks
 
-- Main rename propagation is prepared for push through the local projection publisher, but LAN delivery is still not immediate until WebSocket transport is implemented.
-- Client-side WebSocket reconciliation, app-resume snapshot refresh, and gap-repair behavior remain unimplemented.
+- Main rename propagation now has sanitized push messages and client-side gap repair primitives, but LAN delivery is still not continuous until the Cashier UI owns a long-running WebSocket listener.
+- App-resume snapshot refresh remains unimplemented.
+- The current event-log polling path still coexists with projection snapshots and pushes; cursor semantics and projection-authority handoff need a later cleanup decision before the old Cashier event serializer can be removed.
 - The current event-log sanitizer still exists alongside the new projection serializer until later phases migrate the transport.
 - Remote posted events are not yet converted into command-ID sale submissions or projection publications; that belongs to the sale-command phase.
 - No manual multi-device QA has been run.
@@ -146,6 +153,16 @@ WebSocket results:
 - `dart format .` formatted the WebSocket server and LAN sync test files.
 - `flutter analyze` passed with no issues.
 - `flutter test` passed all tests, including the loopback WebSocket authentication and sanitized update stream test in `test/sync/lan_sync_server_test.dart`.
+
+Projection reconciliation commands run:
+- `docker compose run --rm flutter-dev dart format .`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test`
+
+Projection reconciliation results:
+- `dart format .` formatted the Cashier projection store and LAN sync test files.
+- `flutter analyze` passed with no issues.
+- `flutter test` passed all tests, including typed projection parsing and client-side gap-repair tests.
 
 # Task: Implement Secure Push-First Cashier Synchronization for Dekon
 

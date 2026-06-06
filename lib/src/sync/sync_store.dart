@@ -9,6 +9,8 @@ import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
 
+enum CashierProjectionApplyStatus { applied, duplicate, gap, snapshotRequired }
+
 class SyncStore {
   SyncStore({
     required Database database,
@@ -221,35 +223,18 @@ class SyncStore {
   ) async {
     final now = _now().toUtc();
     final nowText = now.toIso8601String();
-    final marker = 'cashier_snapshot:${snapshot.projectionVersion}';
+    final marker = _cashierSnapshotMarker(snapshot.projectionVersion);
     await _db.transaction((txn) async {
       await txn.delete('product_field_versions');
       await txn.delete('inventory_projection');
       await txn.delete('products_projection');
       for (final product in snapshot.products) {
-        await txn.insert('products_projection', {
-          'product_id': product.productId,
-          'name': product.name,
-          'barcode': product.barcode,
-          'sku': null,
-          'unit': 'each',
-          'sale_price_minor': product.salePriceMinor,
-          'purchase_cost_minor': 0,
-          'active': product.active ? 1 : 0,
-          'created_at': nowText,
-          'updated_at': nowText,
-          'updated_hlc': marker,
-          'updated_device_id': localDeviceId,
-          'updated_event_id': marker,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-        await txn.insert('inventory_projection', {
-          'product_id': product.productId,
-          'quantity': product.stockQuantity,
-          'updated_at': nowText,
-          'updated_hlc': marker,
-          'updated_device_id': localDeviceId,
-          'updated_event_id': marker,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await _replaceCashierProductInTransaction(
+          txn,
+          product,
+          nowText: nowText,
+          marker: marker,
+        );
       }
       await writeIntSetting(
         txn,
@@ -261,6 +246,151 @@ class SyncStore {
     activityBus?.notifyEventsChanged();
     activityBus?.notifySyncStateChanged();
   }
+
+  Future<CashierProjectionApplyStatus> applyCashierProjectionUpdate(
+    CashierProjectionUpdate update,
+  ) async {
+    final now = _now().toUtc();
+    final nowText = now.toIso8601String();
+    final marker = _cashierProjectionMarker(update.projectionVersion);
+    var applied = false;
+    final status = await _db.transaction((txn) async {
+      final lastApplied = await readIntSetting(
+        txn,
+        lastAppliedCashierProjectionVersionSetting,
+      );
+      if (update.type == cashierProjectionSnapshotRequired) {
+        return CashierProjectionApplyStatus.snapshotRequired;
+      }
+      if (update.projectionVersion <= lastApplied) {
+        return CashierProjectionApplyStatus.duplicate;
+      }
+      if (update.projectionVersion != lastApplied + 1) {
+        return CashierProjectionApplyStatus.gap;
+      }
+      switch (update.type) {
+        case cashierProjectionProductUpsert:
+          final product = update.product;
+          if (product == null) {
+            throw const FormatException(
+              'product_upsert update is missing product.',
+            );
+          }
+          await _replaceCashierProductInTransaction(
+            txn,
+            product,
+            nowText: nowText,
+            marker: marker,
+          );
+        case cashierProjectionInventoryPatch:
+          if (!await _cashierPatchProductsExist(txn, update.products)) {
+            return CashierProjectionApplyStatus.snapshotRequired;
+          }
+          for (final product in update.products) {
+            await _replaceCashierInventoryInTransaction(
+              txn,
+              product.productId,
+              stockQuantity: product.stockQuantity,
+              nowText: nowText,
+              marker: marker,
+            );
+          }
+        default:
+          throw FormatException(
+            'Unsupported Cashier projection type: ${update.type}.',
+          );
+      }
+      await writeIntSetting(
+        txn,
+        lastAppliedCashierProjectionVersionSetting,
+        update.projectionVersion,
+        now: now,
+      );
+      applied = true;
+      return CashierProjectionApplyStatus.applied;
+    });
+    if (applied) {
+      activityBus?.notifyEventsChanged();
+      activityBus?.notifySyncStateChanged();
+    } else if (status == CashierProjectionApplyStatus.gap ||
+        status == CashierProjectionApplyStatus.snapshotRequired) {
+      activityBus?.notifySyncStateChanged();
+    }
+    return status;
+  }
+
+  Future<void> _replaceCashierProductInTransaction(
+    DatabaseExecutor db,
+    CashierProductProjection product, {
+    required String nowText,
+    required String marker,
+  }) async {
+    await db.delete(
+      'product_field_versions',
+      where: 'product_id = ?',
+      whereArgs: [product.productId],
+    );
+    await db.insert('products_projection', {
+      'product_id': product.productId,
+      'name': product.name,
+      'barcode': product.barcode,
+      'sku': null,
+      'unit': 'each',
+      'sale_price_minor': product.salePriceMinor,
+      'purchase_cost_minor': 0,
+      'active': product.active ? 1 : 0,
+      'created_at': nowText,
+      'updated_at': nowText,
+      'updated_hlc': marker,
+      'updated_device_id': localDeviceId,
+      'updated_event_id': marker,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _replaceCashierInventoryInTransaction(
+      db,
+      product.productId,
+      stockQuantity: product.stockQuantity,
+      nowText: nowText,
+      marker: marker,
+    );
+  }
+
+  Future<void> _replaceCashierInventoryInTransaction(
+    DatabaseExecutor db,
+    String productId, {
+    required double stockQuantity,
+    required String nowText,
+    required String marker,
+  }) async {
+    await db.insert('inventory_projection', {
+      'product_id': productId,
+      'quantity': stockQuantity,
+      'updated_at': nowText,
+      'updated_hlc': marker,
+      'updated_device_id': localDeviceId,
+      'updated_event_id': marker,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<bool> _cashierPatchProductsExist(
+    DatabaseExecutor db,
+    List<CashierInventoryPatchProduct> products,
+  ) async {
+    for (final product in products) {
+      final rows = await db.query(
+        'products_projection',
+        columns: ['product_id'],
+        where: 'product_id = ?',
+        whereArgs: [product.productId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+    }
+    return true;
+  }
+
+  String _cashierSnapshotMarker(int version) => 'cashier_snapshot:$version';
+
+  String _cashierProjectionMarker(int version) => 'cashier_projection:$version';
 
   static Future<int> incrementCashierProjectionVersionInTransaction(
     Transaction txn, {

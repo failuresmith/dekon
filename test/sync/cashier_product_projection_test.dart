@@ -76,6 +76,57 @@ void main() {
       expect(encoded, contains('stock_quantity'));
       _expectNoPrivateProductFields(encoded);
     });
+
+    test('parses projection updates into typed checkout-safe payloads', () {
+      final productUpdate = CashierProjectionUpdate.fromJson(
+        serializeCashierProductUpsertMessage(
+          projectionVersion: 6,
+          product: CashierProductProjection.fromProductSummary(
+            _privateProduct(),
+          ),
+        ),
+      );
+      final patchUpdate = CashierProjectionUpdate.fromJson(
+        serializeCashierInventoryPatchMessage(
+          projectionVersion: 7,
+          products: const [
+            CashierInventoryPatchProduct(
+              productId: 'product-1',
+              stockQuantity: 2,
+            ),
+          ],
+        ),
+      );
+      final snapshotRequired = CashierProjectionUpdate.fromJson(
+        serializeCashierSnapshotRequiredMessage(projectionVersion: 8),
+      );
+
+      expect(productUpdate.type, cashierProjectionProductUpsert);
+      expect(productUpdate.product?.name, 'Saffron');
+      expect(patchUpdate.type, cashierProjectionInventoryPatch);
+      expect(patchUpdate.products.single.stockQuantity, 2);
+      expect(snapshotRequired.type, cashierProjectionSnapshotRequired);
+      expect(snapshotRequired.projectionVersion, 8);
+    });
+
+    test('rejects malformed projection updates', () {
+      expect(
+        () => CashierProjectionUpdate.fromJson({
+          'projection_version': 1,
+          'type': 'unknown',
+          'payload': const <String, Object?>{},
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => CashierProjectionUpdate.fromJson({
+          'projection_version': 1,
+          'type': cashierProjectionProductUpsert,
+          'payload': const <String, Object?>{},
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
   });
 }
 

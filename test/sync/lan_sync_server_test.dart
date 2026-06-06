@@ -590,6 +590,157 @@ void main() {
     }
   });
 
+  test('client applies projection updates and repairs version gaps', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = LanSyncServer(
+      store: mainRepository.createSyncStore(),
+      now: () => _now,
+    );
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+      now: () => _now,
+    );
+    final updates = <Map<String, Object?>>[];
+    final subscription = mainRepository.cashierProjectionUpdates.listen(
+      updates.add,
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Projection Beans',
+        barcode: 'PROJECTION-BEANS',
+        salePriceMinor: 900,
+        purchaseCostMinor: 450,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 8),
+      ]);
+      await _flushStream();
+      updates.clear();
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+      final initialLastApplied = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(initialLastApplied, 2);
+
+      await mainRepository.updateProduct(
+        _copyProduct(product, name: 'Renamed Projection Beans'),
+      );
+      await _flushStream();
+      final renameUpdate = updates.single;
+      final renameStatus = await client.applyCashierProjectionMessage(
+        peer.deviceId,
+        jsonEncode(renameUpdate),
+      );
+      final renamedCashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+
+      expect(renameStatus, CashierProjectionApplyStatus.applied);
+      expect(renamedCashierProduct?.name, 'Renamed Projection Beans');
+      expect(renamedCashierProduct?.purchaseCostMinor, 0);
+
+      final duplicateStatus = await client.applyCashierProjectionMessage(
+        peer.deviceId,
+        jsonEncode(renameUpdate),
+      );
+      final duplicateLastApplied = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(duplicateStatus, CashierProjectionApplyStatus.duplicate);
+      expect(duplicateLastApplied, 3);
+
+      updates.clear();
+      final stockedProduct = await mainRepository.productById(
+        product.productId,
+      );
+      await mainRepository.recordSale([
+        TransactionLineDraft(product: stockedProduct!, quantity: 2),
+      ]);
+      await _flushStream();
+      final saleStatus = await client.applyCashierProjectionMessage(
+        peer.deviceId,
+        jsonEncode(updates.single),
+      );
+      final soldCashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+
+      expect(saleStatus, CashierProjectionApplyStatus.applied);
+      expect(soldCashierProduct?.quantity, 6);
+
+      updates.clear();
+      final afterSale = await mainRepository.productById(product.productId);
+      await mainRepository.updateProduct(
+        _copyProduct(afterSale!, name: 'Gap Repaired Beans'),
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: afterSale, quantity: 1),
+      ]);
+      await _flushStream();
+      expect(updates, hasLength(2));
+      final gapStatus = await client.applyCashierProjectionMessage(
+        peer.deviceId,
+        jsonEncode(updates.last),
+      );
+      final gapRepairedProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final gapRepairedVersion = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(gapStatus, CashierProjectionApplyStatus.gap);
+      expect(gapRepairedProduct?.name, 'Gap Repaired Beans');
+      expect(gapRepairedProduct?.quantity, 7);
+      expect(gapRepairedVersion, 6);
+
+      updates.clear();
+      final afterRepair = await mainRepository.productById(product.productId);
+      await mainRepository.updateProduct(
+        _copyProduct(afterRepair!, name: 'Snapshot Required Beans'),
+      );
+      await _flushStream();
+      final snapshotStatus = await client.applyCashierProjectionMessage(
+        peer.deviceId,
+        jsonEncode(
+          serializeCashierSnapshotRequiredMessage(projectionVersion: 7),
+        ),
+      );
+      final snapshotRepairedProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final snapshotRepairedVersion = await cashierRepository
+          .createSyncStore()
+          .lastAppliedCashierProjectionVersion();
+
+      expect(snapshotStatus, CashierProjectionApplyStatus.snapshotRequired);
+      expect(snapshotRepairedProduct?.name, 'Snapshot Required Beans');
+      expect(snapshotRepairedProduct?.quantity, 7);
+      expect(snapshotRepairedVersion, 7);
+    } finally {
+      await subscription.cancel();
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
   test(
     'projection WebSocket authenticates and streams sanitized updates',
     () async {
@@ -790,6 +941,33 @@ ReportDateRange _dayRange(DateTime dateTime) {
     startLocal: start,
     endLocalExclusive: start.add(const Duration(days: 1)),
   );
+}
+
+ProductSummary _copyProduct(
+  ProductSummary product, {
+  String? name,
+  String? barcode,
+  String? sku,
+  String? unit,
+  int? salePriceMinor,
+  int? purchaseCostMinor,
+  bool? active,
+}) {
+  return ProductSummary(
+    productId: product.productId,
+    name: name ?? product.name,
+    barcode: barcode ?? product.barcode,
+    sku: sku ?? product.sku,
+    unit: unit ?? product.unit,
+    salePriceMinor: salePriceMinor ?? product.salePriceMinor,
+    purchaseCostMinor: purchaseCostMinor ?? product.purchaseCostMinor,
+    active: active ?? product.active,
+    quantity: product.quantity,
+  );
+}
+
+Future<void> _flushStream() {
+  return Future<void>.delayed(Duration.zero);
 }
 
 Future<void> _withHarness(Future<void> Function(_Harness harness) body) async {

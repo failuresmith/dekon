@@ -2,6 +2,47 @@ import '../application/models.dart';
 
 const cashierProjectionProductUpsert = 'product_upsert';
 const cashierProjectionInventoryPatch = 'inventory_patch';
+const cashierProjectionSnapshotRequired = 'snapshot_required';
+
+class CashierProjectionUpdate {
+  const CashierProjectionUpdate._({
+    required this.projectionVersion,
+    required this.type,
+    this.product,
+    this.products = const [],
+  });
+
+  factory CashierProjectionUpdate.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier projection update');
+    final type = _stringField(map, 'type');
+    final projectionVersion = _projectionVersionField(
+      map,
+      'projection_version',
+    );
+    return switch (type) {
+      cashierProjectionProductUpsert => CashierProjectionUpdate._(
+        projectionVersion: projectionVersion,
+        type: type,
+        product: _productPayload(map['payload']),
+      ),
+      cashierProjectionInventoryPatch => CashierProjectionUpdate._(
+        projectionVersion: projectionVersion,
+        type: type,
+        products: _productsPayload(map['payload']),
+      ),
+      cashierProjectionSnapshotRequired => CashierProjectionUpdate._(
+        projectionVersion: projectionVersion,
+        type: type,
+      ),
+      _ => throw FormatException('Unsupported Cashier projection type: $type.'),
+    };
+  }
+
+  final int projectionVersion;
+  final String type;
+  final CashierProductProjection? product;
+  final List<CashierInventoryPatchProduct> products;
+}
 
 class CashierProductProjection {
   const CashierProductProjection({
@@ -83,6 +124,14 @@ class CashierInventoryPatchProduct {
     required this.stockQuantity,
   });
 
+  factory CashierInventoryPatchProduct.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier inventory patch product');
+    return CashierInventoryPatchProduct(
+      productId: _stringField(map, 'product_id'),
+      stockQuantity: _numberField(map, 'stock_quantity'),
+    );
+  }
+
   final String productId;
   final double stockQuantity;
 }
@@ -138,6 +187,16 @@ Map<String, Object?> serializeCashierInventoryPatchMessage({
           _serializeInventoryPatchProduct(product),
       ],
     },
+  };
+}
+
+Map<String, Object?> serializeCashierSnapshotRequiredMessage({
+  required int projectionVersion,
+}) {
+  return {
+    'projection_version': _projectionVersion(projectionVersion),
+    'type': cashierProjectionSnapshotRequired,
+    'payload': const <String, Object?>{},
   };
 }
 
@@ -222,4 +281,21 @@ bool _boolField(Map<String, Object?> map, String field) {
   final value = map[field];
   if (value is bool) return value;
   throw FormatException('$field must be a boolean.');
+}
+
+CashierProductProjection _productPayload(Object? value) {
+  final payload = _stringMap(value, 'cashier product-upsert payload');
+  return CashierProductProjection.fromJson(payload['product']);
+}
+
+List<CashierInventoryPatchProduct> _productsPayload(Object? value) {
+  final payload = _stringMap(value, 'cashier inventory-patch payload');
+  final rawProducts = payload['products'];
+  if (rawProducts is! List) {
+    throw const FormatException('products must be a list.');
+  }
+  return [
+    for (final rawProduct in rawProducts)
+      CashierInventoryPatchProduct.fromJson(rawProduct),
+  ];
 }
