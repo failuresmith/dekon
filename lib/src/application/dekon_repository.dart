@@ -128,11 +128,28 @@ class DekonRepository {
     return BackupService(database: _db);
   }
 
-  Future<BackupImportResult> restoreBackup(String contents) async {
-    final result = await createBackupService().importBackup(contents);
-    _syncActivityBus.notifyEventsChanged();
-    _syncActivityBus.notifySyncStateChanged();
-    return result;
+  Future<BackupImportResult> restoreBackup(String contents) {
+    return _replicatedMutations.run(() async {
+      final result = await createBackupService().importBackup(contents);
+      final projectionVersion = await _forceCashierSnapshotRepair();
+      _syncActivityBus.notifyEventsChanged();
+      _syncActivityBus.notifySyncStateChanged();
+      _syncActivityBus.notifyCashierProjectionUpdate(
+        serializeCashierSnapshotRequiredMessage(
+          projectionVersion: projectionVersion,
+        ),
+      );
+      return result;
+    });
+  }
+
+  Future<int> _forceCashierSnapshotRepair() async {
+    return _db.transaction((txn) {
+      return SyncStore.incrementCashierProjectionVersionInTransaction(
+        txn,
+        now: _now().toUtc(),
+      );
+    });
   }
 
   Future<DeviceRole> deviceRole() async {

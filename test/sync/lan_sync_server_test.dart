@@ -1832,6 +1832,104 @@ void main() {
     },
   );
 
+  test(
+    'restore broadcasts snapshot repair and connected cashier refreshes',
+    () async {
+      final sourceDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final sourceRepository = await DekonRepository.open(database: sourceDb);
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final directory = await Directory.systemTemp.createTemp('dekon_restore_');
+      final server = mainRepository.createLanSyncServer();
+      final client = cashierRepository.createLanSyncClient();
+      WebSocket? socket;
+      try {
+        final restoredSourceProduct = await sourceRepository.createProduct(
+          name: 'Restored Socket Tea',
+          barcode: 'RESTORE-SOCKET-TEA',
+          sku: 'PRIVATE-RESTORE-SKU',
+          salePriceMinor: 1300,
+          purchaseCostMinor: 650,
+        );
+        await sourceRepository.recordPurchase([
+          TransactionLineDraft(product: restoredSourceProduct, quantity: 7),
+        ]);
+        final export = await sourceRepository
+            .createBackupService()
+            .exportToDirectory(directory.path);
+        final backupContents = await File(export.path).readAsString();
+
+        await mainRepository.createProduct(
+          name: 'Existing Main Product',
+          barcode: 'EXISTING-MAIN',
+          salePriceMinor: 900,
+          purchaseCostMinor: 400,
+        );
+        final beforeVersion = await mainRepository
+            .createSyncStore()
+            .cashierInventoryProjectionVersion();
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+        socket = await client.openCashierProjectionStream(peer.deviceId);
+        final nextMessage = socket.first.timeout(const Duration(seconds: 2));
+
+        final result = await mainRepository.restoreBackup(backupContents);
+        final message = await nextMessage as String;
+        final decoded = jsonDecode(message) as Map<String, Object?>;
+        final afterVersion = await mainRepository
+            .createSyncStore()
+            .cashierInventoryProjectionVersion();
+        final status = await client.applyCashierProjectionMessage(
+          peer.deviceId,
+          message,
+        );
+        final cashierProduct = await cashierRepository.productById(
+          restoredSourceProduct.productId,
+        );
+        final cashierVersion = await cashierRepository
+            .createSyncStore()
+            .lastAppliedCashierProjectionVersion();
+
+        expect(result.acceptedCount, 2);
+        expect(afterVersion, beforeVersion + 1);
+        expect(decoded['type'], cashierProjectionSnapshotRequired);
+        expect(decoded['projection_version'], afterVersion);
+        expect(message, isNot(contains('purchase_cost_minor')));
+        expect(message, isNot(contains('PRIVATE-RESTORE-SKU')));
+        expect(status, CashierProjectionApplyStatus.snapshotRequired);
+        expect(cashierVersion, afterVersion);
+        expect(cashierProduct?.name, 'Restored Socket Tea');
+        expect(cashierProduct?.quantity, 7);
+        expect(cashierProduct?.salePriceMinor, 1300);
+        expect(cashierProduct?.purchaseCostMinor, 0);
+        expect(cashierProduct?.sku, isNull);
+      } finally {
+        await socket?.close();
+        client.close();
+        await server.stop();
+        await directory.delete(recursive: true);
+        await sourceRepository.close();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
   test('GET events resumes from returned cursor', () async {
     await _withHarness((harness) async {
       await harness.trustPeer();

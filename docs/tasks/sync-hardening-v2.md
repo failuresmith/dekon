@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 7 - complete
+Current phase: Phase 8 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -38,6 +38,9 @@ Last updated: 2026-06-06
 - Phase 7: `POST /pair` now stores and returns a fresh generated per-device shared secret instead of reusing the pairing code as the long-term secret.
 - Phase 7: successful pairing rotates the active pairing payload secret, so an old QR pairing code cannot be reused.
 - Phase 7: `LanSyncClient.pairWithServer` now stores the returned `shared_secret`, preserving compatibility with old Main devices that still return the QR pairing secret and supporting new Main devices that return per-device secrets.
+- Phase 8 scope: force connected Cashiers to repair from a fresh snapshot after successful Main backup restore.
+- Phase 8: `DekonRepository.restoreBackup` now runs inside the replicated-mutation queue, imports the backup, increments the Cashier projection version once, and broadcasts `snapshot_required`.
+- Phase 8: restore validation/import behavior remains in `BackupService`; failed validation still exits before projection-version mutation or broadcast.
 
 ## Decisions
 
@@ -53,6 +56,8 @@ Last updated: 2026-06-06
 - Phase 7: existing trusted peer records are not migrated because they already contain the active long-term HMAC secret. They remain compatible and continue authenticating with their stored secret.
 - Phase 7: new pairing with an updated Main may not be compatible with older Cashier builds that reject a returned `shared_secret` different from the QR `pairing_secret`; this is the documented compatibility break required to stop using the pairing code as the long-term secret.
 - Phase 7: the pairing code is rotated before the async trusted-peer write to consume the old QR code before the server yields to another pairing request.
+- Phase 8: a restore emits a snapshot repair message instead of trying to summarize restored event deltas. Cashier snapshots remain the confidentiality boundary for restored product data.
+- Phase 8: projection version advances from the current Main setting, not from restored data, so restore cannot move Main's projection version backward.
 
 ## Tests Added
 
@@ -88,6 +93,10 @@ Last updated: 2026-06-06
 - Reusing an old QR pairing code after a successful pairing is rejected.
 - Authenticated requests verify with the returned per-device shared secret, not the old pairing code.
 - Existing trusted peer records continue authenticating with their stored secret.
+- Restore broadcasts `snapshot_required` over an active Cashier projection stream.
+- Connected Cashier applies a fresh snapshot after restore without app restart.
+- Restore increments Cashier projection version monotonically from the current Main version.
+- Restored private product fields do not appear in the WebSocket repair message or Cashier snapshot state.
 
 ## Validation Log
 
@@ -112,6 +121,13 @@ Commands run:
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/ui/settings_screen.dart test/sync/lan_sync_server_test.dart test/ui/backup_recovery_ui_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/application/dekon_repository.dart test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/backup/backup_service_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart docs/tasks/sync-hardening-v2.md`
@@ -188,6 +204,11 @@ Results:
 - Phase 7 focused `flutter test test/sync/lan_sync_server_test.dart` passed again after moving pairing-code rotation before the async trust write.
 - Phase 7 `flutter analyze` passed with no issues.
 - Phase 7 `git diff --check` passed.
+- Phase 8 first focused sync test run failed at compile time because the test used a non-existent client method name; fixed the test to use `applyCashierProjectionMessage`.
+- Phase 8 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 8 focused `flutter test test/backup/backup_service_test.dart` passed.
+- Phase 8 `flutter analyze` passed with no issues.
+- Phase 8 `git diff --check` passed.
 
 ## Manual QA
 
@@ -199,7 +220,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 8 through Phase 11 are not implemented yet.
+- Phase 9 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---
