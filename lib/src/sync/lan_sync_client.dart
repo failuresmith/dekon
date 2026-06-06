@@ -151,6 +151,7 @@ class LanSyncClient {
     final uri = Uri.parse(peer.baseUrl!).resolve('/sync/state');
     final response = await _authenticatedGet(uri, peer);
     if (response.statusCode != 200) {
+      _throwIfPeerUnpaired(response);
       throw SyncClientException(
         'Main device ping failed with ${response.statusCode}.',
       );
@@ -178,6 +179,7 @@ class LanSyncClient {
     ).replace(path: '/events', queryParameters: query);
     final response = await _authenticatedGet(uri, peer);
     if (response.statusCode != 200) {
+      _throwIfPeerUnpaired(response);
       throw SyncClientException('Pull failed with ${response.statusCode}.');
     }
     final decoded = jsonDecode(response.body);
@@ -206,6 +208,7 @@ class LanSyncClient {
     final uri = Uri.parse(peer.baseUrl!).resolve('/cashier/inventory-snapshot');
     final response = await _authenticatedGet(uri, peer);
     if (response.statusCode != 200) {
+      _throwIfPeerUnpaired(response);
       throw SyncClientException(
         'Inventory snapshot failed with ${response.statusCode}.',
       );
@@ -229,6 +232,31 @@ class LanSyncClient {
     return socket;
   }
 
+  Future<CashierSaleCommandResult> submitCashierSaleCommand(
+    String peerDeviceId,
+    CashierSaleCommand command,
+  ) async {
+    final peer = await _requiredPeer(peerDeviceId);
+    final uri = Uri.parse(peer.baseUrl!).resolve('/cashier/sales');
+    final body = jsonEncode(command.toJson());
+    final bodyBytes = utf8.encode(body);
+    final response = await _authenticatedPost(uri, body, bodyBytes, peer);
+    if (response.statusCode != 200) {
+      _throwIfPeerUnpaired(response);
+      throw SyncClientException(
+        'Sale command failed with ${response.statusCode}: '
+        '${_errorCodeFromBody(response.body)}.',
+      );
+    }
+    _updateClockOffsetFromBody(response.body);
+    final result = CashierSaleCommandResult.fromJson(jsonDecode(response.body));
+    final importResult = await store.importEvents([result.event]);
+    _throwIfRejected('Sale command import', importResult);
+    await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
+    await store.markPeerSuccess(peer.deviceId);
+    return result;
+  }
+
   Future<CashierProjectionApplyStatus> applyCashierProjectionMessage(
     String peerDeviceId,
     Object? message,
@@ -237,6 +265,12 @@ class LanSyncClient {
     final update = CashierProjectionUpdate.fromJson(
       _decodeProjectionMessage(message),
     );
+    if (update.type == cashierProjectionUnpaired) {
+      if (update.targetDeviceId == store.localDeviceId) {
+        throw const CashierUnpairedException();
+      }
+      return CashierProjectionApplyStatus.duplicate;
+    }
     final status = await store.applyCashierProjectionUpdate(update);
     switch (status) {
       case CashierProjectionApplyStatus.applied:
@@ -263,6 +297,7 @@ class LanSyncClient {
     final bodyBytes = utf8.encode(body);
     final response = await _authenticatedPost(uri, body, bodyBytes, peer);
     if (response.statusCode != 200) {
+      _throwIfPeerUnpaired(response);
       throw SyncClientException('Push failed with ${response.statusCode}.');
     }
     final decoded = jsonDecode(response.body);
@@ -291,6 +326,13 @@ class LanSyncClient {
       '$operation rejected ${result.rejected.length} event(s). '
       'First rejected event: ${first.eventId}.',
     );
+  }
+
+  void _throwIfPeerUnpaired(http.Response response) {
+    if (response.statusCode == HttpStatus.forbidden &&
+        _errorCodeFromBody(response.body) == 'peer_unpaired') {
+      throw const CashierUnpairedException();
+    }
   }
 
   Future<void> _storeAssignedDisplayName(String? displayName) async {
@@ -498,6 +540,18 @@ class LanSyncClient {
     }
   }
 
+  String _errorCodeFromBody(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] is String) {
+        return decoded['error'] as String;
+      }
+    } on Object {
+      // Ignore malformed error bodies; callers only need a safe summary.
+    }
+    return 'sync_request_failed';
+  }
+
   List<String> _stringList(Object? value) {
     if (value is! List) return const [];
     return [
@@ -528,4 +582,11 @@ class SyncClientException implements Exception {
 
   @override
   String toString() => 'SyncClientException: $message';
+}
+
+class CashierUnpairedException implements Exception {
+  const CashierUnpairedException();
+
+  @override
+  String toString() => 'CashierUnpairedException';
 }

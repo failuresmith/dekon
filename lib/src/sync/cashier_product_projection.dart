@@ -3,6 +3,7 @@ import '../application/models.dart';
 const cashierProjectionProductUpsert = 'product_upsert';
 const cashierProjectionInventoryPatch = 'inventory_patch';
 const cashierProjectionSnapshotRequired = 'snapshot_required';
+const cashierProjectionUnpaired = 'cashier_unpaired';
 
 class CashierProjectionUpdate {
   const CashierProjectionUpdate._({
@@ -10,6 +11,7 @@ class CashierProjectionUpdate {
     required this.type,
     this.product,
     this.products = const [],
+    this.targetDeviceId,
   });
 
   factory CashierProjectionUpdate.fromJson(Object? value) {
@@ -34,6 +36,11 @@ class CashierProjectionUpdate {
         projectionVersion: projectionVersion,
         type: type,
       ),
+      cashierProjectionUnpaired => CashierProjectionUpdate._(
+        projectionVersion: projectionVersion,
+        type: type,
+        targetDeviceId: _unpairedTargetDeviceId(map['payload']),
+      ),
       _ => throw FormatException('Unsupported Cashier projection type: $type.'),
     };
   }
@@ -42,6 +49,7 @@ class CashierProjectionUpdate {
   final String type;
   final CashierProductProjection? product;
   final List<CashierInventoryPatchProduct> products;
+  final String? targetDeviceId;
 }
 
 class CashierProductProjection {
@@ -200,6 +208,18 @@ Map<String, Object?> serializeCashierSnapshotRequiredMessage({
   };
 }
 
+Map<String, Object?> serializeCashierUnpairedMessage({
+  required String deviceId,
+}) {
+  final trimmed = deviceId.trim();
+  if (trimmed.isEmpty) throw ArgumentError.value(deviceId, 'deviceId');
+  return {
+    'projection_version': 0,
+    'type': cashierProjectionUnpaired,
+    'payload': {'device_id': trimmed},
+  };
+}
+
 void _validateCashierProduct(CashierProductProjection product) {
   if (product.productId.trim().isEmpty) {
     throw ArgumentError.value(product.productId, 'productId');
@@ -298,4 +318,9 @@ List<CashierInventoryPatchProduct> _productsPayload(Object? value) {
     for (final rawProduct in rawProducts)
       CashierInventoryPatchProduct.fromJson(rawProduct),
   ];
+}
+
+String _unpairedTargetDeviceId(Object? value) {
+  final payload = _stringMap(value, 'cashier unpair payload');
+  return _stringField(payload, 'device_id');
 }

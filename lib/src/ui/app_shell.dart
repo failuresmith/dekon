@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import '../backup/backup.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
 import 'cashier_sync_indicator.dart';
@@ -21,12 +22,14 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.repository,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
   });
 
   final DekonRepository repository;
   final BarcodeScanLauncher scanBarcode;
+  final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
@@ -40,9 +43,23 @@ class _AppShellState extends State<AppShell> {
   late final _syncServer = widget.repository.createLanSyncServer();
   late Future<DeviceRoleSettings> _roleSettings = widget.repository
       .deviceRoleSettings();
+  StreamSubscription<void>? _syncStateSubscription;
+  var _startingSyncServer = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncStateSubscription = widget.repository.syncStateChanged.listen((_) {
+      if (mounted) _reloadRoleSettings(preserveOnboardingFlag: true);
+    });
+  }
 
   @override
   void dispose() {
+    final syncStateSubscription = _syncStateSubscription;
+    if (syncStateSubscription != null) {
+      unawaited(syncStateSubscription.cancel());
+    }
     unawaited(_syncServer.stop());
     super.dispose();
   }
@@ -77,6 +94,17 @@ class _AppShellState extends State<AppShell> {
             pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
             onCompleted: _reloadRoleSettings,
           );
+        }
+        if (settings.cashierUnpairBackupRequired) {
+          return CashierUnpairRecoveryScreen(
+            repository: widget.repository,
+            backupFiles: widget.backupFiles,
+            onReset: _returnToCashierPairing,
+          );
+        }
+        if (settings.role == DeviceRole.mainDevice &&
+            settings.mainSyncServerEnabled) {
+          _ensureMainSyncServerStarted();
         }
         return _appScaffold(settings);
       },
@@ -240,10 +268,38 @@ class _AppShellState extends State<AppShell> {
     return items;
   }
 
-  void _reloadRoleSettings() {
+  void _reloadRoleSettings({bool preserveOnboardingFlag = false}) {
     setState(() {
-      _onboardingCompletedLocally = true;
+      _onboardingCompletedLocally = preserveOnboardingFlag
+          ? _onboardingCompletedLocally
+          : true;
       _roleSettings = widget.repository.deviceRoleSettings();
+    });
+  }
+
+  void _returnToCashierPairing() {
+    setState(() {
+      _index = 0;
+      _onboardingCompletedLocally = false;
+      _roleSettings = widget.repository.deviceRoleSettings();
+    });
+  }
+
+  void _ensureMainSyncServerStarted() {
+    if (_syncServer.isRunning || _startingSyncServer) return;
+    _startingSyncServer = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _startingSyncServer = false;
+        return;
+      }
+      try {
+        await _syncServer.start(enablePairing: false);
+      } catch (_) {
+        // Device Sync surfaces the manual retry path and user-facing error.
+      } finally {
+        _startingSyncServer = false;
+      }
     });
   }
 
@@ -255,6 +311,7 @@ class _AppShellState extends State<AppShell> {
           body: SettingsScreen(
             repository: widget.repository,
             syncServer: _syncServer,
+            backupFiles: widget.backupFiles,
             scanBarcode: widget.scanBarcode,
             pairWithMainDevice: widget.pairWithMainDevice,
             pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
@@ -262,6 +319,104 @@ class _AppShellState extends State<AppShell> {
         ),
       ),
     );
+  }
+}
+
+class CashierUnpairRecoveryScreen extends StatefulWidget {
+  const CashierUnpairRecoveryScreen({
+    super.key,
+    required this.repository,
+    this.backupFiles = const BackupFileActions(),
+    required this.onReset,
+  });
+
+  final DekonRepository repository;
+  final BackupFileActions backupFiles;
+  final VoidCallback onReset;
+
+  @override
+  State<CashierUnpairRecoveryScreen> createState() =>
+      _CashierUnpairRecoveryScreenState();
+}
+
+class _CashierUnpairRecoveryScreenState
+    extends State<CashierUnpairRecoveryScreen> {
+  var _busy = false;
+  var _startedAutomatically = false;
+  String? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _startedAutomatically) return;
+      _startedAutomatically = true;
+      unawaited(_backupAndReset());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.cashierUnpairedTitle)),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            strings.cashierUnpairedTitle,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          Text(strings.cashierUnpairedHelp),
+          if (_status != null) ...[
+            const SizedBox(height: 12),
+            Text(_status!, key: const Key('cashier-unpair-status')),
+          ],
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            key: const Key('cashier-unpair-backup-reset'),
+            onPressed: _busy ? null : _backupAndReset,
+            icon: const Icon(Icons.save_alt),
+            label: Text(
+              _busy ? strings.working : strings.backupSaleHistoryAndReset,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _backupAndReset() async {
+    final strings = context.strings;
+    setState(() {
+      _busy = true;
+      _status = strings.backingUpSaleHistory;
+    });
+    BackupExportDraft? draft;
+    final backupService = widget.repository.createBackupService();
+    try {
+      draft = await backupService.prepareExport();
+      final savedFile = await widget.backupFiles.saveExportedBackup(
+        sourcePath: draft.path,
+        fileName: draft.fileName,
+      );
+      if (savedFile == null) {
+        if (mounted) {
+          setState(() => _status = strings.backupRequiredBeforeReset);
+        }
+        return;
+      }
+      await widget.repository.resetCashierAfterUnpairBackup();
+      if (!mounted) return;
+      setState(() => _status = strings.cashierResetReadyToPair);
+      widget.onReset();
+    } catch (_) {
+      if (mounted) setState(() => _status = strings.backupRequiredBeforeReset);
+    } finally {
+      if (draft != null) await backupService.discardPreparedExport(draft);
+      if (mounted) setState(() => _busy = false);
+    }
   }
 }
 

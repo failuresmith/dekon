@@ -1,5 +1,6 @@
 import 'package:dekon/main.dart';
 import 'package:dekon/src/application/application.dart';
+import 'package:dekon/src/backup/backup.dart';
 import 'package:dekon/src/persistence/persistence.dart';
 import 'package:dekon/src/ui/barcode_scanner_dialog.dart';
 import 'package:dekon/src/ui/cashier_pairing_panel.dart';
@@ -38,12 +39,14 @@ Future<DekonRepository> createEnglishTestRepository({
 Widget testApp(
   DekonRepository repository, {
   BarcodeScanLauncher? scanBarcode,
+  BackupFileActions backupFiles = const BackupFileActions(),
   MainDevicePairer? pairWithMainDevice,
   MainDeviceAddressPairer? pairWithMainDeviceAddress,
 }) {
   return MainApp(
     repositoryFactory: () async => repository,
     scanBarcode: scanBarcode,
+    backupFiles: backupFiles,
     pairWithMainDevice: pairWithMainDevice,
     pairWithMainDeviceAddress: pairWithMainDeviceAddress,
   );

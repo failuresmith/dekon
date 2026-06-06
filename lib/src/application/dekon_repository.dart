@@ -41,6 +41,9 @@ class DekonRepository {
     'sale_price_minor',
     'active',
   };
+  static const _mainSyncServerEnabledKey = 'main_sync_server_enabled';
+  static const _cashierUnpairBackupRequiredKey =
+      'cashier_unpair_backup_required';
 
   static Future<DekonRepository> open({Database? database}) async {
     final db = database ?? await AppDatabasePath.openCoreDatabase();
@@ -142,11 +145,13 @@ class DekonRepository {
     final rows = await _db.query(
       'app_settings',
       columns: ['key', 'value'],
-      where: 'key IN (?, ?, ?)',
+      where: 'key IN (?, ?, ?, ?, ?)',
       whereArgs: const [
         'device_role',
         'device_role_locked',
         'device_onboarding_completed',
+        _mainSyncServerEnabledKey,
+        _cashierUnpairBackupRequiredKey,
       ],
     );
     final values = {
@@ -163,6 +168,9 @@ class DekonRepository {
       role: DeviceRole.fromStorage(values['device_role']),
       locked: values['device_role_locked'] == 'true',
       onboardingCompleted: values['device_onboarding_completed'] == 'true',
+      mainSyncServerEnabled: values[_mainSyncServerEnabledKey] == 'true',
+      cashierUnpairBackupRequired:
+          values[_cashierUnpairBackupRequiredKey] == 'true',
       deviceDisplayName: deviceRows.isEmpty
           ? null
           : deviceRows.single['display_name'] as String?,
@@ -216,6 +224,88 @@ class DekonRepository {
         'updated_at': now,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
+  }
+
+  Future<void> setMainSyncServerEnabled(bool enabled) {
+    return _setAppSetting(_mainSyncServerEnabledKey, enabled.toString());
+  }
+
+  Future<void> markCashierUnpairBackupRequired() async {
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      await txn.insert('app_settings', {
+        'key': 'device_role',
+        'value': DeviceRole.cashierDevice.storageValue,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': 'device_role_locked',
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': 'device_onboarding_completed',
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('app_settings', {
+        'key': _cashierUnpairBackupRequiredKey,
+        'value': 'true',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+    _syncActivityBus.notifySyncStateChanged();
+  }
+
+  Future<void> resetCashierAfterUnpairBackup() async {
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      await txn.delete('unsupported_events');
+      await txn.delete('projection_applied_events');
+      await txn.delete('product_field_versions');
+      await txn.delete('inventory_projection');
+      await txn.delete('sales_projection');
+      await txn.delete('purchase_projection');
+      await txn.delete('products_projection');
+      await txn.delete('events');
+      await txn.delete('sync_peers');
+      await txn.delete(
+        'devices',
+        where: 'device_id <> ?',
+        whereArgs: [_deviceId],
+      );
+      await txn.update(
+        'devices',
+        {
+          'display_name': 'This device',
+          'trust_status': 'local',
+          'shared_secret_hash': null,
+          'updated_at': now,
+          'last_seen_at': null,
+        },
+        where: 'device_id = ?',
+        whereArgs: [_deviceId],
+      );
+      await txn.delete(
+        'app_settings',
+        where: 'key IN (?, ?, ?, ?, ?, ?)',
+        whereArgs: const [
+          'device_role_locked',
+          'device_onboarding_completed',
+          _mainSyncServerEnabledKey,
+          _cashierUnpairBackupRequiredKey,
+          SyncStore.cashierInventoryProjectionVersionSetting,
+          SyncStore.lastAppliedCashierProjectionVersionSetting,
+        ],
+      );
+      await txn.insert('app_settings', {
+        'key': 'device_role',
+        'value': DeviceRole.cashierDevice.storageValue,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+    _syncActivityBus.notifyEventsChanged();
+    _syncActivityBus.notifySyncStateChanged();
   }
 
   Future<ProductSummary> createProduct({
@@ -486,6 +576,10 @@ class DekonRepository {
 
   Future<void> recordSale(List<TransactionLineDraft> lines) async {
     if (lines.isEmpty) throw StateError('Sale must have at least one item.');
+    if (await _shouldSubmitCashierSaleCommand()) {
+      await _submitCashierSaleCommand(lines);
+      return;
+    }
     await _commitWithStockPatch(
       _event(
         type: EventTypes.inventorySaleRecorded,
@@ -508,6 +602,48 @@ class DekonRepository {
       ),
       lines,
     );
+  }
+
+  Future<bool> _shouldSubmitCashierSaleCommand() async {
+    final settings = await deviceRoleSettings();
+    if (settings.cashierUnpairBackupRequired) {
+      throw StateError('Cashier must back up and reconnect before recording.');
+    }
+    return settings.role == DeviceRole.cashierDevice && settings.locked;
+  }
+
+  Future<void> _submitCashierSaleCommand(
+    List<TransactionLineDraft> lines,
+  ) async {
+    final store = createSyncStore();
+    final peers = await store.trustedPeers();
+    TrustedPeer? mainPeer;
+    for (final peer in peers) {
+      if (peer.baseUrl != null) {
+        mainPeer = peer;
+        break;
+      }
+    }
+    if (mainPeer == null) {
+      throw SyncClientException('Main device is not paired.');
+    }
+    final command = CashierSaleCommand(
+      commandId: _uuid.v7(),
+      occurredAt: _now().toUtc(),
+      lines: [
+        for (final line in lines)
+          CashierSaleCommandLine(
+            productId: line.product.productId,
+            quantity: line.quantity,
+          ),
+      ],
+    );
+    final client = LanSyncClient(store: store, now: _now);
+    try {
+      await client.submitCashierSaleCommand(mainPeer.deviceId, command);
+    } finally {
+      client.close();
+    }
   }
 
   Future<void> recordPurchase(List<TransactionLineDraft> lines) async {

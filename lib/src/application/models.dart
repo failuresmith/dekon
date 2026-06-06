@@ -43,12 +43,16 @@ class DeviceRoleSettings {
     required this.role,
     required this.locked,
     required this.onboardingCompleted,
+    required this.mainSyncServerEnabled,
+    required this.cashierUnpairBackupRequired,
     this.deviceDisplayName,
   });
 
   final DeviceRole role;
   final bool locked;
   final bool onboardingCompleted;
+  final bool mainSyncServerEnabled;
+  final bool cashierUnpairBackupRequired;
   final String? deviceDisplayName;
 }
 

@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../domain/events/events.dart';
+import 'cashier_product_projection.dart';
 import 'sync_access_control.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
@@ -26,21 +27,33 @@ class LanSyncServer {
   final AuthorizationService _authorization;
   final DateTime Function() _now;
   HttpServer? _server;
+  String? _baseUrl;
   SyncPairingPayload? _pairingPayload;
   StreamSubscription<Map<String, Object?>>? _projectionSubscription;
-  final _projectionSockets = <WebSocket>{};
+  final _projectionSockets = <WebSocket, String>{};
 
   bool get isRunning => _server != null;
-  String? get serverUrl => _pairingPayload?.baseUrl;
-  String? get pairingQrData => _pairingPayload?.toQrJson();
+  String? get serverUrl => _baseUrl;
+  String? get pairingQrData {
+    final payload = _pairingPayload;
+    if (payload == null || payload.expiresAt.isBefore(_now().toUtc())) {
+      return null;
+    }
+    return payload.toQrJson();
+  }
+
   Handler get handler => _handle;
 
   Future<void> start({
     InternetAddress? address,
     int port = 0,
     Duration pairingTtl = const Duration(minutes: 10),
+    bool enablePairing = true,
   }) async {
-    if (_server != null) return;
+    if (_server != null) {
+      if (enablePairing) startPairing(ttl: pairingTtl);
+      return;
+    }
     final server = await HttpServer.bind(
       address ?? InternetAddress.anyIPv4,
       port,
@@ -52,16 +65,25 @@ class LanSyncServer {
       unawaited(_handleHttpRequest(request));
     });
     final host = await _displayHost(server);
-    createPairingPayload(
-      baseUrl: 'http://$host:${server.port}',
-      ttl: pairingTtl,
-    );
+    _baseUrl = 'http://$host:${server.port}';
+    if (enablePairing) startPairing(ttl: pairingTtl);
+  }
+
+  SyncPairingPayload startPairing({
+    Duration ttl = const Duration(minutes: 10),
+  }) {
+    final baseUrl = _baseUrl;
+    if (_server == null || baseUrl == null) {
+      throw StateError('Sync server must be running before pairing starts.');
+    }
+    return createPairingPayload(baseUrl: baseUrl, ttl: ttl);
   }
 
   SyncPairingPayload createPairingPayload({
     required String baseUrl,
     Duration ttl = const Duration(minutes: 10),
   }) {
+    _baseUrl = baseUrl;
     final payload = SyncPairingPayload(
       baseUrl: baseUrl,
       serverDeviceId: store.localDeviceId,
@@ -72,17 +94,44 @@ class LanSyncServer {
     return payload;
   }
 
+  Future<void> unpairCashier(String deviceId) async {
+    final trimmed = deviceId.trim();
+    if (trimmed.isEmpty) throw ArgumentError.value(deviceId, 'deviceId');
+    await _sendUnpairMessage(trimmed);
+    await store.revokePeer(trimmed);
+  }
+
   Future<void> stop() async {
     final server = _server;
     _server = null;
+    _baseUrl = null;
     _pairingPayload = null;
     await _projectionSubscription?.cancel();
     _projectionSubscription = null;
-    for (final socket in _projectionSockets.toList()) {
+    for (final socket in _projectionSockets.keys.toList()) {
       await socket.close();
     }
     _projectionSockets.clear();
     await server?.close(force: true);
+  }
+
+  Future<void> _sendUnpairMessage(String deviceId) async {
+    final message = jsonEncode(
+      serializeCashierUnpairedMessage(deviceId: deviceId),
+    );
+    final sockets = _projectionSockets.entries
+        .where((entry) => entry.value == deviceId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final socket in sockets) {
+      try {
+        socket.add(message);
+        await socket.close(WebSocketStatus.normalClosure, 'unpaired');
+      } on Object {
+        _projectionSockets.remove(socket);
+        unawaited(socket.close());
+      }
+    }
   }
 
   Future<void> _handleHttpRequest(HttpRequest request) async {
@@ -116,23 +165,35 @@ class LanSyncServer {
       }
       if (request.method == 'GET' && path == '/events') {
         final peer = await _authenticate(request, const []);
-        if (peer == null) return _unauthorized(request);
+        if (peer == null) {
+          return _authenticationFailed(request, const []);
+        }
         return _events(request, peer);
       }
       if (request.method == 'GET' && path == '/cashier/inventory-snapshot') {
         final peer = await _authenticate(request, const []);
-        if (peer == null) return _unauthorized(request);
+        if (peer == null) {
+          return _authenticationFailed(request, const []);
+        }
         return _cashierInventorySnapshot(request, peer);
+      }
+      if (request.method == 'POST' && path == '/cashier/sales') {
+        final bodyBytes = utf8.encode(body ?? '');
+        final peer = await _authenticate(request, bodyBytes);
+        if (peer == null) return _authenticationFailed(request, bodyBytes);
+        return _postCashierSale(request, body ?? '', peer);
       }
       if (request.method == 'POST' && path == '/events') {
         final bodyBytes = utf8.encode(body ?? '');
         final peer = await _authenticate(request, bodyBytes);
-        if (peer == null) return _unauthorized(request);
+        if (peer == null) return _authenticationFailed(request, bodyBytes);
         return _postEvents(request, body ?? '', peer);
       }
       if (request.method == 'GET' && path == '/sync/state') {
         final peer = await _authenticate(request, const []);
-        if (peer == null) return _unauthorized(request);
+        if (peer == null) {
+          return _authenticationFailed(request, const []);
+        }
         await store.markPeerSuccess(peer.deviceId);
         return _json(
           await store.state().then((state) => state.toJson()),
@@ -244,6 +305,51 @@ class LanSyncServer {
     }, request: request);
   }
 
+  Future<Response> _postCashierSale(
+    Request request,
+    String body,
+    TrustedPeer peer,
+  ) async {
+    _authorization.requireCapability(
+      principal: _remoteCashierPrincipal(peer),
+      capability: Capability.recordSale,
+    );
+    try {
+      final command = CashierSaleCommand.fromJson(_decodeMap(body));
+      final result = await store.recordCashierSaleCommand(
+        cashierDeviceId: peer.deviceId,
+        command: command,
+      );
+      if (!result.duplicate) {
+        store.notifyTransfer(SyncTransferDirection.received, 1);
+      }
+      await store.markPeerSuccess(peer.deviceId);
+      return _json({
+        ...result.toJson(),
+        'server_time': _now().toUtc().toIso8601String(),
+      }, request: request);
+    } on CashierSaleCommandException catch (error) {
+      return _json(
+        {
+          'error': error.code,
+          if (error.productIds.isNotEmpty) 'product_ids': error.productIds,
+          'server_time': _now().toUtc().toIso8601String(),
+        },
+        status: _saleCommandStatus(error),
+        request: request,
+      );
+    } on EventValidationException {
+      return _json(
+        {
+          'error': CashierSaleCommandException.invalidCommand,
+          'server_time': _now().toUtc().toIso8601String(),
+        },
+        status: HttpStatus.badRequest,
+        request: request,
+      );
+    }
+  }
+
   Future<void> _projectionStream(HttpRequest request) async {
     if (!WebSocketTransformer.isUpgradeRequest(request)) {
       await _rawJson(request, {
@@ -253,6 +359,13 @@ class LanSyncServer {
     }
     final peer = await _authenticateRaw(request);
     if (peer == null) {
+      if (await _isRevokedRawRequest(request)) {
+        await _rawJson(request, {
+          'error': 'peer_unpaired',
+          'server_time': _now().toUtc().toIso8601String(),
+        }, status: HttpStatus.forbidden);
+        return;
+      }
       await _rawJson(request, {
         'error': 'unauthorized',
         'server_time': _now().toUtc().toIso8601String(),
@@ -271,7 +384,7 @@ class LanSyncServer {
       return;
     }
     final socket = await WebSocketTransformer.upgrade(request);
-    _projectionSockets.add(socket);
+    _projectionSockets[socket] = peer.deviceId;
     await store.markPeerSuccess(peer.deviceId);
     socket.done.whenComplete(() {
       _projectionSockets.remove(socket);
@@ -387,6 +500,44 @@ class LanSyncServer {
     return valid ? peer : null;
   }
 
+  Future<Response> _authenticationFailed(
+    Request request,
+    List<int> bodyBytes,
+  ) async {
+    if (await _isRevokedRequest(request, bodyBytes)) {
+      return _peerUnpaired(request);
+    }
+    return _unauthorized(request);
+  }
+
+  Future<bool> _isRevokedRequest(Request request, List<int> bodyBytes) async {
+    final deviceId = request.headers[SyncAuthHeaders.deviceId];
+    if (deviceId == null) return false;
+    final peer = await store.revokedPeer(deviceId);
+    if (peer == null) return false;
+    return _authenticator.verify(
+      headers: request.headers,
+      method: request.method,
+      uri: request.requestedUri,
+      bodyBytes: bodyBytes,
+      sharedSecret: peer.sharedSecret,
+    );
+  }
+
+  Future<bool> _isRevokedRawRequest(HttpRequest request) async {
+    final deviceId = request.headers.value(SyncAuthHeaders.deviceId);
+    if (deviceId == null) return false;
+    final peer = await store.revokedPeer(deviceId);
+    if (peer == null) return false;
+    return _authenticator.verify(
+      headers: _rawHeaders(request),
+      method: request.method,
+      uri: request.requestedUri,
+      bodyBytes: const [],
+      sharedSecret: peer.sharedSecret,
+    );
+  }
+
   Map<String, String> _rawHeaders(HttpRequest request) {
     return {
       for (final name in [
@@ -411,6 +562,17 @@ class LanSyncServer {
     );
   }
 
+  Response _peerUnpaired(Request request) {
+    return _json(
+      {
+        'error': 'peer_unpaired',
+        'server_time': _now().toUtc().toIso8601String(),
+      },
+      status: HttpStatus.forbidden,
+      request: request,
+    );
+  }
+
   Future<void> _rawJson(
     HttpRequest request,
     Object body, {
@@ -427,7 +589,7 @@ class LanSyncServer {
   void _broadcastProjectionUpdate(Map<String, Object?> update) {
     if (_projectionSockets.isEmpty) return;
     final encoded = jsonEncode(update);
-    for (final socket in _projectionSockets.toList()) {
+    for (final socket in _projectionSockets.keys.toList()) {
       try {
         socket.add(encoded);
       } on Object {
@@ -560,6 +722,13 @@ class LanSyncServer {
     if (parsed == null) return _defaultEventsWaitTimeout;
     final clamped = parsed.clamp(0, _maxEventsWaitTimeout.inMilliseconds);
     return Duration(milliseconds: clamped.toInt());
+  }
+
+  int _saleCommandStatus(CashierSaleCommandException error) {
+    return switch (error.code) {
+      CashierSaleCommandException.invalidCommand => HttpStatus.badRequest,
+      _ => HttpStatus.conflict,
+    };
   }
 
   Future<String> _displayHost(HttpServer server) async {

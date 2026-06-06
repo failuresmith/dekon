@@ -130,6 +130,113 @@ class PostEventsResult {
   }
 }
 
+class CashierSaleCommand {
+  const CashierSaleCommand({
+    required this.commandId,
+    required this.occurredAt,
+    required this.lines,
+  });
+
+  factory CashierSaleCommand.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier sale command');
+    final rawLines = map['line_items'];
+    if (rawLines is! List) {
+      throw const FormatException('line_items must be a list.');
+    }
+    return CashierSaleCommand(
+      commandId: _stringField(map, 'command_id'),
+      occurredAt: DateTime.parse(_stringField(map, 'occurred_at')).toUtc(),
+      lines: [
+        for (final rawLine in rawLines)
+          CashierSaleCommandLine.fromJson(rawLine),
+      ],
+    );
+  }
+
+  final String commandId;
+  final DateTime occurredAt;
+  final List<CashierSaleCommandLine> lines;
+
+  Map<String, Object?> toJson() => {
+    'command_id': commandId,
+    'occurred_at': occurredAt.toUtc().toIso8601String(),
+    'line_items': [for (final line in lines) line.toJson()],
+  };
+}
+
+class CashierSaleCommandLine {
+  const CashierSaleCommandLine({
+    required this.productId,
+    required this.quantity,
+  });
+
+  factory CashierSaleCommandLine.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier sale command line');
+    return CashierSaleCommandLine(
+      productId: _stringField(map, 'product_id'),
+      quantity: _numberField(map, 'quantity'),
+    );
+  }
+
+  final String productId;
+  final double quantity;
+
+  Map<String, Object?> toJson() => {
+    'product_id': productId,
+    'quantity': quantity,
+  };
+}
+
+class CashierSaleCommandResult {
+  const CashierSaleCommandResult({
+    required this.commandId,
+    required this.saleId,
+    required this.duplicate,
+    required this.event,
+    this.projectionVersion,
+  });
+
+  factory CashierSaleCommandResult.fromJson(Object? value) {
+    final map = _stringMap(value, 'cashier sale command result');
+    return CashierSaleCommandResult(
+      commandId: _stringField(map, 'command_id'),
+      saleId: _stringField(map, 'sale_id'),
+      duplicate: _boolField(map, 'duplicate'),
+      projectionVersion: _optionalIntField(map, 'projection_version'),
+      event: EventCodec.fromJson(map['event']),
+    );
+  }
+
+  final String commandId;
+  final String saleId;
+  final bool duplicate;
+  final int? projectionVersion;
+  final EventEnvelope event;
+
+  Map<String, Object?> toJson() => {
+    'command_id': commandId,
+    'sale_id': saleId,
+    'duplicate': duplicate,
+    'projection_version': projectionVersion,
+    'event': EventCodec.toJson(event),
+  };
+}
+
+class CashierSaleCommandException implements Exception {
+  const CashierSaleCommandException(this.code, {this.productIds = const []});
+
+  static const invalidCommand = 'invalid_command';
+  static const commandConflict = 'command_conflict';
+  static const productUnavailable = 'product_unavailable';
+  static const insufficientStock = 'insufficient_stock';
+
+  final String code;
+  final List<String> productIds;
+
+  @override
+  String toString() => 'CashierSaleCommandException: $code';
+}
+
 class SyncDeviceInfo {
   const SyncDeviceInfo({required this.deviceId, required this.displayName});
 
@@ -292,4 +399,23 @@ int _intField(Map<String, Object?> map, String field) {
   final value = map[field];
   if (value is! int) throw FormatException('$field must be an integer.');
   return value;
+}
+
+int? _optionalIntField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value == null) return null;
+  if (value is int) return value;
+  throw FormatException('$field must be an integer.');
+}
+
+double _numberField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is num && value.isFinite) return value.toDouble();
+  throw FormatException('$field must be a finite number.');
+}
+
+bool _boolField(Map<String, Object?> map, String field) {
+  final value = map[field];
+  if (value is bool) return value;
+  throw FormatException('$field must be a boolean.');
 }

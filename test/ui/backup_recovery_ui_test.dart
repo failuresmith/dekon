@@ -357,6 +357,64 @@ void main() {
     }
   });
 
+  testWidgets('Unpaired cashier backs up and returns to pairing only', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository();
+    await repository.lockDeviceRole(DeviceRole.cashierDevice);
+    await repository.markCashierUnpairBackupRequired();
+    final markedSettings = await repository.deviceRoleSettings();
+    expect(markedSettings.onboardingCompleted, true);
+    expect(markedSettings.cashierUnpairBackupRequired, true);
+    try {
+      await tester.pumpWidget(
+        testApp(
+          repository,
+          backupFiles: const _FakeBackupFiles(
+            saveResult: BackupSaveResult(
+              path: '/storage/emulated/0/Download/dekon-backup.json',
+              fileName: 'dekon-backup.json',
+            ),
+          ),
+        ),
+      );
+      await _pumpUntilFound(tester, find.text('Cashier unpaired'));
+      expect(find.text('Cashier unpaired'), findsWidgets);
+      if (!tester
+          .widget<FilledButton>(
+            find.byKey(const Key('cashier-unpair-backup-reset')),
+          )
+          .enabled) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      await tester.tap(find.byKey(const Key('cashier-unpair-backup-reset')));
+      await _pumpUntil(
+        tester,
+        () async {
+          final settings = await repository.deviceRoleSettings();
+          return settings.role == DeviceRole.cashierDevice &&
+              !settings.locked &&
+              !settings.onboardingCompleted &&
+              !settings.cashierUnpairBackupRequired;
+        },
+      );
+      await tester.pump();
+
+      final settings = await repository.deviceRoleSettings();
+
+      expect(settings.role, DeviceRole.cashierDevice);
+      expect(settings.locked, false);
+      expect(settings.onboardingCompleted, false);
+      expect(settings.cashierUnpairBackupRequired, false);
+      expect(find.byKey(const Key('pair-main-device')), findsOneWidget);
+      expect(find.byKey(const Key('pair-main-device-manual')), findsOneWidget);
+      expect(find.byKey(const Key('sell-screen')), findsNothing);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
+
   testWidgets('Settings shows retry when backup storage access is denied', (
     tester,
   ) async {
@@ -410,6 +468,16 @@ Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 30; i++) {
     await tester.pump(const Duration(milliseconds: 100));
     if (tester.any(finder)) return;
+  }
+}
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  Future<bool> Function() condition,
+) async {
+  for (var i = 0; i < 30; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (await condition()) return;
   }
 }
 
@@ -570,6 +638,7 @@ class _FakeLanSyncServer extends LanSyncServer {
     InternetAddress? address,
     int port = 0,
     Duration pairingTtl = const Duration(minutes: 10),
+    bool enablePairing = true,
   }) async {
     _running = true;
   }

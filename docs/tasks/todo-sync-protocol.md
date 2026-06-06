@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Cashier projection stream listener and app-resume snapshot refresh implemented; stopped before sale command IDs, broader sync-state UI, and manual multi-device QA
+Current phase: Retry-safe Cashier sale commands and unpair recovery implemented; stopped before broader sync-state UI cleanup and manual multi-device QA
 Last updated: 2026-06-06
 
 ## Verified Existing Architecture
@@ -31,8 +31,8 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Phase 3 added a Cashier-safe HTTP snapshot endpoint; WebSocket `snapshot_required` delivery is not implemented yet.
 - Authenticated WebSocket projection transport exists for sanitized incremental updates; the Cashier shell now keeps a listener alive while the sync indicator is mounted, but there is no background service when the app is killed.
 - Phase 2 now persists Cashier projection versions in `app_settings`; Phase 3 applies full snapshots on Cashier sync, and the current phase repairs incremental version gaps by fetching a fresh Cashier-safe snapshot.
-- Local Main mutations now use a serialized append/project/version/publish path, but remote posted sale events still use the current event-import path until the later sale-command phase replaces it.
-- Cashier sales rely on event IDs for duplicate handling; dedicated command IDs are not implemented yet.
+- Local Main mutations now use a serialized append/project/version/publish path, and locked Cashier sales now submit dedicated sale commands instead of locally queuing arbitrary sale events.
+- Cashier sale commands use UUIDv7 command IDs as deterministic sale event IDs for retry deduplication.
 - Cashier sale submission is not disabled by a first-class synchronized/offline state model.
 
 ## Completed
@@ -60,7 +60,8 @@ The propagation defect is that Main has no push channel and no centralized repli
 - [x] Add projection reconciliation and gap-repair tests
 - [x] Keep Cashier projection stream alive from the sync indicator
 - [x] Add Cashier sync lifecycle tests
-- [ ] Add command IDs and sale deduplication
+- [x] Add command IDs and sale deduplication
+- [x] Add Main-side Cashier unpair recovery
 - [ ] Restrict Cashier UI
 - [ ] Add sync-state UI
 - [ ] Add automated tests
@@ -93,14 +94,20 @@ The propagation defect is that Main has no push channel and no centralized repli
 - The Cashier sync indicator uses snapshot sync for initial convergence, then keeps an authenticated projection WebSocket listener alive while mounted.
 - App resume closes any stale projection stream and runs the normal snapshot sync path before reopening the stream.
 - Projection stream teardown distinguishes intentional closes from remote drops so tests and widget disposal do not reconnect indefinitely.
+- Locked Cashier `recordSale` now sends `POST /cashier/sales` to the paired Main device instead of appending a local sale event for later generic `/events` push.
+- Main computes Cashier sale unit prices and totals from authoritative product state; the command request only carries product IDs and quantities.
+- Cashier sale command IDs are required to be UUIDv7 and are used as both the command ID and sale event ID, so a retry is an event-store duplicate instead of a second stock mutation.
+- Main rejects Cashier sale commands when a product is unavailable or Main-side stock is insufficient.
+- Accepted sale command responses include the accepted sale event so the Cashier can keep local sale history before refreshing its Cashier-safe inventory snapshot.
+- Main can revoke a paired Cashier; revoked devices receive `peer_unpaired`, and the Cashier blocks sale recording until sale history is backed up and local pairing state is reset.
 
 ## Residual Risks
 
 - Main rename propagation is immediate while the Cashier shell is mounted and the authenticated WebSocket is connected; no background listener exists while the app is killed or not running.
 - Sync-state UI remains minimal and does not yet explain projection-stream fallback, gap repair, or sale-blocking state in plain language.
 - The current event-log polling path still coexists with projection snapshots and pushes; cursor semantics and projection-authority handoff need a later cleanup decision before the old Cashier event serializer can be removed.
-- The current event-log sanitizer still exists alongside the new projection serializer until later phases migrate the transport.
-- Remote posted events are not yet converted into command-ID sale submissions or projection publications; that belongs to the sale-command phase.
+- The current event-log sanitizer and generic `/events` sale acceptance still exist for compatibility; locked Cashier UI uses sale commands, but the legacy remote sale-event path should be removed or explicitly versioned in a later cleanup.
+- Cashier sale submission now fails closed when Main is unavailable, but the UI still reports this through the generic save-failed path rather than a dedicated sync-state blocker.
 - No manual multi-device QA has been run.
 
 ## Verification Log
@@ -181,6 +188,18 @@ Cashier sync lifecycle results:
 - `dart format .` reported no changes after the lifecycle patch.
 - `flutter analyze` passed with no issues.
 - `flutter test` passed all tests, including app-resume refresh and projection-stream message handling in `test/ui/cashier_sync_indicator_test.dart`.
+
+Cashier sale-command commands run:
+- `docker compose run --rm flutter-dev dart format .`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test`
+
+Cashier sale-command results:
+- Focused sync tests passed, including idempotent sale command retry, insufficient-stock rejection, and locked-Cashier `recordSale` command submission.
+- The first full-suite reruns exposed concurrent compile gaps in the unpair/recovery changes; those were completed and the suite was rerun.
+- Final `flutter analyze` passed with no issues.
+- Final `flutter test` passed all tests.
 
 # Task: Implement Secure Push-First Cashier Synchronization for Dekon
 

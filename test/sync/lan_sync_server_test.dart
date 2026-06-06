@@ -119,6 +119,34 @@ void main() {
     });
   });
 
+  test('server can run without exposing a pairing QR', () async {
+    final db = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final repository = await DekonRepository.open(database: db);
+    final server = repository.createLanSyncServer();
+    try {
+      await server.start(
+        address: InternetAddress.loopbackIPv4,
+        enablePairing: false,
+      );
+
+      expect(server.isRunning, true);
+      expect(server.serverUrl, startsWith('http://'));
+      expect(server.pairingQrData, isNull);
+
+      final pairing = server.startPairing();
+
+      expect(pairing.baseUrl, server.serverUrl);
+      expect(server.pairingQrData, isNotNull);
+    } finally {
+      await server.stop();
+      await repository.close();
+    }
+  });
+
   test('records redacted peer messages for pairing exchange', () async {
     await _withHarness((harness) async {
       final pairing = harness.server.createPairingPayload(
@@ -225,6 +253,53 @@ void main() {
       expect(peer?.sharedSecret, _sharedSecret);
       expect(localDevice.single['display_name'], 'Cashier-1');
     });
+  });
+
+  test('unpaired cashier receives peer_unpaired on next sync', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = LanSyncServer(
+      store: mainRepository.createSyncStore(),
+      now: () => _now,
+    );
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+      now: () => _now,
+    );
+    try {
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+      final mainFiltersBefore = await mainRepository.cashierReportFilters();
+
+      await server.unpairCashier(
+        cashierRepository.createSyncStore().localDeviceId,
+      );
+
+      final mainFiltersAfter = await mainRepository.cashierReportFilters();
+
+      expect(mainFiltersBefore, hasLength(1));
+      expect(mainFiltersAfter, isEmpty);
+      await expectLater(
+        client.pingPeer(peer.deviceId),
+        throwsA(isA<CashierUnpairedException>()),
+      );
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
   });
 
   test('manual address pairing syncs when cashier clock is ahead', () async {
@@ -355,6 +430,149 @@ void main() {
             .label,
         'Cashier-1',
       );
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
+  test('cashier sale command is idempotent and uses Main prices', () async {
+    await _withHarness((harness) async {
+      await harness.trustPeer();
+      await harness.store.importEvents([
+        _productCreated(
+          20,
+          deviceId: harness.localDeviceId,
+          entityId: 'command-product-1',
+          barcode: 'COMMAND-1',
+        ),
+        _purchaseRecorded(
+          21,
+          deviceId: harness.localDeviceId,
+          productId: 'command-product-1',
+          quantity: 5,
+        ),
+      ]);
+
+      final command = CashierSaleCommand(
+        commandId: _eventId(22),
+        occurredAt: _now,
+        lines: const [
+          CashierSaleCommandLine(productId: 'command-product-1', quantity: 2),
+        ],
+      );
+      final first = await harness.postCashierSale(command);
+      final second = await harness.postCashierSale(command);
+      final inventory = (await harness.db.query(
+        'inventory_projection',
+        where: 'product_id = ?',
+        whereArgs: ['command-product-1'],
+      )).single;
+      final event = first['event'] as Map<String, Object?>;
+      final payload = event['payload'] as Map<String, Object?>;
+      final line = (payload['line_items'] as List).single as Map;
+
+      expect(first['duplicate'], false);
+      expect(second['duplicate'], true);
+      expect(inventory['quantity'], 3);
+      expect(payload['total_minor'], 200);
+      expect(line['unit_price_minor'], 100);
+      expect(await EventStore(harness.db).count(), 3);
+    });
+  });
+
+  test('cashier sale command rejects insufficient Main stock', () async {
+    await _withHarness((harness) async {
+      await harness.trustPeer();
+      await harness.store.importEvents([
+        _productCreated(
+          23,
+          deviceId: harness.localDeviceId,
+          entityId: 'short-product-1',
+          barcode: 'SHORT-1',
+        ),
+        _purchaseRecorded(
+          24,
+          deviceId: harness.localDeviceId,
+          productId: 'short-product-1',
+          quantity: 1,
+        ),
+      ]);
+
+      final response = await harness.postCashierSaleResponse(
+        CashierSaleCommand(
+          commandId: _eventId(25),
+          occurredAt: _now,
+          lines: const [
+            CashierSaleCommandLine(productId: 'short-product-1', quantity: 2),
+          ],
+        ),
+      );
+      final body = await _json(response);
+      final inventory = (await harness.db.query(
+        'inventory_projection',
+        where: 'product_id = ?',
+        whereArgs: ['short-product-1'],
+      )).single;
+
+      expect(response.statusCode, HttpStatus.conflict);
+      expect(body['error'], CashierSaleCommandException.insufficientStock);
+      expect(body['product_ids'], ['short-product-1']);
+      expect(inventory['quantity'], 1);
+      expect(await EventStore(harness.db).count(), 2);
+    });
+  });
+
+  test('locked cashier recordSale submits a retry-safe sale command', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = mainRepository.createLanSyncServer();
+    final client = cashierRepository.createLanSyncClient();
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Command Tea',
+        barcode: 'COMMAND-TEA',
+        salePriceMinor: 400,
+        purchaseCostMinor: 150,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 5),
+      ]);
+      await server.start(address: InternetAddress.loopbackIPv4);
+      final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+      await client.pairWithServer(pairing);
+      await cashierRepository.lockDeviceRole(DeviceRole.cashierDevice);
+      final cashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+
+      await cashierRepository.recordSale([
+        TransactionLineDraft(product: cashierProduct!, quantity: 2),
+      ]);
+      final mainProduct = await mainRepository.productById(product.productId);
+      final updatedCashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final cashierHistory = await cashierRepository.transactionHistory(
+        TransactionHistoryKind.sale,
+        scope: ReportScope.localDevice,
+      );
+
+      expect(mainProduct?.quantity, 3);
+      expect(updatedCashierProduct?.quantity, 3);
+      expect(cashierHistory.single.totalMinor, 800);
     } finally {
       client.close();
       await server.stop();
@@ -1037,6 +1255,30 @@ class _Harness {
     );
     expect(response.statusCode, 200);
     return _json(response);
+  }
+
+  Future<Map<String, Object?>> postCashierSale(
+    CashierSaleCommand command,
+  ) async {
+    final response = await postCashierSaleResponse(command);
+    expect(response.statusCode, 200);
+    return _json(response);
+  }
+
+  Future<Response> postCashierSaleResponse(CashierSaleCommand command) async {
+    final body = jsonEncode(command.toJson());
+    final uri = Uri.parse('http://localhost/cashier/sales');
+    return server.handler(
+      Request(
+        'POST',
+        uri,
+        headers: {
+          'content-type': 'application/json',
+          ..._authHeaders('POST', uri, utf8.encode(body)),
+        },
+        body: body,
+      ),
+    );
   }
 
   Future<Map<String, Object?>> getEvents({

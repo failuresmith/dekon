@@ -112,6 +112,22 @@ class SyncStore {
     return _trustedPeerFromRow(rows.single);
   }
 
+  Future<TrustedPeer?> revokedPeer(String deviceId) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
+             p.shared_secret, p.last_pulled_hlc, p.last_pushed_hlc
+      FROM devices d
+      JOIN sync_peers p ON p.peer_device_id = d.device_id
+      WHERE d.device_id = ? AND d.trust_status = 'revoked'
+      LIMIT 1
+      ''',
+      [deviceId],
+    );
+    if (rows.isEmpty) return null;
+    return _trustedPeerFromRow(rows.single);
+  }
+
   Future<List<TrustedPeer>> trustedPeers() async {
     final rows = await _db.rawQuery('''
       SELECT d.device_id, d.display_name, d.trust_status, p.base_url,
@@ -127,6 +143,28 @@ class SyncStore {
       if (peer != null) peers.add(peer);
     }
     return peers;
+  }
+
+  Future<void> revokePeer(String deviceId) async {
+    if (deviceId == localDeviceId) {
+      throw ArgumentError.value(deviceId, 'deviceId', 'Cannot revoke self.');
+    }
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      await txn.update(
+        'devices',
+        {'trust_status': 'revoked', 'updated_at': now, 'last_seen_at': null},
+        where: 'device_id = ? AND trust_status = ?',
+        whereArgs: [deviceId, 'trusted'],
+      );
+      await txn.update(
+        'sync_peers',
+        {'last_error': 'peer_unpaired', 'updated_at': now},
+        where: 'peer_device_id = ?',
+        whereArgs: [deviceId],
+      );
+    });
+    activityBus?.notifySyncStateChanged();
   }
 
   TrustedPeer? _trustedPeerFromRow(Map<String, Object?> row) {
@@ -532,6 +570,196 @@ class SyncStore {
     );
   }
 
+  Future<CashierSaleCommandResult> recordCashierSaleCommand({
+    required String cashierDeviceId,
+    required CashierSaleCommand command,
+  }) async {
+    CashierSaleCommandResult? commandResult;
+    int? projectionVersion;
+    var accepted = false;
+    var affectedProductIds = <String>{};
+    final now = _now().toUtc();
+    await _db.transaction((txn) async {
+      final existing = await txn.query(
+        'events',
+        where: 'event_id = ?',
+        whereArgs: [command.commandId],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        final event = EventEnvelope.fromStorage(existing.single);
+        if (event.type != EventTypes.inventorySaleRecorded ||
+            event.deviceId != cashierDeviceId ||
+            event.entityId != command.commandId) {
+          throw const CashierSaleCommandException(
+            CashierSaleCommandException.commandConflict,
+          );
+        }
+        commandResult = CashierSaleCommandResult(
+          commandId: command.commandId,
+          saleId: event.entityId,
+          duplicate: true,
+          event: event,
+        );
+        return;
+      }
+
+      final saleLines = await _cashierSaleLinesForCommand(txn, command);
+      affectedProductIds = {for (final line in saleLines) line.productId};
+      final event = EventEnvelope.local(
+        eventId: command.commandId,
+        deviceId: cashierDeviceId,
+        hlc: HybridLogicalTimestamp(
+          physicalTimeMillis: now.millisecondsSinceEpoch,
+          logicalCounter: 0,
+          nodeId: cashierDeviceId,
+        ),
+        type: EventTypes.inventorySaleRecorded,
+        entityId: command.commandId,
+        payload: {
+          'occurred_at': command.occurredAt.toUtc().toIso8601String(),
+          'total_minor': saleLines.fold<int>(
+            0,
+            (sum, line) => sum + line.lineTotalMinor,
+          ),
+          'line_items': [for (final line in saleLines) line.toPayload()],
+        },
+        createdAt: now,
+      );
+      final write = await _eventStore.appendInTransaction(txn, event);
+      if (write.status != EventWriteStatus.accepted) {
+        throw const CashierSaleCommandException(
+          CashierSaleCommandException.commandConflict,
+        );
+      }
+      await _projector.applyInTransaction(txn, event);
+      projectionVersion =
+          await SyncStore.incrementCashierProjectionVersionInTransaction(
+            txn,
+            now: now,
+          );
+      accepted = true;
+      commandResult = CashierSaleCommandResult(
+        commandId: command.commandId,
+        saleId: event.entityId,
+        duplicate: false,
+        projectionVersion: projectionVersion,
+        event: event,
+      );
+    });
+
+    if (accepted) {
+      activityBus?.notifyEventsChanged();
+      final version = projectionVersion;
+      if (version != null) {
+        activityBus?.notifyCashierProjectionUpdate(
+          await _cashierInventoryPatchMessage(version, affectedProductIds),
+        );
+      }
+    }
+    return commandResult!;
+  }
+
+  Future<List<_CashierSaleEventLine>> _cashierSaleLinesForCommand(
+    Transaction txn,
+    CashierSaleCommand command,
+  ) async {
+    if (command.lines.isEmpty) {
+      throw const CashierSaleCommandException(
+        CashierSaleCommandException.invalidCommand,
+      );
+    }
+    final quantitiesByProductId = <String, double>{};
+    for (final line in command.lines) {
+      final productId = line.productId.trim();
+      if (productId.isEmpty || !line.quantity.isFinite || line.quantity <= 0) {
+        throw const CashierSaleCommandException(
+          CashierSaleCommandException.invalidCommand,
+        );
+      }
+      quantitiesByProductId[productId] =
+          (quantitiesByProductId[productId] ?? 0) + line.quantity;
+    }
+
+    final saleLines = <_CashierSaleEventLine>[];
+    final unavailable = <String>[];
+    final insufficient = <String>[];
+    for (final productId in quantitiesByProductId.keys.toList()..sort()) {
+      final quantity = quantitiesByProductId[productId]!;
+      final rows = await txn.rawQuery(
+        '''
+        SELECT p.product_id, p.sale_price_minor, p.active,
+               COALESCE(i.quantity, 0) AS quantity
+        FROM products_projection p
+        LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+        WHERE p.product_id = ?
+        LIMIT 1
+        ''',
+        [productId],
+      );
+      if (rows.isEmpty || rows.single['active'] != 1) {
+        unavailable.add(productId);
+        continue;
+      }
+      final stockQuantity = (rows.single['quantity'] as num).toDouble();
+      if (stockQuantity < quantity) {
+        insufficient.add(productId);
+        continue;
+      }
+      saleLines.add(
+        _CashierSaleEventLine(
+          productId: productId,
+          quantity: quantity,
+          unitPriceMinor: rows.single['sale_price_minor'] as int,
+        ),
+      );
+    }
+    if (unavailable.isNotEmpty) {
+      throw CashierSaleCommandException(
+        CashierSaleCommandException.productUnavailable,
+        productIds: unavailable,
+      );
+    }
+    if (insufficient.isNotEmpty) {
+      throw CashierSaleCommandException(
+        CashierSaleCommandException.insufficientStock,
+        productIds: insufficient,
+      );
+    }
+    return saleLines;
+  }
+
+  Future<Map<String, Object?>> _cashierInventoryPatchMessage(
+    int projectionVersion,
+    Set<String> productIds,
+  ) async {
+    final products = <CashierInventoryPatchProduct>[];
+    for (final productId in productIds.toList()..sort()) {
+      products.add(
+        CashierInventoryPatchProduct(
+          productId: productId,
+          stockQuantity: await _stockFor(productId),
+        ),
+      );
+    }
+    return serializeCashierInventoryPatchMessage(
+      projectionVersion: projectionVersion,
+      products: products,
+    );
+  }
+
+  Future<double> _stockFor(String productId) async {
+    final rows = await _db.query(
+      'inventory_projection',
+      columns: ['quantity'],
+      where: 'product_id = ?',
+      whereArgs: [productId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return 0;
+    return (rows.single['quantity'] as num).toDouble();
+  }
+
   int _compareEventCreation(EventEnvelope a, EventEnvelope b) {
     final created = a.createdAt.compareTo(b.createdAt);
     if (created != 0) return created;
@@ -696,4 +924,24 @@ class SyncStore {
     final trimmed = value.trim();
     return trimmed.isEmpty ? 'Peer' : trimmed;
   }
+}
+
+class _CashierSaleEventLine {
+  const _CashierSaleEventLine({
+    required this.productId,
+    required this.quantity,
+    required this.unitPriceMinor,
+  });
+
+  final String productId;
+  final double quantity;
+  final int unitPriceMinor;
+
+  int get lineTotalMinor => (quantity * unitPriceMinor).round();
+
+  Map<String, Object?> toPayload() => {
+    'product_id': productId,
+    'quantity': quantity,
+    'unit_price_minor': unitPriceMinor,
+  };
 }

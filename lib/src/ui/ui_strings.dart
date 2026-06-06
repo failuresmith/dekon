@@ -298,6 +298,7 @@ class UiStrings {
   }
 
   String get stopPairing => _text(en: 'Stop Pairing', fa: 'توقف جفت سازی');
+  String get unpair => _text(en: 'Unpair', fa: 'قطع جفت سازی');
   String get technicalDetails {
     return _text(en: 'Technical details', fa: 'جزئیات فنی');
   }
@@ -530,6 +531,24 @@ class UiStrings {
     return _text(en: 'Trusted cashier device', fa: 'دستگاه صندوق مورد اعتماد');
   }
 
+  String get unpairCashierQuestion {
+    return _text(en: 'Unpair cashier device?', fa: 'جفت سازی صندوق قطع شود؟');
+  }
+
+  String unpairCashierHelp(String label) {
+    return _text(
+      en: '$label will back up its sale history, reset, and must pair with a main device again before use.',
+      fa: '$label سابقه فروش خود را پشتیبان می گیرد، بازنشانی می شود و پیش از استفاده باید دوباره با دستگاه اصلی جفت شود.',
+    );
+  }
+
+  String get couldNotUnpairCashier {
+    return _text(
+      en: 'Could not unpair this cashier. Check the connection and try again.',
+      fa: 'قطع جفت سازی این صندوق انجام نشد. اتصال را بررسی کنید و دوباره تلاش کنید.',
+    );
+  }
+
   String get startingPairing =>
       _text(en: 'Starting pairing', fa: 'شروع جفت سازی');
   String get scanQrFromCashier {
@@ -694,6 +713,45 @@ class UiStrings {
   }
 
   String get pair => _text(en: 'Pair', fa: 'جفت کردن');
+
+  String get cashierUnpairedTitle {
+    return _text(en: 'Cashier unpaired', fa: 'صندوق قطع جفت سازی شد');
+  }
+
+  String get cashierUnpairedHelp {
+    return _text(
+      en: 'This cashier was unpaired by the main device. Sale history must be backed up before this device resets and pairs again.',
+      fa: 'این صندوق توسط دستگاه اصلی قطع جفت سازی شد. پیش از بازنشانی و جفت سازی دوباره، سابقه فروش باید پشتیبان گیری شود.',
+    );
+  }
+
+  String get backupSaleHistoryAndReset {
+    return _text(
+      en: 'Back up sale history and reset',
+      fa: 'پشتیبان گیری سابقه فروش و بازنشانی',
+    );
+  }
+
+  String get backingUpSaleHistory {
+    return _text(
+      en: 'Backing up sale history...',
+      fa: 'در حال پشتیبان گیری سابقه فروش...',
+    );
+  }
+
+  String get backupRequiredBeforeReset {
+    return _text(
+      en: 'Backup is required before reset. Choose where to save the backup and try again.',
+      fa: 'پیش از بازنشانی، پشتیبان لازم است. محل ذخیره پشتیبان را انتخاب کنید و دوباره تلاش کنید.',
+    );
+  }
+
+  String get cashierResetReadyToPair {
+    return _text(
+      en: 'Cashier reset. Pair with a main device to continue.',
+      fa: 'صندوق بازنشانی شد. برای ادامه با یک دستگاه اصلی جفت کنید.',
+    );
+  }
 
   String get editProduct => _text(en: 'Edit Product', fa: 'ویرایش کالا');
   String get createProduct => _text(en: 'Create Product', fa: 'ایجاد کالا');
@@ -869,7 +927,10 @@ class UiStrings {
   }
 
   String saveFailed(Object error) {
-    return _text(en: 'Save failed: $error', fa: 'ذخیره ناموفق بود: $error');
+    return _text(
+      en: 'Save failed. Check the connection and try again.',
+      fa: 'ذخیره ناموفق بود. اتصال را بررسی کنید و دوباره تلاش کنید.',
+    );
   }
 
   String get negativeStockWarning {

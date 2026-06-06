@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'src/app_config.dart';
 import 'src/application/application.dart';
+import 'src/backup/backup.dart';
 import 'src/ui/app_shell.dart';
 import 'src/ui/barcode_scanner_dialog.dart';
 import 'src/ui/cashier_pairing_panel.dart';
@@ -18,12 +19,14 @@ class MainApp extends StatefulWidget {
     super.key,
     this.repositoryFactory,
     this.scanBarcode,
+    this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
   });
 
   final RepositoryFactory? repositoryFactory;
   final BarcodeScanLauncher? scanBarcode;
+  final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
 
@@ -88,6 +91,7 @@ class _MainAppState extends State<MainApp> {
               home: AppShell(
                 repository: startup.repository,
                 scanBarcode: widget.scanBarcode ?? showBarcodeScannerDialog,
+                backupFiles: widget.backupFiles,
                 pairWithMainDevice: widget.pairWithMainDevice,
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
               ),

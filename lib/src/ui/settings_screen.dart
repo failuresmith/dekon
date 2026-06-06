@@ -365,6 +365,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   bool? _roleLocked;
   var _serverBusy = false;
   String? _serverError;
+  String? _unpairingDeviceId;
 
   @override
   Widget build(BuildContext context) {
@@ -401,7 +402,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     if (server == null) {
       return Text(context.strings.deviceSyncUnavailable);
     }
-    final running = server.isRunning;
+    final pairing = server.pairingQrData != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -428,7 +429,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
           ),
           const SizedBox(height: 12),
         ],
-        if (running) _activePairing(server) else _startPairingButton(),
+        if (pairing) _activePairing(server) else _startPairingButton(),
         const SizedBox(height: 12),
         _technicalDetails(server),
       ],
@@ -456,6 +457,17 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
               leading: const Icon(Icons.phone_android),
               title: Text(cashier.label),
               subtitle: Text(strings.trustedCashierDevice),
+              trailing: OutlinedButton(
+                key: Key('unpair-cashier-${cashier.deviceId}'),
+                onPressed: _unpairingDeviceId == null
+                    ? () => _confirmUnpairCashier(cashier)
+                    : null,
+                child: Text(
+                  _unpairingDeviceId == cashier.deviceId
+                      ? strings.working
+                      : strings.unpair,
+                ),
+              ),
             ),
         ],
       ],
@@ -597,7 +609,8 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
       _serverError = null;
     });
     try {
-      await widget.syncServer!.start();
+      await widget.syncServer!.start(enablePairing: true);
+      await widget.repository.setMainSyncServerEnabled(true);
     } catch (_) {
       _serverError = strings.couldNotStartPairing;
     } finally {
@@ -618,10 +631,58 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     });
     try {
       await widget.syncServer!.stop();
+      await widget.repository.setMainSyncServerEnabled(false);
     } catch (_) {
       _serverError = strings.couldNotStopPairing;
     } finally {
       if (mounted) setState(() => _serverBusy = false);
+    }
+  }
+
+  Future<void> _confirmUnpairCashier(CashierReportFilter cashier) async {
+    final strings = context.strings;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.unpairCashierQuestion),
+        content: Text(strings.unpairCashierHelp(cashier.label)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            key: const Key('confirm-unpair-cashier'),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(strings.unpair),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _unpairCashier(cashier.deviceId);
+  }
+
+  Future<void> _unpairCashier(String deviceId) async {
+    final strings = context.strings;
+    setState(() {
+      _unpairingDeviceId = deviceId;
+      _serverError = null;
+    });
+    try {
+      final server = widget.syncServer;
+      if (server != null) {
+        await server.unpairCashier(deviceId);
+      } else {
+        await widget.repository.createSyncStore().revokePeer(deviceId);
+      }
+      if (!mounted) return;
+      setState(() {
+        _cashiersFuture = widget.repository.cashierReportFilters();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _serverError = strings.couldNotUnpairCashier);
+    } finally {
+      if (mounted) setState(() => _unpairingDeviceId = null);
     }
   }
 }

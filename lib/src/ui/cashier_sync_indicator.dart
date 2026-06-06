@@ -163,6 +163,8 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         await _syncWithMainDevice();
         _setConnected(true);
         await _startProjectionStream();
+      } on CashierUnpairedException {
+        await _handleUnpaired();
       } catch (_) {
         _setConnected(false);
       } finally {
@@ -288,10 +290,18 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         await client.applyCashierProjectionMessage(peerDeviceId, message);
       }
       _setConnected(true);
+    } on CashierUnpairedException {
+      await _handleUnpaired();
     } catch (_) {
       _setConnected(false);
       unawaited(_refresh());
     }
+  }
+
+  Future<void> _handleUnpaired() async {
+    _closeProjectionStream();
+    await widget.repository.markCashierUnpairBackupRequired();
+    _setConnected(false);
   }
 
   void _handleProjectionStreamClosed() {
