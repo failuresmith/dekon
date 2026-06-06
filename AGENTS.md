@@ -190,6 +190,34 @@ Main-device Reports must support filtering by trusted cashier device so cashier 
 
 A paired cashier device must expose Inventory using the latest successfully synced main-device stock snapshot.
 
+The main device may leave the store for several hours during normal operation.
+Disconnected Cashier selling is therefore a supported degraded mode, not a
+blocking error state.
+
+When the main device is unavailable, a paired cashier may complete Sell
+transactions against its latest successfully synced Cashier-safe inventory
+snapshot. The cashier must persist those sales as bounded durable sale commands
+in a local outbox; it must not append authoritative inventory events or mutate
+global inventory while offline.
+
+Cashier offline sale commands must:
+
+- Use stable command IDs for retry-safe Main-device submission.
+- Preserve enough local sale detail for audit and conflict review.
+- Reduce Cashier-local available stock while queued, syncing, or conflicted so
+  the cashier does not keep selling the same local snapshot quantity.
+- Stop draining later sale commands when an earlier command is conflicted.
+- Resolve conflicts through an audit-safe state transition such as voiding the
+  pending command or submitting a corrected replacement; do not hard-delete
+  pending sale history as the normal resolution path.
+
+When the cashier reconnects, the main device remains authoritative. Main must
+validate each queued sale command against current authoritative product and
+stock state, apply accepted commands atomically and idempotently, and return
+specific conflict reasons for rejected commands. A conflict pauses only the
+cashier sale-command outbox drain; projection snapshots, pairing status, and
+other sync health checks should continue so the cashier can recover.
+
 Cashier-device Reports must clearly indicate and enforce local-device transaction scope.
 
 A cashier device must not present local reports in a way that implies they represent the complete store-wide state.

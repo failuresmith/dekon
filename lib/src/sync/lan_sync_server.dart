@@ -34,11 +34,16 @@ class LanSyncServer {
   HttpServer? _server;
   String? _baseUrl;
   SyncPairingPayload? _pairingPayload;
+  var _discoveryAdvertisement = const SyncDiscoveryAdvertisement.inactive();
   StreamSubscription<Map<String, Object?>>? _projectionSubscription;
   final _projectionSockets = <WebSocket, String>{};
 
   bool get isRunning => _server != null;
   String? get serverUrl => _baseUrl;
+  SyncDiscoveryAdvertisement get discoveryAdvertisement {
+    return _discoveryAdvertisement;
+  }
+
   bool isCashierConnected(String deviceId) {
     return _projectionSockets.containsValue(deviceId.trim());
   }
@@ -55,28 +60,46 @@ class LanSyncServer {
 
   Future<void> start({
     InternetAddress? address,
-    int port = 0,
+    int port = syncDefaultLanPort,
     Duration pairingTtl = const Duration(minutes: 10),
     bool enablePairing = true,
   }) async {
     if (_server != null) {
+      await refreshDiscoveryAdvertisement();
       if (enablePairing) startPairing(ttl: pairingTtl);
       return;
     }
-    final server = await HttpServer.bind(
-      address ?? InternetAddress.anyIPv4,
-      port,
-    );
+    final server = await _bindServer(address ?? InternetAddress.anyIPv4, port);
     _server = server;
     _projectionSubscription = store.activityBus?.cashierProjectionUpdates
         .listen(_broadcastProjectionUpdate);
     server.listen((request) {
       unawaited(_handleHttpRequest(request));
     });
+    await refreshDiscoveryAdvertisement();
+    if (enablePairing) startPairing(ttl: pairingTtl);
+  }
+
+  Future<HttpServer> _bindServer(InternetAddress address, int port) async {
+    try {
+      return await HttpServer.bind(address, port);
+    } on SocketException {
+      if (port == 0) rethrow;
+      return HttpServer.bind(address, 0);
+    }
+  }
+
+  Future<SyncDiscoveryAdvertisement> refreshDiscoveryAdvertisement() async {
+    final server = _server;
+    if (server == null) {
+      _discoveryAdvertisement = const SyncDiscoveryAdvertisement.inactive();
+      return _discoveryAdvertisement;
+    }
     final host = await _displayHost(server);
     _baseUrl = 'http://$host:${server.port}';
+    _refreshPairingPayloadBaseUrl();
     await _registerDiscoveryService(server.port);
-    if (enablePairing) startPairing(ttl: pairingTtl);
+    return _discoveryAdvertisement;
   }
 
   SyncPairingPayload startPairing({
@@ -117,6 +140,7 @@ class LanSyncServer {
     _baseUrl = null;
     _pairingPayload = null;
     await _unregisterDiscoveryService();
+    _discoveryAdvertisement = const SyncDiscoveryAdvertisement.inactive();
     await _projectionSubscription?.cancel();
     _projectionSubscription = null;
     for (final socket in _projectionSockets.keys.toList()) {
@@ -130,13 +154,22 @@ class LanSyncServer {
 
   Future<void> _registerDiscoveryService(int port) async {
     final discovery = serviceDiscovery;
-    if (discovery == null) return;
+    if (discovery == null) {
+      _discoveryAdvertisement = SyncDiscoveryAdvertisement.unsupported(
+        checkedAt: _now().toUtc(),
+      );
+      return;
+    }
     try {
-      await discovery.registerMainService(
+      final advertisement = await discovery.registerMainService(
         deviceId: store.localDeviceId,
         port: port,
       );
+      _discoveryAdvertisement = advertisement.checked(_now().toUtc());
     } on Object {
+      _discoveryAdvertisement = SyncDiscoveryAdvertisement.failed(
+        checkedAt: _now().toUtc(),
+      );
       // QR/manual address pairing remains available when local discovery fails.
     }
   }
@@ -149,6 +182,22 @@ class LanSyncServer {
     } on Object {
       // The OS also drops the advertisement when the process exits.
     }
+  }
+
+  void _refreshPairingPayloadBaseUrl() {
+    final payload = _pairingPayload;
+    final baseUrl = _baseUrl;
+    if (payload == null ||
+        baseUrl == null ||
+        payload.expiresAt.isBefore(_now().toUtc())) {
+      return;
+    }
+    _pairingPayload = SyncPairingPayload(
+      baseUrl: baseUrl,
+      serverDeviceId: payload.serverDeviceId,
+      pairingSecret: payload.pairingSecret,
+      expiresAt: payload.expiresAt,
+    );
   }
 
   Future<void> _sendUnpairMessage(String deviceId) async {

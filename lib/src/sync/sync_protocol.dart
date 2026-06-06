@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../domain/events/events.dart';
 
 const syncProtocolVersion = 1;
+const syncDefaultLanPort = 40739;
 
 class SyncCursor {
   const SyncCursor({required this.hlc, required this.eventId});

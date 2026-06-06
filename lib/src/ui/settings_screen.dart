@@ -372,6 +372,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
   DeviceRole? _role;
   bool? _roleLocked;
   var _serverBusy = false;
+  var _discoveryRefreshBusy = false;
   String? _serverError;
   String? _unpairingDeviceId;
 
@@ -451,6 +452,14 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
           _InlineStatus(
             icon: Icons.warning_amber,
             text: _serverError!,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (server.discoveryAdvertisement.needsAttention) ...[
+          _InlineStatus(
+            icon: Icons.warning_amber,
+            text: context.strings.mdnsAdvertisingNeedsAttention,
             color: Theme.of(context).colorScheme.error,
           ),
           const SizedBox(height: 12),
@@ -582,6 +591,8 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
           ),
         ),
         const SizedBox(height: 12),
+        _discoveryAdvertisementStatus(server),
+        const SizedBox(height: 12),
         _peerMessagesButton(),
       ],
     );
@@ -592,8 +603,76 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
       key: const Key('cashier-sync-technical-details'),
       tilePadding: EdgeInsets.zero,
       title: Text(context.strings.technicalDetails),
-      children: [_peerMessagesButton()],
+      children: [
+        _CashierDiscoveryDiagnostics(
+          repository: widget.repository,
+          syncServiceDiscovery: widget.syncServiceDiscovery,
+        ),
+        const SizedBox(height: 12),
+        _peerMessagesButton(),
+      ],
     );
+  }
+
+  Widget _discoveryAdvertisementStatus(LanSyncServer server) {
+    final strings = context.strings;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          strings.mdnsAdvertising,
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          _advertisementText(server.discoveryAdvertisement, strings),
+          key: const Key('sync-mdns-advertising-status'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          key: const Key('refresh-mdns-advertising'),
+          onPressed: _discoveryRefreshBusy
+              ? null
+              : () => _refreshDiscoveryAdvertisement(server),
+          icon: const Icon(Icons.refresh),
+          label: Text(
+            _discoveryRefreshBusy
+                ? strings.working
+                : strings.refreshMdnsAdvertising,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _advertisementText(
+    SyncDiscoveryAdvertisement advertisement,
+    UiStrings strings,
+  ) {
+    return switch (advertisement.state) {
+      SyncDiscoveryAdvertisementState.inactive =>
+        strings.mdnsAdvertisingInactive,
+      SyncDiscoveryAdvertisementState.unsupported =>
+        strings.mdnsAdvertisingUnsupported,
+      SyncDiscoveryAdvertisementState.advertising =>
+        strings.mdnsAdvertisingActive(
+          port: advertisement.port ?? 0,
+          checkedAt: _checkedAt(advertisement, strings),
+        ),
+      SyncDiscoveryAdvertisementState.failed => strings.mdnsAdvertisingFailed(
+        _checkedAt(advertisement, strings),
+      ),
+    };
+  }
+
+  String _checkedAt(
+    SyncDiscoveryAdvertisement advertisement,
+    UiStrings strings,
+  ) {
+    final checkedAt = advertisement.checkedAt;
+    return checkedAt == null
+        ? strings.notCheckedYet
+        : strings.timeOfDay(checkedAt);
   }
 
   Widget _peerMessagesButton() {
@@ -674,6 +753,15 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     }
   }
 
+  Future<void> _refreshDiscoveryAdvertisement(LanSyncServer server) async {
+    setState(() => _discoveryRefreshBusy = true);
+    try {
+      await server.refreshDiscoveryAdvertisement();
+    } finally {
+      if (mounted) setState(() => _discoveryRefreshBusy = false);
+    }
+  }
+
   Future<void> _stopServer() async {
     final strings = context.strings;
     setState(() {
@@ -735,6 +823,139 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
     } finally {
       if (mounted) setState(() => _unpairingDeviceId = null);
     }
+  }
+}
+
+class _CashierDiscoveryDiagnostics extends StatefulWidget {
+  const _CashierDiscoveryDiagnostics({
+    required this.repository,
+    required this.syncServiceDiscovery,
+  });
+
+  final DekonRepository repository;
+  final SyncServiceDiscovery syncServiceDiscovery;
+
+  @override
+  State<_CashierDiscoveryDiagnostics> createState() {
+    return _CashierDiscoveryDiagnosticsState();
+  }
+}
+
+class _CashierDiscoveryDiagnosticsState
+    extends State<_CashierDiscoveryDiagnostics> {
+  var _busy = false;
+  List<DiscoveredSyncService>? _services;
+  Set<String> _trustedPeerIds = const {};
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          strings.mdnsDiscovery,
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          strings.cashierMdnsPresenceNote,
+          key: const Key('cashier-mdns-presence-note'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          key: const Key('cashier-mdns-scan-button'),
+          onPressed: _busy ? null : _scan,
+          icon: const Icon(Icons.travel_explore),
+          label: Text(_busy ? strings.scanningMdns : strings.scanMdns),
+        ),
+        const SizedBox(height: 8),
+        _scanResult(strings),
+      ],
+    );
+  }
+
+  Widget _scanResult(UiStrings strings) {
+    if (_failed) {
+      return Text(
+        strings.mdnsScanFailed,
+        key: const Key('cashier-mdns-scan-result'),
+      );
+    }
+    final services = _services;
+    if (services == null) {
+      return Text(
+        strings.mdnsScanNotRun,
+        key: const Key('cashier-mdns-scan-result'),
+      );
+    }
+    if (services.isEmpty) {
+      return Text(
+        strings.mdnsNoMainDevicesFound,
+        key: const Key('cashier-mdns-scan-result'),
+      );
+    }
+    return Column(
+      key: const Key('cashier-mdns-scan-result'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(strings.mdnsMainDevicesFound(services.length)),
+        const SizedBox(height: 4),
+        for (final service in services)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: SelectableText(
+              strings.mdnsDiscoveredMainDevice(
+                deviceId: _displayDeviceId(service),
+                address: service.baseUrl,
+                trustLabel: _trustedPeerIds.contains(service.deviceId)
+                    ? strings.trustedMainDevice
+                    : strings.untrustedMainDevice,
+              ),
+              key: Key('cashier-mdns-service-${_serviceKey(service)}'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _failed = false;
+      _services = null;
+    });
+    try {
+      final trustedPeers = await widget.repository
+          .createSyncStore()
+          .trustedPeers();
+      final services = await widget.syncServiceDiscovery.discoverMainServices();
+      if (!mounted) return;
+      setState(() {
+        _trustedPeerIds = {for (final peer in trustedPeers) peer.deviceId};
+        _services = services;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _shortDeviceId(String deviceId) {
+    if (deviceId.length <= 12) return deviceId;
+    return deviceId.substring(deviceId.length - 12);
+  }
+
+  String _displayDeviceId(DiscoveredSyncService service) {
+    if (service.deviceId.isNotEmpty) return _shortDeviceId(service.deviceId);
+    return service.serviceName;
+  }
+
+  String _serviceKey(DiscoveredSyncService service) {
+    if (service.deviceId.isNotEmpty) return service.deviceId;
+    return '${service.serviceName}-${service.host}-${service.port}';
   }
 }
 

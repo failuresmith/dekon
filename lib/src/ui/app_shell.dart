@@ -43,7 +43,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   var _index = 0;
   var _onboardingCompletedLocally = false;
   late final _syncServer = widget.repository.createLanSyncServer(
@@ -58,6 +58,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _syncStateSubscription = widget.repository.syncStateChanged.listen((_) {
       if (mounted) _reloadRoleSettings(preserveOnboardingFlag: true);
     });
@@ -65,12 +66,20 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     final syncStateSubscription = _syncStateSubscription;
     if (syncStateSubscription != null) {
       unawaited(syncStateSubscription.cancel());
     }
     unawaited(_syncServer.stop());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _syncServer.isRunning) {
+      unawaited(_syncServer.refreshDiscoveryAdvertisement());
+    }
   }
 
   @override

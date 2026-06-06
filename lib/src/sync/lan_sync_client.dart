@@ -30,6 +30,8 @@ class LanSyncClient {
 
   static const _defaultPullWaitTimeout = Duration(seconds: 25);
   static const _maxPullWaitTimeout = Duration(seconds: 30);
+  static const _subnetProbeConcurrency = 32;
+  static const _subnetProbePerHostTimeout = Duration(milliseconds: 250);
 
   void close() => _client.close();
 
@@ -249,6 +251,13 @@ class LanSyncClient {
   }
 
   Future<WebSocket> openCashierProjectionStream(String peerDeviceId) async {
+    return _withAddressDiscoveryRetry(
+      peerDeviceId,
+      () => _openCashierProjectionStream(peerDeviceId),
+    );
+  }
+
+  Future<WebSocket> _openCashierProjectionStream(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final uri = _webSocketUri(peer.baseUrl!, '/cashier/projection-stream');
     final socket = await WebSocket.connect(
@@ -422,15 +431,29 @@ class LanSyncClient {
     String peerDeviceId, {
     Duration timeout = const Duration(seconds: 3),
   }) async {
-    final discovery = serviceDiscovery;
-    if (discovery == null) return false;
     final trustedPeer = await store.trustedPeer(peerDeviceId);
     if (trustedPeer == null) return false;
-    final services = await discovery.discoverMainServices(timeout: timeout);
+    final discovery = serviceDiscovery;
+    if (discovery == null) {
+      return _refreshPeerBaseUrlFromFixedPortSubnet(
+        trustedPeer,
+        timeout: timeout,
+      );
+    }
+    final List<DiscoveredSyncService> services;
+    try {
+      services = await discovery.discoverMainServices(timeout: timeout);
+    } on Object {
+      return _refreshPeerBaseUrlFromFixedPortSubnet(
+        trustedPeer,
+        timeout: timeout,
+      );
+    }
     final tried = <String>{};
     for (final service in services) {
-      if (service.deviceId != peerDeviceId ||
-          service.protocolVersion != syncProtocolVersion ||
+      if ((service.deviceId.isNotEmpty && service.deviceId != peerDeviceId) ||
+          (service.protocolVersion > 0 &&
+              service.protocolVersion != syncProtocolVersion) ||
           !tried.add(service.baseUrl)) {
         continue;
       }
@@ -442,7 +465,10 @@ class LanSyncClient {
         return true;
       }
     }
-    return false;
+    return _refreshPeerBaseUrlFromFixedPortSubnet(
+      trustedPeer,
+      timeout: timeout,
+    );
   }
 
   Future<T> _withAddressDiscoveryRetry<T>(
@@ -462,8 +488,9 @@ class LanSyncClient {
 
   Future<bool> _verifyDiscoveredPeerBaseUrl(
     TrustedPeer trustedPeer,
-    String baseUrl,
-  ) async {
+    String baseUrl, {
+    Duration? timeout,
+  }) async {
     final base = Uri.tryParse(baseUrl);
     if (base == null || !base.hasScheme || base.host.trim().isEmpty) {
       return false;
@@ -481,7 +508,10 @@ class LanSyncClient {
       lastPushedCursor: trustedPeer.lastPushedCursor,
     );
     try {
-      final response = await _authenticatedGet(uri, peer);
+      final request = _authenticatedGet(uri, peer);
+      final response = timeout == null
+          ? await request
+          : await request.timeout(timeout);
       if (response.statusCode != 200) return false;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map || decoded['device_id'] != trustedPeer.deviceId) {
@@ -509,6 +539,101 @@ class LanSyncClient {
     } on Object {
       return false;
     }
+  }
+
+  Future<bool> _refreshPeerBaseUrlFromFixedPortSubnet(
+    TrustedPeer trustedPeer, {
+    required Duration timeout,
+  }) async {
+    final candidates = await _fixedPortSubnetCandidates(
+      trustedPeer,
+      port: syncDefaultLanPort,
+    );
+    if (candidates.isEmpty) return false;
+    final stopwatch = Stopwatch()..start();
+    var nextIndex = 0;
+    var found = false;
+
+    Future<bool> worker() async {
+      while (!found && nextIndex < candidates.length) {
+        final remaining = timeout - stopwatch.elapsed;
+        if (remaining <= Duration.zero) return false;
+        final index = nextIndex++;
+        final baseUrl = candidates[index];
+        final perHostTimeout = remaining < _subnetProbePerHostTimeout
+            ? remaining
+            : _subnetProbePerHostTimeout;
+        final verified = await _verifyDiscoveredPeerBaseUrl(
+          trustedPeer,
+          baseUrl,
+          timeout: perHostTimeout,
+        );
+        if (!verified) continue;
+        found = true;
+        await store.updateTrustedPeerBaseUrl(
+          deviceId: trustedPeer.deviceId,
+          baseUrl: baseUrl,
+        );
+        return true;
+      }
+      return false;
+    }
+
+    final workerCount = candidates.length < _subnetProbeConcurrency
+        ? candidates.length
+        : _subnetProbeConcurrency;
+    final results = await Future.wait([
+      for (var i = 0; i < workerCount; i++) worker(),
+    ]);
+    return results.any((result) => result);
+  }
+
+  Future<List<String>> _fixedPortSubnetCandidates(
+    TrustedPeer trustedPeer, {
+    required int port,
+  }) async {
+    final prefixes = <String>{};
+    final currentHost = Uri.tryParse(trustedPeer.baseUrl ?? '')?.host;
+    final currentPrefix = _ipv4SubnetPrefix(currentHost);
+    if (currentPrefix != null) prefixes.add(currentPrefix);
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          final prefix = _ipv4SubnetPrefix(address.address);
+          if (prefix != null) prefixes.add(prefix);
+        }
+      }
+    } on Object {
+      // mDNS remains the primary automatic discovery path when interfaces
+      // cannot be listed.
+    }
+    final candidates = <String>[];
+    final seen = <String>{};
+    for (final prefix in prefixes) {
+      for (var host = 1; host <= 254; host++) {
+        final baseUrl = 'http://$prefix.$host:$port';
+        if (seen.add(baseUrl)) candidates.add(baseUrl);
+      }
+    }
+    return candidates;
+  }
+
+  String? _ipv4SubnetPrefix(String? host) {
+    if (host == null) return null;
+    final parts = host.split('.');
+    if (parts.length != 4) return null;
+    final numbers = <int>[];
+    for (final part in parts) {
+      final number = int.tryParse(part);
+      if (number == null || number < 0 || number > 255) return null;
+      numbers.add(number);
+    }
+    if (numbers.first == 127 || numbers.first == 0) return null;
+    return '${numbers[0]}.${numbers[1]}.${numbers[2]}';
   }
 
   Future<TrustedPeer> _requiredPeer(String peerDeviceId) async {

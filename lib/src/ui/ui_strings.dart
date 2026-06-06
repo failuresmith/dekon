@@ -618,6 +618,114 @@ class UiStrings {
     return _text(en: 'Local address\n$address', fa: 'نشانی محلی\n$address');
   }
 
+  String get mdnsAdvertising {
+    return _text(en: 'mDNS advertising', fa: 'اعلان mDNS');
+  }
+
+  String get mdnsAdvertisingInactive {
+    return _text(
+      en: 'The Main device is not advertising right now.',
+      fa: 'دستگاه اصلی اکنون اعلان نمی شود.',
+    );
+  }
+
+  String get mdnsAdvertisingUnsupported {
+    return _text(
+      en: 'mDNS advertising is not available on this platform.',
+      fa: 'اعلان mDNS روی این پلتفرم در دسترس نیست.',
+    );
+  }
+
+  String mdnsAdvertisingActive({required int port, required String checkedAt}) {
+    return _text(
+      en: 'Advertising on port ${integer(port)}. Last checked $checkedAt.',
+      fa: 'روی پورت ${integer(port)} اعلان می شود. آخرین بررسی $checkedAt.',
+    );
+  }
+
+  String mdnsAdvertisingFailed(String checkedAt) {
+    return _text(
+      en: 'mDNS advertising failed. Last checked $checkedAt.',
+      fa: 'اعلان mDNS ناموفق بود. آخرین بررسی $checkedAt.',
+    );
+  }
+
+  String get mdnsAdvertisingNeedsAttention {
+    return _text(
+      en: 'Main device mDNS advertising is not working. Cashiers may not find this device automatically.',
+      fa: 'اعلان mDNS دستگاه اصلی کار نمی کند. صندوق ها شاید این دستگاه را خودکار پیدا نکنند.',
+    );
+  }
+
+  String get refreshMdnsAdvertising {
+    return _text(en: 'Refresh mDNS', fa: 'به روزرسانی mDNS');
+  }
+
+  String get mdnsDiscovery {
+    return _text(en: 'mDNS discovery', fa: 'جستجوی mDNS');
+  }
+
+  String get cashierMdnsPresenceNote {
+    return _text(
+      en: 'This cashier does not advertise with mDNS. It discovers Main and then keeps a live connection after pairing.',
+      fa: 'این صندوق با mDNS اعلان نمی شود. دستگاه اصلی را پیدا می کند و پس از جفت سازی اتصال زنده را نگه می دارد.',
+    );
+  }
+
+  String get scanMdns => _text(en: 'Scan mDNS', fa: 'اسکن mDNS');
+  String get scanningMdns => _text(en: 'Scanning mDNS', fa: 'در حال اسکن mDNS');
+
+  String get mdnsScanNotRun {
+    return _text(
+      en: 'No mDNS scan has run yet.',
+      fa: 'هنوز اسکن mDNS انجام نشده است.',
+    );
+  }
+
+  String get mdnsNoMainDevicesFound {
+    return _text(
+      en: 'No Main device advertisements found.',
+      fa: 'هیچ اعلان دستگاه اصلی پیدا نشد.',
+    );
+  }
+
+  String get mdnsScanFailed {
+    return _text(
+      en: 'mDNS scan failed. Check Wi-Fi and try again.',
+      fa: 'اسکن mDNS ناموفق بود. Wi-Fi را بررسی کنید و دوباره تلاش کنید.',
+    );
+  }
+
+  String mdnsMainDevicesFound(int count) {
+    return _text(
+      en: count == 1 ? '1 Main device found.' : '$count Main devices found.',
+      fa: '${integer(count)} دستگاه اصلی پیدا شد.',
+    );
+  }
+
+  String mdnsDiscoveredMainDevice({
+    required String deviceId,
+    required String address,
+    required String trustLabel,
+  }) {
+    return _text(
+      en: '$trustLabel\nDevice $deviceId\n$address',
+      fa: '$trustLabel\nدستگاه $deviceId\n$address',
+    );
+  }
+
+  String get trustedMainDevice {
+    return _text(en: 'Trusted Main device', fa: 'دستگاه اصلی مورد اعتماد');
+  }
+
+  String get untrustedMainDevice {
+    return _text(en: 'Untrusted Main device', fa: 'دستگاه اصلی ناشناس');
+  }
+
+  String get notCheckedYet {
+    return _text(en: 'not checked yet', fa: 'هنوز بررسی نشده');
+  }
+
   String cashierConnectionText(String? displayName) {
     final trimmed = displayName?.trim();
     if (trimmed == null ||

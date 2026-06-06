@@ -116,6 +116,55 @@ void main() {
     },
   );
 
+  testWidgets('indicator retries projection stream after fallback', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    final stream = StreamController<Object?>.broadcast();
+    var projectionAttempts = 0;
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {},
+            syncWithMainDevice: () async {},
+            openProjectionStream: () async {
+              projectionAttempts += 1;
+              if (projectionAttempts == 1) {
+                throw SyncClientException('Projection stream unavailable.');
+              }
+              return stream.stream;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(projectionAttempts, 1);
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-synced')),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
+      await tester.pump();
+
+      expect(projectionAttempts, 2);
+      expect(
+        find.byKey(const Key('cashier-sync-indicator-synced')),
+        findsOneWidget,
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await stream.close();
+      await repository.close();
+    }
+  });
+
   testWidgets('indicator breathes green for at least one second on transfer', (
     tester,
   ) async {

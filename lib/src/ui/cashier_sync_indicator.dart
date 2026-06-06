@@ -46,6 +46,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   static const _size = 8.0;
   static const _minimumSyncVisibleDuration = Duration(seconds: 1);
+  static const _projectionStreamRetryDelay = Duration(seconds: 5);
 
   late final AnimationController _breathing;
   late final Animation<double> _opacity;
@@ -62,6 +63,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   LanSyncClient? _projectionClient;
   WebSocket? _projectionSocket;
   String? _projectionPeerDeviceId;
+  Timer? _projectionRetryTimer;
   var _openingProjectionStream = false;
   var _closingProjectionStream = false;
   var _projectionStreamFallback = false;
@@ -91,7 +93,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _timer?.cancel();
       _transferSubscription?.cancel();
       _eventsChangedSubscription?.cancel();
-      _projectionStreamFallback = false;
+      _clearProjectionStreamFallback();
       _closeProjectionStream();
       _subscribeToRepository();
       unawaited(_refresh());
@@ -100,7 +102,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _subscribeToTransfers();
     } else if (oldWidget.openProjectionStream != widget.openProjectionStream ||
         oldWidget.applyProjectionMessage != widget.applyProjectionMessage) {
-      _projectionStreamFallback = false;
+      _clearProjectionStreamFallback();
       _closeProjectionStream();
       unawaited(_startProjectionStream());
     }
@@ -111,6 +113,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _transferHideTimer?.cancel();
+    _projectionRetryTimer?.cancel();
     _transferSubscription?.cancel();
     _eventsChangedSubscription?.cancel();
     _closeProjectionStream();
@@ -121,7 +124,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _projectionStreamFallback = false;
+      _clearProjectionStreamFallback();
       _closeProjectionStream();
       unawaited(_refresh());
     } else if (state == AppLifecycleState.paused ||
@@ -267,7 +270,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
         onDone: _handleProjectionStreamClosed,
         cancelOnError: true,
       );
-      _projectionStreamFallback = false;
+      _clearProjectionStreamFallback();
       _setConnected(true);
     } on CashierUnpairedException {
       await _handleUnpaired();
@@ -275,6 +278,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
       _closeProjectionStream();
       if (keepConnectedOnFailure) {
         _projectionStreamFallback = true;
+        _scheduleProjectionStreamRetry();
         _setConnected(true);
       } else {
         _setConnected(false);
@@ -333,6 +337,7 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
   }
 
   Future<void> _handleUnpaired() async {
+    _clearProjectionStreamFallback();
     _closeProjectionStream();
     await widget.repository.markCashierUnpairBackupRequired();
     _setConnected(false);
@@ -359,6 +364,23 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     _projectionClient?.close();
     _projectionClient = null;
     _projectionPeerDeviceId = null;
+  }
+
+  void _clearProjectionStreamFallback() {
+    _projectionRetryTimer?.cancel();
+    _projectionRetryTimer = null;
+    _projectionStreamFallback = false;
+  }
+
+  void _scheduleProjectionStreamRetry() {
+    if (!mounted || !_usesProjectionStream) return;
+    _projectionRetryTimer?.cancel();
+    _projectionRetryTimer = Timer(_projectionStreamRetryDelay, () {
+      _projectionRetryTimer = null;
+      if (!mounted) return;
+      _projectionStreamFallback = false;
+      unawaited(_refresh());
+    });
   }
 
   bool get _usesProjectionStream {

@@ -179,6 +179,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('sync-server-url')), findsOneWidget);
+      expect(
+        find.byKey(const Key('sync-mdns-advertising-status')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Advertising on port 40739'), findsOneWidget);
+      expect(find.byKey(const Key('refresh-mdns-advertising')), findsOneWidget);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();
@@ -256,6 +262,61 @@ void main() {
       }
     },
   );
+
+  testWidgets('Cashier Device Sync scans mDNS and marks trusted Main', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    await repository.lockDeviceRole(DeviceRole.cashierDevice);
+    await repository.createSyncStore().trustPeer(
+      deviceId: 'main-device-000001',
+      displayName: 'Main',
+      sharedSecret: 'shared-secret',
+      baseUrl: 'http://192.168.1.10:40739',
+    );
+    final discovery = _FakeSyncServiceDiscovery(
+      services: const [
+        DiscoveredSyncService(
+          serviceName: 'Dekon-main',
+          host: '192.168.1.55',
+          port: 41111,
+          deviceId: 'main-device-000001',
+          protocolVersion: syncProtocolVersion,
+        ),
+      ],
+    );
+    try {
+      await tester.pumpWidget(
+        _reportsApp(
+          repository,
+          backupFiles: const _FakeBackupFiles(),
+          syncServiceDiscovery: discovery,
+        ),
+      );
+      await _pumpWork(tester);
+      await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('cashier-sync-technical-details')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('cashier-mdns-presence-note')),
+        findsOneWidget,
+      );
+      expect(find.text('No mDNS scan has run yet.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('cashier-mdns-scan-button')));
+      await _pumpUntilFound(tester, find.textContaining('Trusted Main device'));
+
+      expect(discovery.discoverCount, 1);
+      expect(find.textContaining('1 Main device found.'), findsOneWidget);
+      expect(find.textContaining('http://192.168.1.55:41111'), findsOneWidget);
+      expect(find.textContaining('Untrusted Main device'), findsNothing);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await repository.close();
+    }
+  });
 
   testWidgets('Device Sync opens peer messages modal on demand', (
     tester,
@@ -555,6 +616,7 @@ Widget _reportsApp(
   BarcodeScanLauncher? scanBarcode,
   MainDevicePairer? pairWithMainDevice,
   MainDeviceAddressPairer? pairWithMainDeviceAddress,
+  SyncServiceDiscovery syncServiceDiscovery = const NoopSyncServiceDiscovery(),
 }) {
   return _TestLanguageHost(
     child: MaterialApp(
@@ -567,6 +629,7 @@ Widget _reportsApp(
           scanBarcode: scanBarcode ?? showBarcodeScannerDialog,
           pairWithMainDevice: pairWithMainDevice,
           pairWithMainDeviceAddress: pairWithMainDeviceAddress,
+          syncServiceDiscovery: syncServiceDiscovery,
         ),
       ),
     ),
@@ -602,6 +665,35 @@ class _TestLanguageHostState extends State<_TestLanguageHost> {
       controller: _languageController,
       child: widget.child,
     );
+  }
+}
+
+class _FakeSyncServiceDiscovery extends SyncServiceDiscovery {
+  _FakeSyncServiceDiscovery({this.services = const []});
+
+  final List<DiscoveredSyncService> services;
+  var discoverCount = 0;
+
+  @override
+  Future<SyncDiscoveryAdvertisement> registerMainService({
+    required String deviceId,
+    required int port,
+  }) async {
+    return SyncDiscoveryAdvertisement.advertising(
+      deviceId: deviceId,
+      port: port,
+    );
+  }
+
+  @override
+  Future<void> unregisterMainService() async {}
+
+  @override
+  Future<List<DiscoveredSyncService>> discoverMainServices({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    discoverCount += 1;
+    return List.of(services);
   }
 }
 
@@ -682,10 +774,14 @@ class _FakeLanSyncServer extends LanSyncServer {
     : super(store: repository.createSyncStore());
 
   var _running = false;
+  var _advertisement = const SyncDiscoveryAdvertisement.inactive();
   final connectedCashierDeviceIds = <String>{};
 
   @override
   bool get isRunning => _running;
+
+  @override
+  SyncDiscoveryAdvertisement get discoveryAdvertisement => _advertisement;
 
   @override
   String? get serverUrl => _running ? 'http://192.168.1.10:40739' : null;
@@ -713,10 +809,26 @@ class _FakeLanSyncServer extends LanSyncServer {
     bool enablePairing = true,
   }) async {
     _running = true;
+    await refreshDiscoveryAdvertisement();
   }
 
   @override
   Future<void> stop() async {
     _running = false;
+    _advertisement = const SyncDiscoveryAdvertisement.inactive();
+  }
+
+  @override
+  Future<SyncDiscoveryAdvertisement> refreshDiscoveryAdvertisement() async {
+    if (!_running) {
+      _advertisement = const SyncDiscoveryAdvertisement.inactive();
+      return _advertisement;
+    }
+    _advertisement = SyncDiscoveryAdvertisement.advertising(
+      deviceId: store.localDeviceId,
+      port: 40739,
+      checkedAt: DateTime.utc(2026, 6, 5, 12),
+    );
+    return _advertisement;
   }
 }

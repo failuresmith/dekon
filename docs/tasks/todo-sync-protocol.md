@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Cashier UI restriction and sale-blocking sync-state warning implemented; stopped before manual multi-device QA and legacy event-transport cleanup
+Current phase: Cashier offline sale-command outbox in progress; stopped before manual multi-device QA and legacy event-transport cleanup
 Last updated: 2026-06-06
 
 ## Verified Existing Architecture
@@ -33,7 +33,8 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Phase 2 now persists Cashier projection versions in `app_settings`; Phase 3 applies full snapshots on Cashier sync, and the current phase repairs incremental version gaps by fetching a fresh Cashier-safe snapshot.
 - Local Main mutations now use a serialized append/project/version/publish path, and locked Cashier sales now submit dedicated sale commands instead of locally queuing arbitrary sale events.
 - Cashier sale commands use UUIDv7 command IDs as deterministic sale event IDs for retry deduplication.
-- Cashier sale completion is blocked in the UI when the Cashier sync indicator reports a disconnected Main device, with a visible user-facing warning.
+- Main may leave the store for several hours during normal operation, so disconnected Cashier selling must be supported as a bounded degraded mode.
+- Cashier sale completion must persist a local sale command while offline and must not append authoritative sale events until Main accepts the command.
 
 ## Completed
 
@@ -101,7 +102,11 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Accepted sale command responses include the accepted sale event so the Cashier can keep local sale history before refreshing its Cashier-safe inventory snapshot.
 - Main can revoke a paired Cashier; revoked devices receive `peer_unpaired`, and the Cashier blocks sale recording until sale history is backed up and local pairing state is reset.
 - Locked Cashier navigation exposes Sell and read-only Inventory only; Restock, global Reports, product creation, product editing, purchase cost, and Backup/Restore settings are hidden from ordinary Cashier flow.
-- The Cashier sync indicator now reports a small public `CashierSyncStatus`; the Sell screen uses it to block completion only while the Main connection is disconnected.
+- The Cashier sync indicator now reports a small public `CashierSyncStatus`; the Sell screen uses it to explain offline-sale behavior and conflict state instead of treating disconnection as a sale blocker.
+- Locked Cashier offline sales are modeled as durable sale commands in a bounded local outbox with `queued`, `syncing`, `accepted`, `conflict`, and `voided` states.
+- Queued, syncing, and conflicted sale commands reduce Cashier-local available stock until Main accepts the command or the cashier voids the pending command.
+- Main remains authoritative: on reconnect, queued commands are submitted FIFO, Main validates current product/stock state atomically, accepted commands become ordinary sale events, and rejected commands pause only the sale-command outbox drain.
+- Conflict resolution is audit-safe: pending commands are voided or replaced through explicit state transitions, not hard-deleted as the normal recovery path.
 
 ## Residual Risks
 
@@ -109,7 +114,7 @@ The propagation defect is that Main has no push channel and no centralized repli
 - Sync-state UI remains intentionally small and does not yet explain projection-stream fallback or gap repair in detail.
 - The current event-log polling path still coexists with projection snapshots and pushes; cursor semantics and projection-authority handoff need a later cleanup decision before the old Cashier event serializer can be removed.
 - The current event-log sanitizer and generic `/events` sale acceptance still exist for compatibility; locked Cashier UI uses sale commands, but the legacy remote sale-event path should be removed or explicitly versioned in a later cleanup.
-- Cashier sale submission now fails closed when Main is unavailable; if the connection drops after the UI has already allowed submission, the fallback error is still the generic save-failed message.
+- Cashier offline sale outbox still needs manual multi-device QA for several-hours-away Main-device operation.
 - No manual multi-device QA has been run.
 
 ## Verification Log
@@ -260,7 +265,6 @@ Do not implement:
 - Distributed consensus
 - MQTT brokers
 - Cloud synchronization
-- Offline queued sales
 - Offline queued restocks
 - Configurable role editors
 - Employee accounts

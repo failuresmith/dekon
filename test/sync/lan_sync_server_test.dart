@@ -147,6 +147,56 @@ void main() {
     }
   });
 
+  test('server uses the fixed sync port by default', () async {
+    final db = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final repository = await DekonRepository.open(database: db);
+    final server = repository.createLanSyncServer();
+    try {
+      await server.start(
+        address: InternetAddress.loopbackIPv4,
+        enablePairing: false,
+      );
+
+      expect(Uri.parse(server.serverUrl!).port, syncDefaultLanPort);
+    } finally {
+      await server.stop();
+      await repository.close();
+    }
+  });
+
+  test(
+    'server falls back to an ephemeral port when requested port is busy',
+    () async {
+      final busyServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final repository = await DekonRepository.open(database: db);
+      final server = repository.createLanSyncServer();
+      try {
+        await server.start(
+          address: InternetAddress.loopbackIPv4,
+          port: busyServer.port,
+          enablePairing: false,
+        );
+
+        final fallbackPort = Uri.parse(server.serverUrl!).port;
+        expect(fallbackPort, isNot(busyServer.port));
+        expect(fallbackPort, greaterThan(0));
+      } finally {
+        await server.stop();
+        await repository.close();
+        await busyServer.close(force: true);
+      }
+    },
+  );
+
   test('records redacted peer messages for pairing exchange', () async {
     await _withHarness((harness) async {
       final pairing = harness.server.createPairingPayload(
@@ -268,10 +318,19 @@ void main() {
 
         expect(discovery.registeredDeviceId, harness.localDeviceId);
         expect(discovery.registeredPort, greaterThan(0));
+        expect(
+          server.discoveryAdvertisement.state,
+          SyncDiscoveryAdvertisementState.advertising,
+        );
+        expect(server.discoveryAdvertisement.port, discovery.registeredPort);
 
         await server.stop();
 
         expect(discovery.unregisterCount, 1);
+        expect(
+          server.discoveryAdvertisement.state,
+          SyncDiscoveryAdvertisementState.inactive,
+        );
       } finally {
         await server.stop();
       }
@@ -326,6 +385,186 @@ void main() {
     },
   );
 
+  test(
+    'cashier verifies discovered main URL when TXT identity is missing',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final discovery = _FakeSyncServiceDiscovery();
+      final server = mainRepository.createLanSyncServer(
+        serviceDiscovery: discovery,
+      );
+      final client = cashierRepository.createLanSyncClient(
+        serviceDiscovery: discovery,
+      );
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+        final serverUri = Uri.parse(server.serverUrl!);
+        discovery.services
+          ..clear()
+          ..add(
+            DiscoveredSyncService(
+              serviceName: 'Dekon-without-txt',
+              host: serverUri.host,
+              port: serverUri.port,
+              deviceId: '',
+              protocolVersion: 0,
+            ),
+          );
+
+        await cashierRepository.createSyncStore().updateTrustedPeerBaseUrl(
+          deviceId: peer.deviceId,
+          baseUrl: 'http://127.0.0.1:1',
+        );
+
+        await client.pingPeer(peer.deviceId);
+
+        final refreshed = await cashierRepository.createSyncStore().trustedPeer(
+          peer.deviceId,
+        );
+        expect(refreshed?.baseUrl, server.serverUrl);
+      } finally {
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
+  test(
+    'cashier refreshes stale main URL before opening projection stream',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final discovery = _FakeSyncServiceDiscovery();
+      final server = mainRepository.createLanSyncServer(
+        serviceDiscovery: discovery,
+      );
+      final client = cashierRepository.createLanSyncClient(
+        serviceDiscovery: discovery,
+      );
+      WebSocket? socket;
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+        await cashierRepository.createSyncStore().updateTrustedPeerBaseUrl(
+          deviceId: peer.deviceId,
+          baseUrl: 'http://127.0.0.1:1',
+        );
+
+        socket = await client.openCashierProjectionStream(peer.deviceId);
+
+        final cashierDeviceId = cashierRepository
+            .createSyncStore()
+            .localDeviceId;
+        final refreshed = await cashierRepository.createSyncStore().trustedPeer(
+          peer.deviceId,
+        );
+        expect(server.isCashierConnected(cashierDeviceId), true);
+        expect(refreshed?.baseUrl, server.serverUrl);
+        expect(discovery.discoverCount, greaterThanOrEqualTo(1));
+      } finally {
+        await socket?.close();
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
+  test('cashier probes fixed port subnet when mDNS finds nothing', () async {
+    await _withHarness((harness) async {
+      await harness.store.trustPeer(
+        deviceId: _peerDeviceId,
+        displayName: 'Main',
+        sharedSecret: _sharedSecret,
+        baseUrl: 'http://192.168.55.10:1234',
+      );
+      final discovery = _FakeSyncServiceDiscovery();
+      final client = LanSyncClient(
+        store: harness.store,
+        serviceDiscovery: discovery,
+        client: MockClient((request) async {
+          if (request.url.host != '192.168.55.77' ||
+              request.url.port != syncDefaultLanPort ||
+              request.url.path != '/sync/state') {
+            throw const SocketException('No sync server at this address.');
+          }
+          final nonce = request.url.queryParameters['nonce'];
+          return http.Response(
+            jsonEncode({
+              'device_id': _peerDeviceId,
+              'event_count': 0,
+              'unsupported_event_count': 0,
+              'trusted_peer_count': 1,
+              if (nonce != null)
+                'response_auth': {
+                  'nonce': nonce,
+                  'signature': SyncAuthenticator(now: () => _now)
+                      .signStateResponse(
+                        nonce: nonce,
+                        deviceId: _peerDeviceId,
+                        sharedSecret: _sharedSecret,
+                      ),
+                },
+            }),
+            200,
+          );
+        }),
+      );
+      try {
+        await client.pingPeer(_peerDeviceId);
+
+        final peer = await harness.store.trustedPeer(_peerDeviceId);
+        expect(peer?.baseUrl, 'http://192.168.55.77:$syncDefaultLanPort');
+        expect(discovery.discoverCount, 1);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
+  test(
+    'discovery parser keeps host and port when TXT attributes are absent',
+    () {
+      final service = DiscoveredSyncService.fromPlatformMap({
+        'serviceName': 'Dekon-main',
+        'host': '192.168.1.55',
+        'port': 41111,
+      });
+
+      expect(service, isNotNull);
+      expect(service?.deviceId, '');
+      expect(service?.protocolVersion, 0);
+      expect(service?.baseUrl, 'http://192.168.1.55:41111');
+    },
+  );
+
   test('cashier rejects discovered URL without signed state proof', () async {
     await _withHarness((harness) async {
       await harness.store.trustPeer(
@@ -377,6 +616,39 @@ void main() {
       }
     });
   });
+
+  test(
+    'cashier keeps original connection failure when discovery fails',
+    () async {
+      await _withHarness((harness) async {
+        await harness.store.trustPeer(
+          deviceId: _peerDeviceId,
+          displayName: 'Main',
+          sharedSecret: _sharedSecret,
+          baseUrl: 'http://old-main.local:1234',
+        );
+        final discovery = _FakeSyncServiceDiscovery(
+          discoverError: StateError('nsd failed'),
+        );
+        final client = LanSyncClient(
+          store: harness.store,
+          serviceDiscovery: discovery,
+          client: MockClient((request) async {
+            throw const SocketException('stale address');
+          }),
+        );
+        try {
+          await expectLater(
+            client.pingPeer(_peerDeviceId),
+            throwsA(isA<SocketException>()),
+          );
+          expect(discovery.discoverCount, 1);
+        } finally {
+          client.close();
+        }
+      });
+    },
+  );
 
   test('unpaired cashier receives peer_unpaired on next sync', () async {
     final mainDb = await CoreDatabase.open(
@@ -1556,17 +1828,20 @@ Future<void> _withHarness(Future<void> Function(_Harness harness) body) async {
 }
 
 class _FakeSyncServiceDiscovery extends SyncServiceDiscovery {
-  _FakeSyncServiceDiscovery({List<DiscoveredSyncService> services = const []})
-    : services = List.of(services);
+  _FakeSyncServiceDiscovery({
+    List<DiscoveredSyncService> services = const [],
+    this.discoverError,
+  }) : services = List.of(services);
 
   final List<DiscoveredSyncService> services;
+  final Object? discoverError;
   String? registeredDeviceId;
   int? registeredPort;
   var unregisterCount = 0;
   var discoverCount = 0;
 
   @override
-  Future<void> registerMainService({
+  Future<SyncDiscoveryAdvertisement> registerMainService({
     required String deviceId,
     required int port,
   }) async {
@@ -1583,6 +1858,10 @@ class _FakeSyncServiceDiscovery extends SyncServiceDiscovery {
           protocolVersion: syncProtocolVersion,
         ),
       );
+    return SyncDiscoveryAdvertisement.advertising(
+      deviceId: deviceId,
+      port: port,
+    );
   }
 
   @override
@@ -1595,6 +1874,8 @@ class _FakeSyncServiceDiscovery extends SyncServiceDiscovery {
     Duration timeout = const Duration(seconds: 3),
   }) async {
     discoverCount += 1;
+    final error = discoverError;
+    if (error != null) throw error;
     return List.of(services);
   }
 }
