@@ -18,6 +18,7 @@ class LanSyncServer {
   LanSyncServer({
     required this.store,
     this.serviceDiscovery,
+    this.projectionHeartbeatInterval = const Duration(seconds: 15),
     DateTime Function()? now,
   }) : _authenticator = SyncAuthenticator(now: now),
        _authorization = const AuthorizationService(),
@@ -28,6 +29,7 @@ class LanSyncServer {
 
   final SyncStore store;
   final SyncServiceDiscovery? serviceDiscovery;
+  final Duration? projectionHeartbeatInterval;
   final SyncAuthenticator _authenticator;
   final AuthorizationService _authorization;
   final DateTime Function() _now;
@@ -465,6 +467,7 @@ class LanSyncServer {
       return;
     }
     final socket = await WebSocketTransformer.upgrade(request);
+    socket.pingInterval = projectionHeartbeatInterval;
     _projectionSockets[socket] = peer.deviceId;
     await store.markPeerSuccess(peer.deviceId);
     socket.done.whenComplete(() {

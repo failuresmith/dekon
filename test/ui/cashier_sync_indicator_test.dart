@@ -249,6 +249,66 @@ void main() {
     }
   });
 
+  testWidgets('dropped projection stream refreshes before reconnecting', (
+    tester,
+  ) async {
+    final repository = await createTestRepository();
+    final firstStream = StreamController<Object?>.broadcast();
+    final secondStream = StreamController<Object?>.broadcast();
+    final events = <String>[];
+    final appliedMessages = <Object?>[];
+    var openAttempts = 0;
+    try {
+      await tester.pumpWidget(
+        _indicatorApp(
+          CashierSyncIndicator(
+            repository: repository,
+            pollInterval: null,
+            pingMainDevice: () async {
+              events.add('ping');
+            },
+            syncWithMainDevice: () async {
+              events.add('sync');
+            },
+            openProjectionStream: () async {
+              events.add('open');
+              openAttempts += 1;
+              return openAttempts == 1
+                  ? firstStream.stream
+                  : secondStream.stream;
+            },
+            applyProjectionMessage: (message) async {
+              events.add('apply');
+              appliedMessages.add(message);
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(events, ['ping', 'sync', 'open']);
+
+      await firstStream.close();
+      await tester.pump();
+      await tester.pump();
+
+      expect(events, ['ping', 'sync', 'open', 'ping', 'sync', 'open']);
+
+      secondStream.add('fresh-delta');
+      await tester.pump();
+      await tester.pump();
+
+      expect(events, ['ping', 'sync', 'open', 'ping', 'sync', 'open', 'apply']);
+      expect(appliedMessages, ['fresh-delta']);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      if (!firstStream.isClosed) await firstStream.close();
+      if (!secondStream.isClosed) await secondStream.close();
+      await repository.close();
+    }
+  });
+
   testWidgets('indicator breathes green for at least one second on transfer', (
     tester,
   ) async {

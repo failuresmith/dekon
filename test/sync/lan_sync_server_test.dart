@@ -1648,6 +1648,7 @@ void main() {
         expect(server.isCashierConnected(cashierDeviceId), false);
         final socket = await client.openCashierProjectionStream(peer.deviceId);
         addTearDown(socket.close);
+        expect(socket.pingInterval, const Duration(seconds: 15));
         expect(server.isCashierConnected(cashierDeviceId), true);
         final nextMessage = socket.first.timeout(const Duration(seconds: 2));
 

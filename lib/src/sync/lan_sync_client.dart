@@ -42,6 +42,7 @@ class LanSyncClient {
     required this.store,
     this.serviceDiscovery,
     this.timeouts = const LanSyncTimeouts(),
+    this.projectionHeartbeatInterval = const Duration(seconds: 15),
     http.Client? client,
     this.webSocketConnector,
     DateTime Function()? now,
@@ -52,6 +53,7 @@ class LanSyncClient {
   final SyncStore store;
   final SyncServiceDiscovery? serviceDiscovery;
   final LanSyncTimeouts timeouts;
+  final Duration? projectionHeartbeatInterval;
   final CashierProjectionWebSocketConnector? webSocketConnector;
   final http.Client _client;
   final SyncAuthenticator _authenticator;
@@ -336,6 +338,7 @@ class LanSyncClient {
       operation: 'Projection WebSocket connect',
       peerDeviceId: peer.deviceId,
     );
+    socket.pingInterval = projectionHeartbeatInterval;
     await store.markPeerSuccess(peer.deviceId);
     return socket;
   }

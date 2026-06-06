@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 3 - complete
+Current phase: Phase 4 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -24,6 +24,9 @@ Last updated: 2026-06-06
 - Phase 3: Cashier indicator now shows degraded amber when ping succeeds but sync freshness or projection stream health is missing.
 - Phase 3: Cashier indicator now shows conflicted and unpaired visual states.
 - Phase 3: Main app-bar Cashier connection indicator now uses live projection WebSocket presence from `LanSyncServer`, not recent `last_seen_at`.
+- Phase 4 scope: add WebSocket heartbeat for the Cashier projection stream and verify reconnect fetches a fresh snapshot before reopening the stream.
+- Phase 4: Main and Cashier projection WebSockets now set Dart `WebSocket.pingInterval` to 15 seconds by default.
+- Phase 4: unexpected projection stream closure continues through the existing refresh path: ping, full sync/snapshot repair, then reopen stream.
 
 ## Decisions
 
@@ -33,6 +36,7 @@ Last updated: 2026-06-06
 - Phase 2: operation timeouts do not trigger immediate address-discovery retry or subnet probing; stale-address socket failures still do. This keeps timeout failures bounded and preserves the operation-specific timeout code. Discovery backoff and throttling remain Phase 11.
 - Phase 3: `last_seen_at` remains diagnostic state only; the Main app-bar live connection dot requires an active authenticated projection WebSocket.
 - Phase 3: the indicator does not breathe merely because a sync future is in progress; breathing remains tied to actual transfer activity.
+- Phase 4: heartbeat uses Dart's built-in WebSocket ping/pong handling instead of an app-level heartbeat message. If pongs stop arriving, Dart closes the socket; the Cashier marks the stream disconnected through `onDone` and runs snapshot sync before reconnecting.
 
 ## Tests Added
 
@@ -52,6 +56,8 @@ Last updated: 2026-06-06
 - Outbox conflict shows a conflicted indicator state.
 - Unpaired Cashier shows an unpaired indicator state.
 - Main shell does not show a live Cashier connection dot for a merely trusted/recently seen Cashier without a live socket.
+- Projection WebSocket client has a heartbeat ping interval.
+- Dropped projection stream refreshes sync before reconnecting and applying later pushed messages.
 
 ## Validation Log
 
@@ -61,6 +67,11 @@ Commands run:
 - `docker compose run --rm flutter-dev dart format lib/src/sync/sync_access_control.dart test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev dart format test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart test/ui/cashier_sync_indicator_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/cashier_sync_indicator_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
@@ -106,6 +117,10 @@ Results:
 - Focused `flutter test test/ui/main_cashier_connection_indicator_test.dart` passed.
 - Phase 3 `flutter analyze` passed with no issues.
 - Phase 3 `git diff --check` passed.
+- Phase 4 focused `flutter test test/ui/cashier_sync_indicator_test.dart` passed.
+- Phase 4 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 4 `flutter analyze` passed with no issues.
+- Phase 4 `git diff --check` passed.
 
 ## Manual QA
 
@@ -117,7 +132,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 4 through Phase 11 are not implemented yet.
+- Phase 5 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---
