@@ -15,6 +15,7 @@ class CashierPairingPanel extends StatefulWidget {
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
     this.onPaired,
   });
 
@@ -22,6 +23,7 @@ class CashierPairingPanel extends StatefulWidget {
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
   final VoidCallback? onPaired;
 
   @override
@@ -115,7 +117,9 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
       await injected(payload);
       return;
     }
-    final client = widget.repository.createLanSyncClient();
+    final client = widget.repository.createLanSyncClient(
+      serviceDiscovery: widget.syncServiceDiscovery,
+    );
     try {
       await client.pairWithServer(payload, displayName: 'Cashier Device');
     } finally {
@@ -129,7 +133,9 @@ class _CashierPairingPanelState extends State<CashierPairingPanel> {
       await injected(address);
       return;
     }
-    final client = widget.repository.createLanSyncClient();
+    final client = widget.repository.createLanSyncClient(
+      serviceDiscovery: widget.syncServiceDiscovery,
+    );
     try {
       await client.pairWithManualAddress(
         address,

@@ -8,11 +8,13 @@ import 'sync_access_control.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
+import 'sync_service_discovery.dart';
 import 'sync_store.dart';
 
 class LanSyncClient {
   LanSyncClient({
     required this.store,
+    this.serviceDiscovery,
     http.Client? client,
     DateTime Function()? now,
   }) : _client = client ?? http.Client(),
@@ -20,6 +22,7 @@ class LanSyncClient {
        _now = now ?? DateTime.now;
 
   final SyncStore store;
+  final SyncServiceDiscovery? serviceDiscovery;
   final http.Client _client;
   final SyncAuthenticator _authenticator;
   final DateTime Function() _now;
@@ -121,6 +124,21 @@ class LanSyncClient {
     bool waitForRemoteEvents = false,
     Duration waitTimeout = _defaultPullWaitTimeout,
   }) async {
+    return _withAddressDiscoveryRetry(
+      peerDeviceId,
+      () => _syncWithPeer(
+        peerDeviceId,
+        waitForRemoteEvents: waitForRemoteEvents,
+        waitTimeout: waitTimeout,
+      ),
+    );
+  }
+
+  Future<void> _syncWithPeer(
+    String peerDeviceId, {
+    required bool waitForRemoteEvents,
+    required Duration waitTimeout,
+  }) async {
     while (true) {
       final result = await pushToPeer(peerDeviceId);
       _throwIfRejected('Push', result);
@@ -132,6 +150,7 @@ class LanSyncClient {
       if (!result.hasEventOutcomes) break;
     }
     await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
+    await _drainCashierSaleOutbox(peerDeviceId, limit: 100);
     if (!waitForRemoteEvents) return;
     var waitForNextPull = waitForRemoteEvents;
     while (true) {
@@ -148,6 +167,13 @@ class LanSyncClient {
   }
 
   Future<void> pingPeer(String peerDeviceId) async {
+    return _withAddressDiscoveryRetry(
+      peerDeviceId,
+      () => _pingPeer(peerDeviceId),
+    );
+  }
+
+  Future<void> _pingPeer(String peerDeviceId) async {
     final peer = await _requiredPeer(peerDeviceId);
     final uri = Uri.parse(peer.baseUrl!).resolve('/sync/state');
     final response = await _authenticatedGet(uri, peer);
@@ -244,6 +270,8 @@ class LanSyncClient {
     final response = await _authenticatedPost(uri, body, bodyBytes, peer);
     if (response.statusCode != 200) {
       _throwIfPeerUnpaired(response);
+      final rejection = _cashierSaleCommandRejection(response.body);
+      if (rejection != null) throw rejection;
       throw SyncClientException(
         'Sale command failed with ${response.statusCode}: '
         '${_errorCodeFromBody(response.body)}.',
@@ -263,6 +291,48 @@ class LanSyncClient {
     await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
     await store.markPeerSuccess(peer.deviceId);
     return result;
+  }
+
+  Future<void> drainCashierSaleOutbox(
+    String peerDeviceId, {
+    int limit = 100,
+  }) async {
+    return _withAddressDiscoveryRetry(
+      peerDeviceId,
+      () => _drainCashierSaleOutbox(peerDeviceId, limit: limit),
+    );
+  }
+
+  Future<void> _drainCashierSaleOutbox(
+    String peerDeviceId, {
+    required int limit,
+  }) async {
+    for (var index = 0; index < limit; index++) {
+      final entry = await store.nextCashierSaleCommandForSync();
+      if (entry == null) return;
+      final commandId = entry.command.commandId;
+      await store.markCashierSaleCommandSyncing(commandId);
+      try {
+        final result = await submitCashierSaleCommand(
+          peerDeviceId,
+          entry.command,
+        );
+        await store.markCashierSaleCommandAccepted(
+          commandId: commandId,
+          acceptedEventId: result.event.eventId,
+        );
+      } on CashierSaleCommandRejectedException catch (error) {
+        await store.markCashierSaleCommandConflict(
+          commandId: commandId,
+          errorCode: error.code,
+          productIds: error.productIds,
+        );
+        return;
+      } catch (_) {
+        await store.markCashierSaleCommandQueued(commandId);
+        rethrow;
+      }
+    }
   }
 
   Future<CashierProjectionApplyStatus> applyCashierProjectionMessage(
@@ -346,6 +416,99 @@ class LanSyncClient {
   Future<void> _storeAssignedDisplayName(String? displayName) async {
     if (displayName == null) return;
     await store.updateLocalDeviceDisplayName(displayName);
+  }
+
+  Future<bool> refreshPeerBaseUrlFromDiscovery(
+    String peerDeviceId, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final discovery = serviceDiscovery;
+    if (discovery == null) return false;
+    final trustedPeer = await store.trustedPeer(peerDeviceId);
+    if (trustedPeer == null) return false;
+    final services = await discovery.discoverMainServices(timeout: timeout);
+    final tried = <String>{};
+    for (final service in services) {
+      if (service.deviceId != peerDeviceId ||
+          service.protocolVersion != syncProtocolVersion ||
+          !tried.add(service.baseUrl)) {
+        continue;
+      }
+      if (await _verifyDiscoveredPeerBaseUrl(trustedPeer, service.baseUrl)) {
+        await store.updateTrustedPeerBaseUrl(
+          deviceId: peerDeviceId,
+          baseUrl: service.baseUrl,
+        );
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<T> _withAddressDiscoveryRetry<T>(
+    String peerDeviceId,
+    Future<T> Function() operation,
+  ) async {
+    try {
+      return await operation();
+    } on CashierUnpairedException {
+      rethrow;
+    } catch (error, stackTrace) {
+      final refreshed = await refreshPeerBaseUrlFromDiscovery(peerDeviceId);
+      if (!refreshed) Error.throwWithStackTrace(error, stackTrace);
+      return operation();
+    }
+  }
+
+  Future<bool> _verifyDiscoveredPeerBaseUrl(
+    TrustedPeer trustedPeer,
+    String baseUrl,
+  ) async {
+    final base = Uri.tryParse(baseUrl);
+    if (base == null || !base.hasScheme || base.host.trim().isEmpty) {
+      return false;
+    }
+    final nonce = SyncSecrets.generate(bytes: 16);
+    final uri = base
+        .resolve('/sync/state')
+        .replace(queryParameters: {'nonce': nonce});
+    final peer = TrustedPeer(
+      deviceId: trustedPeer.deviceId,
+      displayName: trustedPeer.displayName,
+      sharedSecret: trustedPeer.sharedSecret,
+      baseUrl: baseUrl,
+      lastPulledCursor: trustedPeer.lastPulledCursor,
+      lastPushedCursor: trustedPeer.lastPushedCursor,
+    );
+    try {
+      final response = await _authenticatedGet(uri, peer);
+      if (response.statusCode != 200) return false;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map || decoded['device_id'] != trustedPeer.deviceId) {
+        return false;
+      }
+      final responseAuth = decoded['response_auth'];
+      if (responseAuth is! Map) return false;
+      final responseNonce = responseAuth['nonce'];
+      final signature = responseAuth['signature'];
+      if (responseNonce is! String ||
+          signature is! String ||
+          responseNonce != nonce) {
+        return false;
+      }
+      final verified = _authenticator.verifyStateResponse(
+        nonce: nonce,
+        deviceId: trustedPeer.deviceId,
+        sharedSecret: trustedPeer.sharedSecret,
+        signature: signature,
+      );
+      if (verified) await store.markPeerSuccess(trustedPeer.deviceId);
+      return verified;
+    } on CashierUnpairedException {
+      return false;
+    } on Object {
+      return false;
+    }
   }
 
   Future<TrustedPeer> _requiredPeer(String peerDeviceId) async {
@@ -560,6 +723,21 @@ class LanSyncClient {
     return 'sync_request_failed';
   }
 
+  CashierSaleCommandRejectedException? _cashierSaleCommandRejection(
+    String body,
+  ) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map || decoded['error'] is! String) return null;
+      return CashierSaleCommandRejectedException(
+        decoded['error'] as String,
+        productIds: _stringList(decoded['product_ids']),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   List<String> _stringList(Object? value) {
     if (value is! List) return const [];
     return [
@@ -590,6 +768,16 @@ class SyncClientException implements Exception {
 
   @override
   String toString() => 'SyncClientException: $message';
+}
+
+class CashierSaleCommandRejectedException implements Exception {
+  CashierSaleCommandRejectedException(this.code, {this.productIds = const []});
+
+  final String code;
+  final List<String> productIds;
+
+  @override
+  String toString() => 'CashierSaleCommandRejectedException: $code';
 }
 
 class CashierUnpairedException implements Exception {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
 import 'ui_strings.dart';
@@ -14,6 +15,7 @@ class DeviceOnboardingScreen extends StatefulWidget {
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
   });
 
   final DekonRepository repository;
@@ -22,6 +24,7 @@ class DeviceOnboardingScreen extends StatefulWidget {
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
 
   @override
   State<DeviceOnboardingScreen> createState() => _DeviceOnboardingScreenState();
@@ -69,6 +72,7 @@ class _DeviceOnboardingScreenState extends State<DeviceOnboardingScreen> {
               scanBarcode: widget.scanBarcode,
               pairWithMainDevice: widget.pairWithMainDevice,
               pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+              syncServiceDiscovery: widget.syncServiceDiscovery,
               onPaired: widget.onCompleted,
             ),
         ],

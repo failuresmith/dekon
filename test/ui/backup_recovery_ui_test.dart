@@ -293,10 +293,7 @@ void main() {
       expect(settings.role, DeviceRole.cashierDevice);
       expect(settings.locked, true);
       expect(settings.onboardingCompleted, true);
-      expect(
-        find.text('Connected to Main device as Cashier-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Paired with Main device as Cashier-1'), findsOneWidget);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();
@@ -346,10 +343,7 @@ void main() {
       expect(settings.role, DeviceRole.cashierDevice);
       expect(settings.locked, true);
       expect(settings.onboardingCompleted, true);
-      expect(
-        find.text('Connected to Main device as Cashier-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Paired with Main device as Cashier-1'), findsOneWidget);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await syncServer.stop();

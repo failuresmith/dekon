@@ -430,7 +430,7 @@ void main() {
       await tester.tap(find.byKey(const Key('settings-device-sync-tile')));
       await tester.pumpAndSettle();
 
-      expect(find.text('0 devices connected'), findsOneWidget);
+      expect(find.text('0 devices paired'), findsOneWidget);
 
       await repository.createSyncStore().trustCashierPeer(
         deviceId: _frontRegisterDeviceId,
@@ -438,7 +438,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('1 device connected'), findsOneWidget);
+      expect(find.text('1 device paired'), findsOneWidget);
       expect(find.text('Cashier-1'), findsOneWidget);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -456,6 +456,9 @@ void main() {
       salePriceMinor: 400,
       purchaseCostMinor: 150,
     );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 3),
+    ]);
     await repository.lockDeviceRole(DeviceRole.cashierDevice);
 
     await tester.pumpWidget(testApp(repository));
@@ -484,7 +487,18 @@ void main() {
     final finishSale = tester.widget<FilledButton>(
       find.byKey(const Key('finish-sale')),
     );
-    expect(finishSale.onPressed, isNull);
+    expect(finishSale.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const Key('finish-sale')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Sale saved on this cashier. It will sync when the main device returns.',
+      ),
+      findsOneWidget,
+    );
+    expect((await repository.cashierSaleOutboxSummary()).queuedCount, 1);
 
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();

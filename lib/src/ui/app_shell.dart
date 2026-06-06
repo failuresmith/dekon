@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import '../backup/backup.dart';
+import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
 import 'cashier_sync_indicator.dart';
@@ -27,6 +28,7 @@ class AppShell extends StatefulWidget {
     this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
   });
 
   final DekonRepository repository;
@@ -35,6 +37,7 @@ class AppShell extends StatefulWidget {
   final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -43,7 +46,9 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   var _index = 0;
   var _onboardingCompletedLocally = false;
-  late final _syncServer = widget.repository.createLanSyncServer();
+  late final _syncServer = widget.repository.createLanSyncServer(
+    serviceDiscovery: widget.syncServiceDiscovery,
+  );
   late Future<DeviceRoleSettings> _roleSettings = widget.repository
       .deviceRoleSettings();
   StreamSubscription<void>? _syncStateSubscription;
@@ -96,6 +101,7 @@ class _AppShellState extends State<AppShell> {
             scanBarcode: widget.scanBarcode,
             pairWithMainDevice: widget.pairWithMainDevice,
             pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+            syncServiceDiscovery: widget.syncServiceDiscovery,
             onCompleted: _reloadRoleSettings,
           );
         }
@@ -176,6 +182,7 @@ class _AppShellState extends State<AppShell> {
           IgnorePointer(
             child: CashierSyncIndicator(
               repository: widget.repository,
+              syncServiceDiscovery: widget.syncServiceDiscovery,
               onStatusChanged: _setCashierSyncStatus,
             ),
           ),
@@ -333,6 +340,7 @@ class _AppShellState extends State<AppShell> {
             scanBarcode: widget.scanBarcode,
             pairWithMainDevice: widget.pairWithMainDevice,
             pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+            syncServiceDiscovery: widget.syncServiceDiscovery,
           ),
         ),
       ),

@@ -41,6 +41,19 @@ class DekonRepository {
     'sale_price_minor',
     'active',
   };
+  static const _effectiveProductQuantitySql =
+      'COALESCE(i.quantity, 0) - '
+      'COALESCE(pending_sale.pending_quantity, 0)';
+  static const _pendingCashierSaleQuantityJoin = '''
+      LEFT JOIN (
+        SELECT l.product_id, SUM(l.quantity) AS pending_quantity
+        FROM cashier_sale_command_outbox_lines l
+        JOIN cashier_sale_command_outbox c
+          ON c.command_id = l.command_id
+        WHERE c.status IN ('queued', 'syncing', 'conflict')
+        GROUP BY l.product_id
+      ) pending_sale ON pending_sale.product_id = p.product_id
+      ''';
   static const _mainSyncServerEnabledKey = 'main_sync_server_enabled';
   static const _cashierUnpairBackupRequiredKey =
       'cashier_unpair_backup_required';
@@ -71,6 +84,19 @@ class DekonRepository {
     _syncActivityBus.clearPeerMessages();
   }
 
+  Future<CashierSaleOutboxSummary> cashierSaleOutboxSummary() async {
+    final counts = await createSyncStore().cashierSaleOutboxCounts();
+    return CashierSaleOutboxSummary(
+      queuedCount: counts[CashierSaleCommandOutboxStatus.queued] ?? 0,
+      syncingCount: counts[CashierSaleCommandOutboxStatus.syncing] ?? 0,
+      conflictCount: counts[CashierSaleCommandOutboxStatus.conflict] ?? 0,
+    );
+  }
+
+  Future<void> voidOldestConflictedCashierSale() async {
+    await createSyncStore().voidOldestConflictedCashierSaleCommand();
+  }
+
   Future<void> close() async {
     await _syncActivityBus.close();
     await _db.close();
@@ -84,12 +110,18 @@ class DekonRepository {
     );
   }
 
-  LanSyncServer createLanSyncServer() {
-    return LanSyncServer(store: createSyncStore());
+  LanSyncServer createLanSyncServer({SyncServiceDiscovery? serviceDiscovery}) {
+    return LanSyncServer(
+      store: createSyncStore(),
+      serviceDiscovery: serviceDiscovery,
+    );
   }
 
-  LanSyncClient createLanSyncClient() {
-    return LanSyncClient(store: createSyncStore());
+  LanSyncClient createLanSyncClient({SyncServiceDiscovery? serviceDiscovery}) {
+    return LanSyncClient(
+      store: createSyncStore(),
+      serviceDiscovery: serviceDiscovery,
+    );
   }
 
   BackupService createBackupService() {
@@ -548,9 +580,10 @@ class DekonRepository {
     if (value.isEmpty) return null;
     final rows = await _db.rawQuery(
       '''
-      SELECT p.*, COALESCE(i.quantity, 0) AS quantity
+      SELECT p.*, $_effectiveProductQuantitySql AS quantity
       FROM products_projection p
       LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      $_pendingCashierSaleQuantityJoin
       WHERE p.active = 1 AND (p.barcode = ? OR p.sku = ?)
       LIMIT 1
       ''',
@@ -565,9 +598,10 @@ class DekonRepository {
     if (value.isEmpty) return const [];
     final rows = await _db.rawQuery(
       '''
-      SELECT p.*, COALESCE(i.quantity, 0) AS quantity
+      SELECT p.*, $_effectiveProductQuantitySql AS quantity
       FROM products_projection p
       LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      $_pendingCashierSaleQuantityJoin
       WHERE p.active = 1 AND LOWER(p.name) LIKE ? ESCAPE '\\'
       ORDER BY p.name ASC
       LIMIT 20
@@ -580,9 +614,10 @@ class DekonRepository {
   Future<ProductSummary?> productById(String productId) async {
     final rows = await _db.rawQuery(
       '''
-      SELECT p.*, COALESCE(i.quantity, 0) AS quantity
+      SELECT p.*, $_effectiveProductQuantitySql AS quantity
       FROM products_projection p
       LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      $_pendingCashierSaleQuantityJoin
       WHERE p.product_id = ?
       LIMIT 1
       ''',
@@ -594,9 +629,10 @@ class DekonRepository {
 
   Future<List<ProductSummary>> products() async {
     final rows = await _db.rawQuery('''
-      SELECT p.*, COALESCE(i.quantity, 0) AS quantity
+      SELECT p.*, $_effectiveProductQuantitySql AS quantity
       FROM products_projection p
       LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      $_pendingCashierSaleQuantityJoin
       ORDER BY p.active DESC, p.name ASC
       ''');
     return rows.map(_productFromRow).toList(growable: false);
@@ -622,13 +658,13 @@ class DekonRepository {
     return (await negativeStockProductIds(lines)).isNotEmpty;
   }
 
-  Future<void> recordSale(List<TransactionLineDraft> lines) async {
+  Future<SaleRecordResult> recordSale(List<TransactionLineDraft> lines) async {
     if (lines.isEmpty) throw StateError('Sale must have at least one item.');
     if (await _shouldSubmitCashierSaleCommand()) {
-      await _submitCashierSaleCommand(lines);
-      return;
+      return _recordCashierSaleCommand(lines);
     }
     await _commitSaleWithStockPatch(lines);
+    return const SaleRecordResult.completed();
   }
 
   Future<bool> _shouldSubmitCashierSaleCommand() async {
@@ -639,20 +675,12 @@ class DekonRepository {
     return settings.role == DeviceRole.cashierDevice && settings.locked;
   }
 
-  Future<void> _submitCashierSaleCommand(
+  Future<SaleRecordResult> _recordCashierSaleCommand(
     List<TransactionLineDraft> lines,
   ) async {
     final store = createSyncStore();
-    final peers = await store.trustedPeers();
-    TrustedPeer? mainPeer;
-    for (final peer in peers) {
-      if (peer.baseUrl != null) {
-        mainPeer = peer;
-        break;
-      }
-    }
-    if (mainPeer == null) {
-      throw SyncClientException('Main device is not paired.');
+    if (await store.hasCashierSaleOutboxConflict()) {
+      throw StateError('Resolve the conflicted cashier sale before selling.');
     }
     final command = CashierSaleCommand(
       commandId: _uuid.v7(),
@@ -665,12 +693,54 @@ class DekonRepository {
           ),
       ],
     );
+    await store.enqueueCashierSaleCommand(
+      command: command,
+      lines: [
+        for (final line in lines)
+          CashierSaleOutboxLine(
+            productId: line.product.productId,
+            productName: line.product.name,
+            quantity: line.quantity,
+            unitPriceMinor: line.unitPriceMinor,
+            lineTotalMinor: line.saleTotalMinor,
+          ),
+      ],
+    );
+    final mainPeer = await _pairedMainPeer(store);
+    if (mainPeer == null) {
+      return SaleRecordResult(
+        status: SaleRecordStatus.queued,
+        commandId: command.commandId,
+      );
+    }
     final client = LanSyncClient(store: store, now: _now);
     try {
-      await client.submitCashierSaleCommand(mainPeer.deviceId, command);
+      await client.drainCashierSaleOutbox(mainPeer.deviceId, limit: 1);
+      final status = await store.cashierSaleCommandStatus(command.commandId);
+      return SaleRecordResult(
+        status: switch (status) {
+          CashierSaleCommandOutboxStatus.accepted => SaleRecordStatus.completed,
+          CashierSaleCommandOutboxStatus.conflict => SaleRecordStatus.conflict,
+          _ => SaleRecordStatus.queued,
+        },
+        commandId: command.commandId,
+      );
+    } on Object {
+      return SaleRecordResult(
+        status: SaleRecordStatus.queued,
+        commandId: command.commandId,
+      );
     } finally {
       client.close();
     }
+  }
+
+  Future<TrustedPeer?> _pairedMainPeer(SyncStore store) async {
+    final peers = await store.trustedPeers();
+    for (final peer in peers) {
+      if (peer.baseUrl != null) return peer;
+    }
+    return null;
   }
 
   Future<void> recordPurchase(List<TransactionLineDraft> lines) async {
@@ -854,22 +924,35 @@ class DekonRepository {
   }
 
   Future<double> _stockFor(String productId) async {
-    final rows = await _db.query(
-      'inventory_projection',
-      columns: ['quantity'],
-      where: 'product_id = ?',
-      whereArgs: [productId],
-      limit: 1,
+    final rows = await _db.rawQuery(
+      '''
+      SELECT
+        COALESCE(i.quantity, 0) -
+        COALESCE(pending_sale.pending_quantity, 0) AS quantity
+      FROM (SELECT ? AS product_id) target
+      LEFT JOIN inventory_projection i ON i.product_id = target.product_id
+      LEFT JOIN (
+        SELECT l.product_id, SUM(l.quantity) AS pending_quantity
+        FROM cashier_sale_command_outbox_lines l
+        JOIN cashier_sale_command_outbox c
+          ON c.command_id = l.command_id
+        WHERE c.status IN ('queued', 'syncing', 'conflict')
+          AND l.product_id = ?
+        GROUP BY l.product_id
+      ) pending_sale ON pending_sale.product_id = target.product_id
+      LIMIT 1
+      ''',
+      [productId, productId],
     );
-    if (rows.isEmpty) return 0;
     return (rows.single['quantity'] as num).toDouble();
   }
 
   Future<List<StockReportRow>> _stockRows() async {
     final rows = await _db.rawQuery('''
-      SELECT p.product_id, p.name, COALESCE(i.quantity, 0) AS quantity
+      SELECT p.product_id, p.name, $_effectiveProductQuantitySql AS quantity
       FROM products_projection p
       LEFT JOIN inventory_projection i ON i.product_id = p.product_id
+      $_pendingCashierSaleQuantityJoin
       WHERE p.active = 1
       ORDER BY p.name ASC
       ''');

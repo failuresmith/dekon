@@ -30,6 +30,8 @@ void main() {
           'sales_projection',
           'purchase_projection',
           'projection_applied_events',
+          'cashier_sale_command_outbox',
+          'cashier_sale_command_outbox_lines',
         }),
       );
       expect(await db.getVersion(), CoreDatabase.schemaVersion);

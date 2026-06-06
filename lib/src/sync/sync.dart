@@ -5,4 +5,5 @@ export 'sync_access_control.dart';
 export 'sync_activity.dart';
 export 'sync_protocol.dart';
 export 'sync_security.dart';
+export 'sync_service_discovery.dart';
 export 'sync_store.dart';

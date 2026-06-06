@@ -19,7 +19,7 @@ class CoreMigration {
 }
 
 abstract final class CoreMigrations {
-  static const currentVersion = 5;
+  static const currentVersion = 6;
 
   static final List<CoreMigration> migrations = [
     CoreMigration(
@@ -42,6 +42,11 @@ abstract final class CoreMigrations {
       version: 5,
       name: 'inventory_lot_costing',
       apply: _inventoryLotCosting,
+    ),
+    CoreMigration(
+      version: 6,
+      name: 'cashier_sale_command_outbox',
+      apply: _cashierSaleCommandOutbox,
     ),
   ];
 
@@ -286,6 +291,48 @@ abstract final class CoreMigrations {
   static Future<void> _inventoryLotCosting(DatabaseExecutor db) async {
     await _createInventoryLotTables(db);
     await _backfillInventoryLots(db);
+  }
+
+  static Future<void> _cashierSaleCommandOutbox(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cashier_sale_command_outbox (
+        command_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'syncing', 'accepted', 'conflict', 'voided')
+        ),
+        command_json TEXT NOT NULL,
+        local_total_minor INTEGER NOT NULL DEFAULT 0,
+        snapshot_projection_version INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_product_ids_json TEXT,
+        accepted_event_id TEXT,
+        resolution_note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_attempted_at TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS cashier_sale_outbox_status_idx
+      ON cashier_sale_command_outbox (status, created_at, command_id)
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cashier_sale_command_outbox_lines (
+        command_id TEXT NOT NULL
+          REFERENCES cashier_sale_command_outbox(command_id),
+        line_index INTEGER NOT NULL,
+        product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit_price_minor INTEGER NOT NULL DEFAULT 0,
+        line_total_minor INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (command_id, line_index)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS cashier_sale_outbox_lines_product_idx
+      ON cashier_sale_command_outbox_lines (product_id)
+    ''');
   }
 
   static Future<void> _backfillInventoryLots(DatabaseExecutor db) async {

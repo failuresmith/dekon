@@ -356,8 +356,40 @@ class UiStrings {
 
   String get cashierSaleConnectionWarning {
     return _text(
-      en: 'Sales are blocked until this cashier reconnects to the main device. Check Device Sync in Settings.',
-      fa: 'تا اتصال دوباره این صندوق به دستگاه اصلی، فروش ثبت نمی شود. همگام سازی دستگاه را در تنظیمات بررسی کنید.',
+      en: 'Main device is away. Sales are saved on this cashier and sync when it returns.',
+      fa: 'دستگاه اصلی در دسترس نیست. فروش ها روی این صندوق ذخیره می شوند و بعدا همگام می شوند.',
+    );
+  }
+
+  String get cashierSaleQueued {
+    return _text(
+      en: 'Sale saved on this cashier. It will sync when the main device returns.',
+      fa: 'فروش روی این صندوق ذخیره شد و بعد از برگشت دستگاه اصلی همگام می شود.',
+    );
+  }
+
+  String get cashierSaleConflictWarning {
+    return _text(
+      en: 'A saved sale needs review before more cashier sales can sync.',
+      fa: 'یک فروش ذخیره شده نیاز به بررسی دارد و فعلا همگام سازی فروش های صندوق متوقف است.',
+    );
+  }
+
+  String get cashierSaleConflictSaved {
+    return _text(
+      en: 'Sale saved, but it needs review before syncing can continue.',
+      fa: 'فروش ذخیره شد، اما قبل از ادامه همگام سازی باید بررسی شود.',
+    );
+  }
+
+  String get voidConflictedSale {
+    return _text(en: 'Void saved sale', fa: 'باطل کردن فروش ذخیره شده');
+  }
+
+  String get cashierSaleConflictVoided {
+    return _text(
+      en: 'Saved sale voided. Sync can continue.',
+      fa: 'فروش ذخیره شده باطل شد. همگام سازی می تواند ادامه پیدا کند.',
     );
   }
 
@@ -527,16 +559,18 @@ class UiStrings {
   }
 
   String get connectedCashierDevices {
-    return _text(en: 'Connected Cashier Devices', fa: 'دستگاه های صندوق متصل');
+    return _text(en: 'Paired Cashier Devices', fa: 'دستگاه های صندوق جفت شده');
   }
 
   String connectedDeviceCount(int count) {
-    if (language == AppLanguage.farsi) return '${integer(count)} دستگاه متصل';
-    return count == 1 ? '1 device connected' : '$count devices connected';
+    if (language == AppLanguage.farsi) {
+      return '${integer(count)} دستگاه جفت شده';
+    }
+    return count == 1 ? '1 device paired' : '$count devices paired';
   }
 
   String get trustedCashierDevice {
-    return _text(en: 'Trusted cashier device', fa: 'دستگاه صندوق مورد اعتماد');
+    return _text(en: 'Paired cashier device', fa: 'دستگاه صندوق جفت شده');
   }
 
   String get unpairCashierQuestion {
@@ -584,13 +618,13 @@ class UiStrings {
         trimmed == 'This device' ||
         trimmed == 'Dekon phone') {
       return _text(
-        en: 'Connected to Main device.',
-        fa: 'به دستگاه اصلی وصل است.',
+        en: 'Paired with Main device.',
+        fa: 'با دستگاه اصلی جفت شده است.',
       );
     }
     return _text(
-      en: 'Connected to Main device as $trimmed',
-      fa: 'به عنوان $trimmed به دستگاه اصلی وصل است',
+      en: 'Paired with Main device as $trimmed',
+      fa: 'به عنوان $trimmed با دستگاه اصلی جفت شده است',
     );
   }
 

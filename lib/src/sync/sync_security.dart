@@ -81,6 +81,32 @@ class SyncAuthenticator {
     return _constantTimeEquals(signature, expected);
   }
 
+  String signStateResponse({
+    required String nonce,
+    required String deviceId,
+    required String sharedSecret,
+  }) {
+    return _stateResponseSignature(
+      nonce: nonce,
+      deviceId: deviceId,
+      sharedSecret: sharedSecret,
+    );
+  }
+
+  bool verifyStateResponse({
+    required String nonce,
+    required String deviceId,
+    required String sharedSecret,
+    required String signature,
+  }) {
+    final expected = _stateResponseSignature(
+      nonce: nonce,
+      deviceId: deviceId,
+      sharedSecret: sharedSecret,
+    );
+    return _constantTimeEquals(signature, expected);
+  }
+
   bool _outsideClockWindow(DateTime timestamp) {
     final current = _now().toUtc();
     final delta = current.isAfter(timestamp)
@@ -116,6 +142,19 @@ class SyncAuthenticator {
   String _pathAndQuery(Uri uri) {
     final path = uri.path.isEmpty ? '/' : uri.path;
     return uri.hasQuery ? '$path?${uri.query}' : path;
+  }
+
+  String _stateResponseSignature({
+    required String nonce,
+    required String deviceId,
+    required String sharedSecret,
+  }) {
+    final canonical = ['sync_state_response', nonce, deviceId].join('\n');
+    final digest = Hmac(
+      sha256,
+      utf8.encode(sharedSecret),
+    ).convert(utf8.encode(canonical));
+    return base64Url.encode(digest.bytes).replaceAll('=', '');
   }
 
   bool _constantTimeEquals(String left, String right) {

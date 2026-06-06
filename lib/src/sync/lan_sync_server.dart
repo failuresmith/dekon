@@ -11,18 +11,23 @@ import 'sync_access_control.dart';
 import 'sync_activity.dart';
 import 'sync_protocol.dart';
 import 'sync_security.dart';
+import 'sync_service_discovery.dart';
 import 'sync_store.dart';
 
 class LanSyncServer {
-  LanSyncServer({required this.store, DateTime Function()? now})
-    : _authenticator = SyncAuthenticator(now: now),
-      _authorization = const AuthorizationService(),
-      _now = now ?? DateTime.now;
+  LanSyncServer({
+    required this.store,
+    this.serviceDiscovery,
+    DateTime Function()? now,
+  }) : _authenticator = SyncAuthenticator(now: now),
+       _authorization = const AuthorizationService(),
+       _now = now ?? DateTime.now;
 
   static const _defaultEventsWaitTimeout = Duration(seconds: 25);
   static const _maxEventsWaitTimeout = Duration(seconds: 30);
 
   final SyncStore store;
+  final SyncServiceDiscovery? serviceDiscovery;
   final SyncAuthenticator _authenticator;
   final AuthorizationService _authorization;
   final DateTime Function() _now;
@@ -66,6 +71,7 @@ class LanSyncServer {
     });
     final host = await _displayHost(server);
     _baseUrl = 'http://$host:${server.port}';
+    await _registerDiscoveryService(server.port);
     if (enablePairing) startPairing(ttl: pairingTtl);
   }
 
@@ -106,6 +112,7 @@ class LanSyncServer {
     _server = null;
     _baseUrl = null;
     _pairingPayload = null;
+    await _unregisterDiscoveryService();
     await _projectionSubscription?.cancel();
     _projectionSubscription = null;
     for (final socket in _projectionSockets.keys.toList()) {
@@ -113,6 +120,29 @@ class LanSyncServer {
     }
     _projectionSockets.clear();
     await server?.close(force: true);
+  }
+
+  Future<void> _registerDiscoveryService(int port) async {
+    final discovery = serviceDiscovery;
+    if (discovery == null) return;
+    try {
+      await discovery.registerMainService(
+        deviceId: store.localDeviceId,
+        port: port,
+      );
+    } on Object {
+      // QR/manual address pairing remains available when local discovery fails.
+    }
+  }
+
+  Future<void> _unregisterDiscoveryService() async {
+    final discovery = serviceDiscovery;
+    if (discovery == null) return;
+    try {
+      await discovery.unregisterMainService();
+    } on Object {
+      // The OS also drops the advertisement when the process exits.
+    }
   }
 
   Future<void> _sendUnpairMessage(String deviceId) async {
@@ -194,11 +224,7 @@ class LanSyncServer {
         if (peer == null) {
           return _authenticationFailed(request, const []);
         }
-        await store.markPeerSuccess(peer.deviceId);
-        return _json(
-          await store.state().then((state) => state.toJson()),
-          request: request,
-        );
+        return _syncState(request, peer);
       }
       return _json(
         {'error': 'not_found'},
@@ -465,6 +491,23 @@ class LanSyncServer {
     }
     await store.markPeerSuccess(peer.deviceId);
     return _json(result.toJson(), request: request);
+  }
+
+  Future<Response> _syncState(Request request, TrustedPeer peer) async {
+    await store.markPeerSuccess(peer.deviceId);
+    final body = await store.state().then((state) => state.toJson());
+    final nonce = request.url.queryParameters['nonce'];
+    if (nonce != null && nonce.trim().isNotEmpty) {
+      body['response_auth'] = {
+        'nonce': nonce,
+        'signature': _authenticator.signStateResponse(
+          nonce: nonce,
+          deviceId: store.localDeviceId,
+          sharedSecret: peer.sharedSecret,
+        ),
+      };
+    }
+    return _json(body, request: request);
   }
 
   Future<TrustedPeer?> _authenticate(

@@ -237,6 +237,59 @@ class CashierSaleCommandException implements Exception {
   String toString() => 'CashierSaleCommandException: $code';
 }
 
+enum CashierSaleCommandOutboxStatus {
+  queued('queued'),
+  syncing('syncing'),
+  accepted('accepted'),
+  conflict('conflict'),
+  voided('voided');
+
+  const CashierSaleCommandOutboxStatus(this.storageValue);
+
+  final String storageValue;
+
+  static CashierSaleCommandOutboxStatus fromStorage(String value) {
+    return CashierSaleCommandOutboxStatus.values.firstWhere(
+      (status) => status.storageValue == value,
+      orElse: () => CashierSaleCommandOutboxStatus.queued,
+    );
+  }
+}
+
+class CashierSaleOutboxCommand {
+  const CashierSaleOutboxCommand({
+    required this.command,
+    required this.status,
+    required this.createdAt,
+    required this.localTotalMinor,
+    this.errorCode,
+    this.errorProductIds = const [],
+  });
+
+  final CashierSaleCommand command;
+  final CashierSaleCommandOutboxStatus status;
+  final DateTime createdAt;
+  final int localTotalMinor;
+  final String? errorCode;
+  final List<String> errorProductIds;
+}
+
+class CashierSaleOutboxLine {
+  const CashierSaleOutboxLine({
+    required this.productId,
+    required this.productName,
+    required this.quantity,
+    required this.unitPriceMinor,
+    required this.lineTotalMinor,
+  });
+
+  final String productId;
+  final String productName;
+  final double quantity;
+  final int unitPriceMinor;
+  final int lineTotalMinor;
+}
+
 class SyncDeviceInfo {
   const SyncDeviceInfo({required this.deviceId, required this.displayName});
 

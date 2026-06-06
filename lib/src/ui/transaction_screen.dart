@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
@@ -30,11 +32,17 @@ class TransactionScreen extends StatefulWidget {
 class _TransactionScreenState extends State<TransactionScreen> {
   final _lines = <TransactionLineDraft>[];
   final _negativeProductIds = <String>{};
+  StreamSubscription<void>? _syncStateSubscription;
   var _saving = false;
+  var _outboxSummary = CashierSaleOutboxSummary.empty;
 
   bool get _isSell => widget.mode == TransactionMode.sell;
+  bool get _isCashierSell => _isSell && widget.cashierSyncStatus != null;
   bool get _cashierSaleDisconnected =>
-      _isSell && widget.cashierSyncStatus == CashierSyncStatus.disconnected;
+      _isCashierSell &&
+      widget.cashierSyncStatus == CashierSyncStatus.disconnected;
+  bool get _cashierSaleHasConflict =>
+      _isCashierSell && _outboxSummary.hasConflict;
   String get _emptyStateText => _isSell
       ? context.strings.sellEmptyState
       : context.strings.restockEmptyState;
@@ -43,6 +51,29 @@ class _TransactionScreenState extends State<TransactionScreen> {
     (sum, line) =>
         sum + (_isSell ? line.saleTotalMinor : line.purchaseTotalMinor),
   );
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToSyncState();
+    unawaited(_refreshOutboxSummary());
+  }
+
+  @override
+  void didUpdateWidget(covariant TransactionScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      _syncStateSubscription?.cancel();
+      _subscribeToSyncState();
+      unawaited(_refreshOutboxSummary());
+    }
+  }
+
+  @override
+  void dispose() {
+    _syncStateSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +89,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
               scanBarcode: widget.scanBarcode,
               allowCreateProduct: !_isSell,
             ),
-            if (_cashierSaleDisconnected) ...[
+            if (_cashierSaleHasConflict) ...[
+              const SizedBox(height: 12),
+              _cashierConflictWarning(),
+            ] else if (_cashierSaleDisconnected) ...[
               const SizedBox(height: 12),
               _cashierSyncWarning(),
             ],
@@ -272,7 +306,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
             const SizedBox(height: 8),
             FilledButton.icon(
               key: Key(_isSell ? 'finish-sale' : 'finish-purchase'),
-              onPressed: _saving || _lines.isEmpty || _cashierSaleDisconnected
+              onPressed: _saving || _lines.isEmpty || _cashierSaleHasConflict
                   ? null
                   : _finish,
               icon: Icon(_isSell ? Icons.check_circle : Icons.inventory),
@@ -310,6 +344,45 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 context.strings.cashierSaleConnectionWarning,
                 style: TextStyle(color: colors.error),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cashierConflictWarning() {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      key: const Key('cashier-sale-conflict-warning'),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.error),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber, color: colors.error, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    context.strings.cashierSaleConflictWarning,
+                    style: TextStyle(color: colors.error),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('void-conflicted-cashier-sale'),
+              onPressed: _saving ? null : _voidConflictedSale,
+              icon: const Icon(Icons.undo),
+              label: Text(context.strings.voidConflictedSale),
             ),
           ],
         ),
@@ -401,9 +474,14 @@ class _TransactionScreenState extends State<TransactionScreen> {
         }
       }
       if (_isSell) {
-        await widget.repository.recordSale(_lines);
+        final result = await widget.repository.recordSale(_lines);
         if (!mounted) return;
-        _message(messenger, strings.saleCompleted);
+        _message(messenger, switch (result.status) {
+          SaleRecordStatus.completed => strings.saleCompleted,
+          SaleRecordStatus.queued => strings.cashierSaleQueued,
+          SaleRecordStatus.conflict => strings.cashierSaleConflictSaved,
+        });
+        unawaited(_refreshOutboxSummary());
       } else {
         await widget.repository.recordPurchase(_lines);
         if (!mounted) return;
@@ -422,6 +500,35 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   void _message(ScaffoldMessengerState messenger, String text) {
     messenger.showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  void _subscribeToSyncState() {
+    _syncStateSubscription = widget.repository.syncStateChanged.listen((_) {
+      unawaited(_refreshOutboxSummary());
+    });
+  }
+
+  Future<void> _refreshOutboxSummary() async {
+    if (!_isCashierSell) return;
+    final summary = await widget.repository.cashierSaleOutboxSummary();
+    if (!mounted) return;
+    setState(() => _outboxSummary = summary);
+  }
+
+  Future<void> _voidConflictedSale() async {
+    final strings = context.strings;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
+    try {
+      await widget.repository.voidOldestConflictedCashierSale();
+      if (!mounted) return;
+      await _refreshOutboxSummary();
+      _message(messenger, strings.cashierSaleConflictVoided);
+    } catch (error) {
+      if (mounted) _message(messenger, strings.saveFailed(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 }
 

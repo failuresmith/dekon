@@ -20,6 +20,7 @@ class CashierSyncIndicator extends StatefulWidget {
     this.syncWithMainDevice,
     this.openProjectionStream,
     this.applyProjectionMessage,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
     this.syncTransfers,
     this.onStatusChanged,
     this.pollInterval = const Duration(seconds: 1),
@@ -31,6 +32,7 @@ class CashierSyncIndicator extends StatefulWidget {
   final CashierSyncOperation? syncWithMainDevice;
   final CashierProjectionStreamFactory? openProjectionStream;
   final CashierProjectionMessageHandler? applyProjectionMessage;
+  final SyncServiceDiscovery syncServiceDiscovery;
   final Stream<SyncTransferActivity>? syncTransfers;
   final ValueChanged<CashierSyncStatus>? onStatusChanged;
   final Duration? pollInterval;
@@ -287,7 +289,10 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     if (peer == null) {
       throw SyncClientException('Main device is not paired.');
     }
-    final client = LanSyncClient(store: store);
+    final client = LanSyncClient(
+      store: store,
+      serviceDiscovery: widget.syncServiceDiscovery,
+    );
     _projectionClient = client;
     _projectionPeerDeviceId = peer.deviceId;
     final socket = await client.openCashierProjectionStream(peer.deviceId);
@@ -369,7 +374,10 @@ class _CashierSyncIndicatorState extends State<CashierSyncIndicator>
     if (peer == null) {
       throw SyncClientException('Main device is not paired.');
     }
-    final client = LanSyncClient(store: store);
+    final client = LanSyncClient(
+      store: store,
+      serviceDiscovery: widget.syncServiceDiscovery,
+    );
     try {
       await body(client, peer);
     } finally {

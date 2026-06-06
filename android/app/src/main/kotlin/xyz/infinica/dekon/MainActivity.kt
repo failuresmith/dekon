@@ -2,10 +2,16 @@ package xyz.infinica.dekon
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.net.wifi.WifiManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -13,9 +19,14 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.util.ArrayDeque
 
 class MainActivity : FlutterActivity() {
     private var pendingBackupSave: PendingBackupSave? = null
+    private var syncRegistrationListener: NsdManager.RegistrationListener? = null
+    private var syncDiscoverySession: SyncDiscoverySession? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         initializeMlKitIfAvailable()
@@ -42,6 +53,23 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SYNC_DISCOVERY_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "registerMainService" -> registerMainService(call, result)
+                "unregisterMainService" -> unregisterMainService(result)
+                "discoverMainServices" -> discoverMainServices(call, result)
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        stopActiveDiscovery()
+        unregisterRegisteredSyncService()
+        super.onDestroy()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -140,6 +168,267 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun registerMainService(call: MethodCall, result: MethodChannel.Result) {
+        val deviceId = call.argument<String>("deviceId")
+        val port = call.argument<Int>("port")
+        val protocolVersion = call.argument<Int>("protocolVersion")
+        if (deviceId.isNullOrBlank() || port == null || port <= 0 || protocolVersion == null) {
+            result.error("invalid_arguments", "Sync discovery arguments are missing.", null)
+            return
+        }
+        val manager = nsdManager()
+        if (manager == null) {
+            result.error("nsd_unavailable", "Network service discovery is unavailable.", null)
+            return
+        }
+
+        unregisterRegisteredSyncService()
+        acquireMulticastLock()
+
+        val listener = object : NsdManager.RegistrationListener {
+            private var completed = false
+
+            override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
+                if (completed) return
+                completed = true
+                result.success(null)
+            }
+
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                if (completed) return
+                completed = true
+                syncRegistrationListener = null
+                releaseMulticastLockIfIdle()
+                result.error(
+                    "registration_failed",
+                    "Sync service registration failed: $errorCode.",
+                    null,
+                )
+            }
+
+            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {}
+
+            override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                Log.w(TAG, "Sync service unregistration failed: $errorCode")
+            }
+        }
+
+        val serviceInfo = NsdServiceInfo().apply {
+            serviceName = "Dekon-${deviceId.takeLast(12)}"
+            serviceType = DEKON_SYNC_SERVICE_TYPE
+            this.port = port
+            setAttribute("device_id", deviceId)
+            setAttribute("protocol_version", protocolVersion.toString())
+        }
+
+        syncRegistrationListener = listener
+        try {
+            manager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+        } catch (error: Exception) {
+            syncRegistrationListener = null
+            releaseMulticastLockIfIdle()
+            result.error("registration_failed", "Sync service registration failed.", null)
+        }
+    }
+
+    private fun unregisterMainService(result: MethodChannel.Result) {
+        unregisterRegisteredSyncService()
+        result.success(null)
+    }
+
+    private fun discoverMainServices(call: MethodCall, result: MethodChannel.Result) {
+        val manager = nsdManager()
+        if (manager == null) {
+            result.error("nsd_unavailable", "Network service discovery is unavailable.", null)
+            return
+        }
+        if (syncDiscoverySession != null) {
+            result.error("discovery_in_progress", "Sync discovery is already running.", null)
+            return
+        }
+        val timeoutMillis = (
+            call.argument<Int>("timeoutMillis") ?: DEFAULT_DISCOVERY_TIMEOUT_MILLIS
+        ).coerceIn(500, MAX_DISCOVERY_TIMEOUT_MILLIS)
+        acquireMulticastLock()
+        val session = SyncDiscoverySession(manager, result)
+        syncDiscoverySession = session
+        session.start(timeoutMillis.toLong())
+    }
+
+    private fun unregisterRegisteredSyncService() {
+        val listener = syncRegistrationListener ?: return
+        syncRegistrationListener = null
+        try {
+            nsdManager()?.unregisterService(listener)
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not unregister sync service.", error)
+        } finally {
+            releaseMulticastLockIfIdle()
+        }
+    }
+
+    private fun stopActiveDiscovery() {
+        syncDiscoverySession?.finishSuccess()
+    }
+
+    private fun nsdManager(): NsdManager? {
+        return getSystemService(Context.NSD_SERVICE) as? NsdManager
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        multicastLock = wifi?.createMulticastLock("dekon-sync-discovery")?.apply {
+            setReferenceCounted(false)
+            try {
+                acquire()
+            } catch (error: SecurityException) {
+                Log.w(TAG, "Could not acquire multicast lock.", error)
+            }
+        }
+    }
+
+    private fun releaseMulticastLockIfIdle() {
+        if (syncRegistrationListener != null || syncDiscoverySession != null) return
+        val lock = multicastLock
+        multicastLock = null
+        if (lock?.isHeld == true) {
+            try {
+                lock.release()
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "Could not release multicast lock.", error)
+            }
+        }
+    }
+
+    private fun isDekonSyncServiceType(serviceType: String?): Boolean {
+        val normalized = serviceType?.trimEnd('.') ?: return false
+        return normalized.equals(DEKON_SYNC_SERVICE_TYPE.trimEnd('.'), ignoreCase = true)
+    }
+
+    private fun NsdServiceInfo.toDiscoveryMap(): Map<String, Any>? {
+        if (!isDekonSyncServiceType(serviceType)) return null
+        val hostAddress = host?.hostAddress ?: return null
+        val deviceId = attributes["device_id"]?.toString(Charsets.UTF_8) ?: return null
+        val protocolVersion = attributes["protocol_version"]
+            ?.toString(Charsets.UTF_8)
+            ?.toIntOrNull()
+            ?: return null
+        if (deviceId.isBlank() || port <= 0) return null
+        return mapOf(
+            "serviceName" to serviceName,
+            "host" to hostAddress,
+            "port" to port,
+            "deviceId" to deviceId,
+            "protocolVersion" to protocolVersion,
+        )
+    }
+
+    private inner class SyncDiscoverySession(
+        private val manager: NsdManager,
+        private val result: MethodChannel.Result,
+    ) {
+        private val results = mutableListOf<Map<String, Any>>()
+        private val pending = ArrayDeque<NsdServiceInfo>()
+        private var resolving = false
+        private var finished = false
+
+        private val discoveryListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(serviceType: String) {}
+
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                if (finished) return
+                if (!isDekonSyncServiceType(serviceInfo.serviceType)) return
+                pending.add(serviceInfo)
+                resolveNext()
+            }
+
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+
+            override fun onDiscoveryStopped(serviceType: String) {}
+
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                finishError("discovery_failed", "Sync discovery failed: $errorCode.")
+            }
+
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                Log.w(TAG, "Sync discovery stop failed: $errorCode")
+            }
+        }
+
+        fun start(timeoutMillis: Long) {
+            mainHandler.postDelayed({ finishSuccess() }, timeoutMillis)
+            try {
+                manager.discoverServices(
+                    DEKON_SYNC_SERVICE_TYPE,
+                    NsdManager.PROTOCOL_DNS_SD,
+                    discoveryListener,
+                )
+            } catch (error: Exception) {
+                finishError("discovery_failed", "Sync discovery failed.")
+            }
+        }
+
+        fun finishSuccess() {
+            if (finished) return
+            finished = true
+            mainHandler.removeCallbacksAndMessages(null)
+            try {
+                manager.stopServiceDiscovery(discoveryListener)
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not stop sync discovery.", error)
+            }
+            if (syncDiscoverySession === this) {
+                syncDiscoverySession = null
+            }
+            releaseMulticastLockIfIdle()
+            result.success(results)
+        }
+
+        private fun finishError(code: String, message: String) {
+            if (finished) return
+            finished = true
+            mainHandler.removeCallbacksAndMessages(null)
+            try {
+                manager.stopServiceDiscovery(discoveryListener)
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not stop failed sync discovery.", error)
+            }
+            if (syncDiscoverySession === this) {
+                syncDiscoverySession = null
+            }
+            releaseMulticastLockIfIdle()
+            result.error(code, message, null)
+        }
+
+        private fun resolveNext() {
+            if (finished || resolving || pending.isEmpty()) return
+            resolving = true
+            val serviceInfo = pending.removeFirst()
+            try {
+                manager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                    override fun onServiceResolved(resolvedService: NsdServiceInfo) {
+                        if (finished) return
+                        resolvedService.toDiscoveryMap()?.let { results.add(it) }
+                        resolving = false
+                        resolveNext()
+                    }
+
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        if (finished) return
+                        Log.w(TAG, "Sync service resolve failed: $errorCode")
+                        resolving = false
+                        resolveNext()
+                    }
+                })
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not resolve sync service.", error)
+                resolving = false
+                resolveNext()
+            }
+        }
+    }
+
     private data class PendingBackupSave(
         val sourcePath: String,
         val fileName: String,
@@ -160,6 +449,10 @@ class MainActivity : FlutterActivity() {
         const val TAG = "DekonMainActivity"
         const val BACKUP_FILES_CHANNEL = "xyz.infinica.dekon/backup_files"
         const val APP_ACTIONS_CHANNEL = "xyz.infinica.dekon/app_actions"
+        const val SYNC_DISCOVERY_CHANNEL = "xyz.infinica.dekon/sync_discovery"
         const val SAVE_BACKUP_REQUEST_CODE = 9101
+        const val DEKON_SYNC_SERVICE_TYPE = "_dekon-sync._tcp."
+        const val DEFAULT_DISCOVERY_TIMEOUT_MILLIS = 3000
+        const val MAX_DISCOVERY_TIMEOUT_MILLIS = 10000
     }
 }

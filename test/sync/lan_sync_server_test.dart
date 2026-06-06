@@ -255,6 +255,129 @@ void main() {
     });
   });
 
+  test('main server advertises and unregisters discovery service', () async {
+    await _withHarness((harness) async {
+      final discovery = _FakeSyncServiceDiscovery();
+      final server = LanSyncServer(
+        store: harness.store,
+        serviceDiscovery: discovery,
+        now: () => _now,
+      );
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+
+        expect(discovery.registeredDeviceId, harness.localDeviceId);
+        expect(discovery.registeredPort, greaterThan(0));
+
+        await server.stop();
+
+        expect(discovery.unregisterCount, 1);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  test(
+    'cashier refreshes stale main URL from authenticated discovery',
+    () async {
+      final mainDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final cashierDb = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final mainRepository = await DekonRepository.open(database: mainDb);
+      final cashierRepository = await DekonRepository.open(database: cashierDb);
+      final discovery = _FakeSyncServiceDiscovery();
+      final server = mainRepository.createLanSyncServer(
+        serviceDiscovery: discovery,
+      );
+      final client = cashierRepository.createLanSyncClient(
+        serviceDiscovery: discovery,
+      );
+      try {
+        await server.start(address: InternetAddress.loopbackIPv4);
+        final pairing = SyncPairingPayload.fromQrJson(server.pairingQrData!);
+        final peer = await client.pairWithServer(pairing);
+
+        await cashierRepository.createSyncStore().updateTrustedPeerBaseUrl(
+          deviceId: peer.deviceId,
+          baseUrl: 'http://127.0.0.1:1',
+        );
+
+        await client.pingPeer(peer.deviceId);
+
+        final refreshed = await cashierRepository.createSyncStore().trustedPeer(
+          peer.deviceId,
+        );
+        expect(refreshed?.baseUrl, server.serverUrl);
+        expect(discovery.discoverCount, greaterThanOrEqualTo(1));
+      } finally {
+        client.close();
+        await server.stop();
+        await mainRepository.close();
+        await cashierRepository.close();
+      }
+    },
+  );
+
+  test('cashier rejects discovered URL without signed state proof', () async {
+    await _withHarness((harness) async {
+      await harness.store.trustPeer(
+        deviceId: _peerDeviceId,
+        displayName: 'Main',
+        sharedSecret: _sharedSecret,
+        baseUrl: 'http://old-main.local:1234',
+      );
+      final discovery = _FakeSyncServiceDiscovery(
+        services: const [
+          DiscoveredSyncService(
+            serviceName: 'Spoof',
+            host: 'spoof.local',
+            port: 7777,
+            deviceId: _peerDeviceId,
+            protocolVersion: syncProtocolVersion,
+          ),
+        ],
+      );
+      final client = LanSyncClient(
+        store: harness.store,
+        serviceDiscovery: discovery,
+        client: MockClient((request) async {
+          if (request.url.host == 'old-main.local') {
+            throw const SocketException('stale address');
+          }
+          return http.Response(
+            jsonEncode({
+              'device_id': _peerDeviceId,
+              'event_count': 0,
+              'unsupported_event_count': 0,
+              'trusted_peer_count': 1,
+            }),
+            200,
+          );
+        }),
+      );
+      try {
+        await expectLater(
+          client.pingPeer(_peerDeviceId),
+          throwsA(isA<SocketException>()),
+        );
+        final peer = await harness.store.trustedPeer(_peerDeviceId);
+
+        expect(peer?.baseUrl, 'http://old-main.local:1234');
+        expect(discovery.discoverCount, 1);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
   test('unpaired cashier receives peer_unpaired on next sync', () async {
     final mainDb = await CoreDatabase.open(
       path: inMemoryDatabasePath,
@@ -575,6 +698,208 @@ void main() {
       expect(mainProduct?.quantity, 3);
       expect(updatedCashierProduct?.quantity, 3);
       expect(cashierHistory.single.totalMinor, 800);
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
+  test(
+    'offline locked cashier sale is queued and reserves local stock',
+    () async {
+      final db = await CoreDatabase.open(
+        path: inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+        singleInstance: false,
+      );
+      final repository = await DekonRepository.open(database: db);
+      try {
+        final product = await repository.createProduct(
+          name: 'Offline Tea',
+          barcode: 'OFFLINE-TEA',
+          salePriceMinor: 400,
+          purchaseCostMinor: 150,
+        );
+        await repository.recordPurchase([
+          TransactionLineDraft(product: product, quantity: 5),
+        ]);
+        await repository.lockDeviceRole(DeviceRole.cashierDevice);
+
+        final result = await repository.recordSale([
+          TransactionLineDraft(product: product, quantity: 2),
+        ]);
+        final updatedProduct = await repository.productById(product.productId);
+        final summary = await repository.cashierSaleOutboxSummary();
+
+        expect(result.status, SaleRecordStatus.queued);
+        expect(summary.queuedCount, 1);
+        expect(summary.conflictCount, 0);
+        expect(updatedProduct?.quantity, 3);
+      } finally {
+        await repository.close();
+      }
+    },
+  );
+
+  test('cashier sale outbox drains queued commands to main', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = mainRepository.createLanSyncServer();
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Outbox Tea',
+        barcode: 'OUTBOX-TEA',
+        salePriceMinor: 400,
+        purchaseCostMinor: 150,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 5),
+      ]);
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+      final store = cashierRepository.createSyncStore();
+      await store.enqueueCashierSaleCommand(
+        command: CashierSaleCommand(
+          commandId: _eventId(30),
+          occurredAt: _now,
+          lines: [
+            CashierSaleCommandLine(productId: product.productId, quantity: 2),
+          ],
+        ),
+        lines: [
+          CashierSaleOutboxLine(
+            productId: product.productId,
+            productName: 'Outbox Tea',
+            quantity: 2,
+            unitPriceMinor: 400,
+            lineTotalMinor: 800,
+          ),
+        ],
+      );
+
+      await client.drainCashierSaleOutbox(peer.deviceId);
+      final mainProduct = await mainRepository.productById(product.productId);
+      final cashierProduct = await cashierRepository.productById(
+        product.productId,
+      );
+      final counts = await store.cashierSaleOutboxCounts();
+
+      expect(mainProduct?.quantity, 3);
+      expect(cashierProduct?.quantity, 3);
+      expect(counts[CashierSaleCommandOutboxStatus.accepted], 1);
+      expect(await store.hasCashierSaleOutboxConflict(), false);
+    } finally {
+      client.close();
+      await server.stop();
+      await mainRepository.close();
+      await cashierRepository.close();
+    }
+  });
+
+  test('cashier sale conflict pauses later outbox commands', () async {
+    final mainDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final cashierDb = await CoreDatabase.open(
+      path: inMemoryDatabasePath,
+      factory: databaseFactoryFfi,
+      singleInstance: false,
+    );
+    final mainRepository = await DekonRepository.open(database: mainDb);
+    final cashierRepository = await DekonRepository.open(database: cashierDb);
+    final server = mainRepository.createLanSyncServer();
+    final client = LanSyncClient(
+      store: cashierRepository.createSyncStore(),
+      client: _serverBackedClient(server),
+    );
+    try {
+      final product = await mainRepository.createProduct(
+        name: 'Conflict Tea',
+        barcode: 'CONFLICT-TEA',
+        salePriceMinor: 400,
+        purchaseCostMinor: 150,
+      );
+      await mainRepository.recordPurchase([
+        TransactionLineDraft(product: product, quantity: 2),
+      ]);
+      final pairing = server.createPairingPayload(baseUrl: 'http://main.local');
+      final peer = await client.pairWithServer(pairing);
+      await mainRepository.recordSale([
+        TransactionLineDraft(product: product, quantity: 2),
+      ]);
+      final store = cashierRepository.createSyncStore();
+      await store.enqueueCashierSaleCommand(
+        command: CashierSaleCommand(
+          commandId: _eventId(31),
+          occurredAt: _now,
+          lines: [
+            CashierSaleCommandLine(productId: product.productId, quantity: 1),
+          ],
+        ),
+        lines: [
+          CashierSaleOutboxLine(
+            productId: product.productId,
+            productName: 'Conflict Tea',
+            quantity: 1,
+            unitPriceMinor: 400,
+            lineTotalMinor: 400,
+          ),
+        ],
+      );
+      await store.enqueueCashierSaleCommand(
+        command: CashierSaleCommand(
+          commandId: _eventId(32),
+          occurredAt: _now,
+          lines: [
+            CashierSaleCommandLine(productId: product.productId, quantity: 1),
+          ],
+        ),
+        lines: [
+          CashierSaleOutboxLine(
+            productId: product.productId,
+            productName: 'Conflict Tea',
+            quantity: 1,
+            unitPriceMinor: 400,
+            lineTotalMinor: 400,
+          ),
+        ],
+      );
+
+      await client.drainCashierSaleOutbox(peer.deviceId);
+      final counts = await store.cashierSaleOutboxCounts();
+      final mainHistory = await mainRepository.transactionHistory(
+        TransactionHistoryKind.sale,
+      );
+
+      expect(counts[CashierSaleCommandOutboxStatus.conflict], 1);
+      expect(counts[CashierSaleCommandOutboxStatus.queued], 1);
+      expect(counts[CashierSaleCommandOutboxStatus.accepted], isNull);
+      expect(mainHistory, hasLength(1));
+
+      await store.voidOldestConflictedCashierSaleCommand();
+      final resolvedCounts = await store.cashierSaleOutboxCounts();
+
+      expect(resolvedCounts[CashierSaleCommandOutboxStatus.voided], 1);
+      expect(resolvedCounts[CashierSaleCommandOutboxStatus.conflict], isNull);
+      expect(resolvedCounts[CashierSaleCommandOutboxStatus.queued], 1);
     } finally {
       client.close();
       await server.stop();
@@ -1212,6 +1537,50 @@ Future<void> _withHarness(Future<void> Function(_Harness harness) body) async {
     await server.stop();
     await activityBus.close();
     await db.close();
+  }
+}
+
+class _FakeSyncServiceDiscovery extends SyncServiceDiscovery {
+  _FakeSyncServiceDiscovery({List<DiscoveredSyncService> services = const []})
+    : services = List.of(services);
+
+  final List<DiscoveredSyncService> services;
+  String? registeredDeviceId;
+  int? registeredPort;
+  var unregisterCount = 0;
+  var discoverCount = 0;
+
+  @override
+  Future<void> registerMainService({
+    required String deviceId,
+    required int port,
+  }) async {
+    registeredDeviceId = deviceId;
+    registeredPort = port;
+    services
+      ..clear()
+      ..add(
+        DiscoveredSyncService(
+          serviceName: 'Dekon-$deviceId',
+          host: '127.0.0.1',
+          port: port,
+          deviceId: deviceId,
+          protocolVersion: syncProtocolVersion,
+        ),
+      );
+  }
+
+  @override
+  Future<void> unregisterMainService() async {
+    unregisterCount += 1;
+  }
+
+  @override
+  Future<List<DiscoveredSyncService>> discoverMainServices({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    discoverCount += 1;
+    return List.of(services);
   }
 }
 

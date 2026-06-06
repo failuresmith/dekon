@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'src/app_config.dart';
 import 'src/application/application.dart';
 import 'src/backup/backup.dart';
+import 'src/sync/sync.dart';
 import 'src/ui/app_shell.dart';
 import 'src/ui/barcode_scanner_dialog.dart';
 import 'src/ui/cashier_pairing_panel.dart';
@@ -23,6 +24,7 @@ class MainApp extends StatefulWidget {
     this.backupFiles = const BackupFileActions(),
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const AndroidSyncServiceDiscovery(),
   });
 
   final RepositoryFactory? repositoryFactory;
@@ -31,6 +33,7 @@ class MainApp extends StatefulWidget {
   final BackupFileActions backupFiles;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
 
   @override
   State<MainApp> createState() => _MainAppState();
@@ -97,6 +100,7 @@ class _MainAppState extends State<MainApp> {
                 backupFiles: widget.backupFiles,
                 pairWithMainDevice: widget.pairWithMainDevice,
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+                syncServiceDiscovery: widget.syncServiceDiscovery,
               ),
             );
           },

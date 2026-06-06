@@ -24,6 +24,7 @@ class SettingsScreen extends StatelessWidget {
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
   });
 
   final DekonRepository repository;
@@ -34,6 +35,7 @@ class SettingsScreen extends StatelessWidget {
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
 
   @override
   Widget build(BuildContext context) {
@@ -124,6 +126,7 @@ class SettingsScreen extends StatelessWidget {
           scanBarcode: scanBarcode,
           pairWithMainDevice: pairWithMainDevice,
           pairWithMainDeviceAddress: pairWithMainDeviceAddress,
+          syncServiceDiscovery: syncServiceDiscovery,
         ),
       ),
     );
@@ -346,6 +349,7 @@ class DeviceSyncScreen extends StatefulWidget {
     this.scanBarcode = showBarcodeScannerDialog,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
+    this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
   });
 
   final DekonRepository repository;
@@ -353,6 +357,7 @@ class DeviceSyncScreen extends StatefulWidget {
   final BarcodeScanLauncher scanBarcode;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
+  final SyncServiceDiscovery syncServiceDiscovery;
 
   @override
   State<DeviceSyncScreen> createState() => _DeviceSyncScreenState();
@@ -607,6 +612,7 @@ class _DeviceSyncScreenState extends State<DeviceSyncScreen> {
                 scanBarcode: widget.scanBarcode,
                 pairWithMainDevice: widget.pairWithMainDevice,
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
+                syncServiceDiscovery: widget.syncServiceDiscovery,
                 onPaired: _refreshRoleSettings,
               ),
         const SizedBox(height: 16),

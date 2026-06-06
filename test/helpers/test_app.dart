@@ -2,6 +2,7 @@ import 'package:dekon/main.dart';
 import 'package:dekon/src/application/application.dart';
 import 'package:dekon/src/backup/backup.dart';
 import 'package:dekon/src/persistence/persistence.dart';
+import 'package:dekon/src/sync/sync.dart';
 import 'package:dekon/src/ui/barcode_scanner_dialog.dart';
 import 'package:dekon/src/ui/cashier_pairing_panel.dart';
 import 'package:flutter/widgets.dart';
@@ -43,6 +44,7 @@ Widget testApp(
   BackupFileActions backupFiles = const BackupFileActions(),
   MainDevicePairer? pairWithMainDevice,
   MainDeviceAddressPairer? pairWithMainDeviceAddress,
+  SyncServiceDiscovery syncServiceDiscovery = const NoopSyncServiceDiscovery(),
 }) {
   return MainApp(
     repositoryFactory: () async => repository,
@@ -51,5 +53,6 @@ Widget testApp(
     backupFiles: backupFiles,
     pairWithMainDevice: pairWithMainDevice,
     pairWithMainDeviceAddress: pairWithMainDeviceAddress,
+    syncServiceDiscovery: syncServiceDiscovery,
   );
 }

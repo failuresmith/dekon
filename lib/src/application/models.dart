@@ -108,6 +108,41 @@ class TransactionLineDraft {
   int get purchaseTotalMinor => (quantity * unitCostMinor).round();
 }
 
+enum SaleRecordStatus { completed, queued, conflict }
+
+class SaleRecordResult {
+  const SaleRecordResult({required this.status, this.commandId});
+
+  const SaleRecordResult.completed()
+    : status = SaleRecordStatus.completed,
+      commandId = null;
+
+  final SaleRecordStatus status;
+  final String? commandId;
+}
+
+class CashierSaleOutboxSummary {
+  const CashierSaleOutboxSummary({
+    required this.queuedCount,
+    required this.syncingCount,
+    required this.conflictCount,
+  });
+
+  static const empty = CashierSaleOutboxSummary(
+    queuedCount: 0,
+    syncingCount: 0,
+    conflictCount: 0,
+  );
+
+  final int queuedCount;
+  final int syncingCount;
+  final int conflictCount;
+
+  int get pendingCount => queuedCount + syncingCount;
+  bool get hasConflict => conflictCount > 0;
+  bool get hasPending => pendingCount > 0;
+}
+
 enum TransactionHistoryKind { sale, purchase }
 
 enum ReportScope { allDevices, localDevice }

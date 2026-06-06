@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:sqflite/sqflite.dart';
 
@@ -35,6 +36,7 @@ class SyncStore {
       'cashier_inventory_projection_version';
   static const lastAppliedCashierProjectionVersionSetting =
       'last_applied_cashier_projection_version';
+  static const cashierSaleOutboxMaxActiveCommands = 500;
 
   SyncDeviceInfo deviceInfo() {
     return SyncDeviceInfo(deviceId: localDeviceId, displayName: 'Dekon phone');
@@ -113,6 +115,36 @@ class SyncStore {
     );
     if (rows.isEmpty) return null;
     return _trustedPeerFromRow(rows.single);
+  }
+
+  Future<void> updateTrustedPeerBaseUrl({
+    required String deviceId,
+    required String baseUrl,
+  }) async {
+    if (deviceId == localDeviceId) {
+      throw ArgumentError.value(deviceId, 'deviceId', 'Cannot update self.');
+    }
+    final now = _now().toUtc().toIso8601String();
+    await _db.transaction((txn) async {
+      final trusted = Sqflite.firstIntValue(
+        await txn.rawQuery(
+          '''
+          SELECT COUNT(*)
+          FROM devices
+          WHERE device_id = ? AND trust_status = 'trusted'
+          ''',
+          [deviceId],
+        ),
+      );
+      if ((trusted ?? 0) <= 0) return;
+      await txn.update(
+        'sync_peers',
+        {'base_url': baseUrl, 'updated_at': now},
+        where: 'peer_device_id = ?',
+        whereArgs: [deviceId],
+      );
+    });
+    activityBus?.notifySyncStateChanged();
   }
 
   Future<TrustedPeer?> revokedPeer(String deviceId) async {
@@ -227,6 +259,259 @@ class SyncStore {
       now: _now().toUtc(),
     );
     activityBus?.notifySyncStateChanged();
+  }
+
+  Future<void> enqueueCashierSaleCommand({
+    required CashierSaleCommand command,
+    required List<CashierSaleOutboxLine> lines,
+  }) async {
+    if (lines.isEmpty || lines.length != command.lines.length) {
+      throw ArgumentError.value(lines, 'lines');
+    }
+    final now = _now().toUtc();
+    final nowText = now.toIso8601String();
+    await _db.transaction((txn) async {
+      final activeCount = Sqflite.firstIntValue(
+        await txn.rawQuery(
+          '''
+          SELECT COUNT(*)
+          FROM cashier_sale_command_outbox
+          WHERE status IN (?, ?, ?)
+          ''',
+          const ['queued', 'syncing', 'conflict'],
+        ),
+      );
+      if ((activeCount ?? 0) >= cashierSaleOutboxMaxActiveCommands) {
+        throw StateError('Cashier sale outbox is full.');
+      }
+      final projectionVersion = await readIntSetting(
+        txn,
+        lastAppliedCashierProjectionVersionSetting,
+      );
+      await txn.insert('cashier_sale_command_outbox', {
+        'command_id': command.commandId,
+        'status': CashierSaleCommandOutboxStatus.queued.storageValue,
+        'command_json': jsonEncode(command.toJson()),
+        'local_total_minor': lines.fold<int>(
+          0,
+          (sum, line) => sum + line.lineTotalMinor,
+        ),
+        'snapshot_projection_version': projectionVersion,
+        'error_code': null,
+        'error_product_ids_json': null,
+        'accepted_event_id': null,
+        'resolution_note': null,
+        'created_at': nowText,
+        'updated_at': nowText,
+        'last_attempted_at': null,
+      });
+      for (var index = 0; index < lines.length; index++) {
+        final line = lines[index];
+        await txn.insert('cashier_sale_command_outbox_lines', {
+          'command_id': command.commandId,
+          'line_index': index,
+          'product_id': line.productId,
+          'product_name': line.productName,
+          'quantity': line.quantity,
+          'unit_price_minor': line.unitPriceMinor,
+          'line_total_minor': line.lineTotalMinor,
+        });
+      }
+    });
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<CashierSaleOutboxCommand?> nextCashierSaleCommandForSync() async {
+    if (await hasCashierSaleOutboxConflict()) return null;
+    final rows = await _db.query(
+      'cashier_sale_command_outbox',
+      where: 'status IN (?, ?)',
+      whereArgs: const ['queued', 'syncing'],
+      orderBy: 'created_at ASC, command_id ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _cashierSaleOutboxCommandFromRow(rows.single);
+  }
+
+  Future<bool> hasCashierSaleOutboxConflict() async {
+    final count = Sqflite.firstIntValue(
+      await _db.rawQuery(
+        '''
+        SELECT COUNT(*)
+        FROM cashier_sale_command_outbox
+        WHERE status = ?
+        ''',
+        const ['conflict'],
+      ),
+    );
+    return (count ?? 0) > 0;
+  }
+
+  Future<CashierSaleCommandOutboxStatus?> cashierSaleCommandStatus(
+    String commandId,
+  ) async {
+    final rows = await _db.query(
+      'cashier_sale_command_outbox',
+      columns: ['status'],
+      where: 'command_id = ?',
+      whereArgs: [commandId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return CashierSaleCommandOutboxStatus.fromStorage(
+      rows.single['status'] as String,
+    );
+  }
+
+  Future<Map<CashierSaleCommandOutboxStatus, int>>
+  cashierSaleOutboxCounts() async {
+    final rows = await _db.rawQuery('''
+      SELECT status, COUNT(*) AS count
+      FROM cashier_sale_command_outbox
+      GROUP BY status
+      ''');
+    return {
+      for (final row in rows)
+        CashierSaleCommandOutboxStatus.fromStorage(row['status'] as String):
+            row['count'] as int,
+    };
+  }
+
+  Future<void> markCashierSaleCommandSyncing(String commandId) async {
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.update(
+      'cashier_sale_command_outbox',
+      {
+        'status': CashierSaleCommandOutboxStatus.syncing.storageValue,
+        'error_code': null,
+        'error_product_ids_json': null,
+        'updated_at': nowText,
+        'last_attempted_at': nowText,
+      },
+      where: 'command_id = ? AND status IN (?, ?)',
+      whereArgs: [
+        commandId,
+        CashierSaleCommandOutboxStatus.queued.storageValue,
+        CashierSaleCommandOutboxStatus.syncing.storageValue,
+      ],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<void> markCashierSaleCommandQueued(String commandId) async {
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.update(
+      'cashier_sale_command_outbox',
+      {
+        'status': CashierSaleCommandOutboxStatus.queued.storageValue,
+        'updated_at': nowText,
+      },
+      where: 'command_id = ? AND status = ?',
+      whereArgs: [
+        commandId,
+        CashierSaleCommandOutboxStatus.syncing.storageValue,
+      ],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<void> markCashierSaleCommandAccepted({
+    required String commandId,
+    required String acceptedEventId,
+  }) async {
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.update(
+      'cashier_sale_command_outbox',
+      {
+        'status': CashierSaleCommandOutboxStatus.accepted.storageValue,
+        'accepted_event_id': acceptedEventId,
+        'error_code': null,
+        'error_product_ids_json': null,
+        'updated_at': nowText,
+      },
+      where: 'command_id = ?',
+      whereArgs: [commandId],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<void> markCashierSaleCommandConflict({
+    required String commandId,
+    required String errorCode,
+    required List<String> productIds,
+  }) async {
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.update(
+      'cashier_sale_command_outbox',
+      {
+        'status': CashierSaleCommandOutboxStatus.conflict.storageValue,
+        'error_code': errorCode,
+        'error_product_ids_json': jsonEncode(productIds),
+        'updated_at': nowText,
+      },
+      where: 'command_id = ?',
+      whereArgs: [commandId],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  Future<void> voidOldestConflictedCashierSaleCommand({
+    String resolutionNote = 'voided_by_cashier',
+  }) async {
+    final rows = await _db.query(
+      'cashier_sale_command_outbox',
+      columns: ['command_id'],
+      where: 'status = ?',
+      whereArgs: [CashierSaleCommandOutboxStatus.conflict.storageValue],
+      orderBy: 'created_at ASC, command_id ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.update(
+      'cashier_sale_command_outbox',
+      {
+        'status': CashierSaleCommandOutboxStatus.voided.storageValue,
+        'resolution_note': resolutionNote,
+        'updated_at': nowText,
+      },
+      where: 'command_id = ? AND status = ?',
+      whereArgs: [
+        rows.single['command_id'] as String,
+        CashierSaleCommandOutboxStatus.conflict.storageValue,
+      ],
+    );
+    activityBus?.notifySyncStateChanged();
+  }
+
+  CashierSaleOutboxCommand _cashierSaleOutboxCommandFromRow(
+    Map<String, Object?> row,
+  ) {
+    return CashierSaleOutboxCommand(
+      command: CashierSaleCommand.fromJson(
+        jsonDecode(row['command_json'] as String),
+      ),
+      status: CashierSaleCommandOutboxStatus.fromStorage(
+        row['status'] as String,
+      ),
+      createdAt: DateTime.parse(row['created_at'] as String),
+      localTotalMinor: row['local_total_minor'] as int,
+      errorCode: row['error_code'] as String?,
+      errorProductIds: _decodeStringList(
+        row['error_product_ids_json'] as String?,
+      ),
+    );
+  }
+
+  List<String> _decodeStringList(String? value) {
+    if (value == null || value.trim().isEmpty) return const [];
+    final decoded = jsonDecode(value);
+    if (decoded is! List) return const [];
+    return [
+      for (final item in decoded)
+        if (item is String) item,
+    ];
   }
 
   Future<CashierInventorySnapshot> cashierInventorySnapshot() {
