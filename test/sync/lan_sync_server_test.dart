@@ -54,19 +54,27 @@ void main() {
 
       final body = await _json(response);
       final peer = await harness.store.trustedPeer(_peerDeviceId);
+      final rotatedPairing = SyncPairingPayload.fromQrJson(
+        harness.server.pairingQrData!,
+      );
+      final sharedSecret = body['shared_secret'] as String;
 
       expect(response.statusCode, 200);
+      expect(sharedSecret, isNot(pairing.pairingSecret));
       expect(body['assigned_display_name'], 'Cashier-1');
       expect(peer?.displayName, 'Cashier-1');
+      expect(peer?.sharedSecret, sharedSecret);
+      expect(rotatedPairing.pairingSecret, isNot(pairing.pairingSecret));
     });
   });
 
-  test('pairing assigns stable sequential cashier names', () async {
+  test('pairing assigns stable cashier names and per-device secrets', () async {
     await _withHarness((harness) async {
-      final pairing = harness.server.createPairingPayload(
-        baseUrl: 'http://localhost',
-      );
+      harness.server.createPairingPayload(baseUrl: 'http://localhost');
       Future<Map<String, Object?>> pair(String deviceId) async {
+        final pairing = SyncPairingPayload.fromQrJson(
+          harness.server.pairingQrData!,
+        );
         final response = await harness.server.handler(
           Request(
             'POST',
@@ -89,6 +97,85 @@ void main() {
       expect(first['assigned_display_name'], 'Cashier-1');
       expect(second['assigned_display_name'], 'Cashier-2');
       expect(firstRetry['assigned_display_name'], 'Cashier-1');
+      expect(first['shared_secret'], isNot(second['shared_secret']));
+    });
+  });
+
+  test('old pairing code cannot be reused after successful pairing', () async {
+    await _withHarness((harness) async {
+      final pairing = harness.server.createPairingPayload(
+        baseUrl: 'http://localhost',
+      );
+      final first = await harness.server.handler(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/pair'),
+          body: jsonEncode({
+            'device_id': _peerDeviceId,
+            'display_name': 'Counter phone',
+            'pairing_secret': pairing.pairingSecret,
+          }),
+        ),
+      );
+      final second = await harness.server.handler(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/pair'),
+          body: jsonEncode({
+            'device_id': _secondPeerDeviceId,
+            'display_name': 'Second counter',
+            'pairing_secret': pairing.pairingSecret,
+          }),
+        ),
+      );
+      final secondPeer = await harness.store.trustedPeer(_secondPeerDeviceId);
+
+      expect(first.statusCode, 200);
+      expect(second.statusCode, HttpStatus.unauthorized);
+      expect(secondPeer, isNull);
+    });
+  });
+
+  test('paired cashier authenticates with per-device shared secret', () async {
+    await _withHarness((harness) async {
+      final pairing = harness.server.createPairingPayload(
+        baseUrl: 'http://localhost',
+      );
+      final pairResponse = await harness.server.handler(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/pair'),
+          body: jsonEncode({
+            'device_id': _peerDeviceId,
+            'display_name': 'Counter phone',
+            'pairing_secret': pairing.pairingSecret,
+          }),
+        ),
+      );
+      final body = await _json(pairResponse);
+      final sharedSecret = body['shared_secret'] as String;
+      final uri = Uri.parse('http://localhost/sync/state');
+      Map<String, String> authHeaders(String secret) {
+        return SyncAuthenticator(now: () => _now).signHeaders(
+          method: 'GET',
+          uri: uri,
+          bodyBytes: const [],
+          deviceId: _peerDeviceId,
+          sharedSecret: secret,
+          timestamp: _now,
+        );
+      }
+
+      final accepted = await harness.server.handler(
+        Request('GET', uri, headers: authHeaders(sharedSecret)),
+      );
+      final rejected = await harness.server.handler(
+        Request('GET', uri, headers: authHeaders(pairing.pairingSecret)),
+      );
+
+      expect(pairResponse.statusCode, 200);
+      expect(accepted.statusCode, 200);
+      expect(rejected.statusCode, HttpStatus.unauthorized);
     });
   });
 
@@ -110,11 +197,12 @@ void main() {
       );
       final body = await _json(response);
       final peer = await harness.store.trustedPeer(_peerDeviceId);
+      final sharedSecret = body['shared_secret'] as String;
 
       expect(response.statusCode, 200);
-      expect(body['shared_secret'], pairing.pairingSecret);
+      expect(sharedSecret, isNot(pairing.pairingSecret));
       expect(body['assigned_display_name'], 'Cashier-1');
-      expect(peer?.sharedSecret, pairing.pairingSecret);
+      expect(peer?.sharedSecret, sharedSecret);
       expect(peer?.displayName, 'Cashier-1');
     });
   });
@@ -278,6 +366,22 @@ void main() {
       expect(reply.bodyPreview, isNot(contains(pairing.pairingSecret)));
     });
   });
+
+  test(
+    'existing trusted peer secret remains accepted for authentication',
+    () async {
+      await _withHarness((harness) async {
+        await harness.trustPeer();
+        final uri = Uri.parse('http://localhost/sync/state');
+
+        final response = await harness.server.handler(
+          Request('GET', uri, headers: _authHeaders('GET', uri, const [])),
+        );
+
+        expect(response.statusCode, 200);
+      });
+    },
+  );
 
   test('manual address client stores returned shared secret', () async {
     await _withHarness((harness) async {

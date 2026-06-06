@@ -335,17 +335,28 @@ class LanSyncServer {
       return _unauthorized(request);
     }
     final peerDeviceId = _requiredString(decoded, 'device_id');
+    final sharedSecret = SyncSecrets.generate();
+    _rotatePairingPayload(payload);
     final assignedDisplayName = await store.trustCashierPeer(
       deviceId: peerDeviceId,
       baseUrl: decoded['base_url'] as String?,
-      sharedSecret: payload.pairingSecret,
+      sharedSecret: sharedSecret,
     );
     return _json({
       ...store.deviceInfo().toJson(),
-      'shared_secret': payload.pairingSecret,
+      'shared_secret': sharedSecret,
       'assigned_display_name': assignedDisplayName,
       'server_time': _now().toUtc().toIso8601String(),
     }, request: request);
+  }
+
+  void _rotatePairingPayload(SyncPairingPayload payload) {
+    _pairingPayload = SyncPairingPayload(
+      baseUrl: _baseUrl ?? payload.baseUrl,
+      serverDeviceId: payload.serverDeviceId,
+      pairingSecret: SyncSecrets.generate(),
+      expiresAt: payload.expiresAt,
+    );
   }
 
   Future<Response> _events(Request request, TrustedPeer peer) async {

@@ -94,14 +94,11 @@ class LanSyncClient {
     if (result.deviceInfo.deviceId != payload.serverDeviceId) {
       throw SyncClientException('Main device identity changed during pairing.');
     }
-    if (result.sharedSecret != payload.pairingSecret) {
-      throw SyncClientException('Pairing secret changed during pairing.');
-    }
     await store.trustPeer(
       deviceId: result.deviceInfo.deviceId,
       displayName: result.deviceInfo.displayName,
       baseUrl: payload.baseUrl,
-      sharedSecret: payload.pairingSecret,
+      sharedSecret: result.sharedSecret,
     );
     await _storeAssignedDisplayName(result.assignedDisplayName);
     final peer = await store.trustedPeer(result.deviceInfo.deviceId);

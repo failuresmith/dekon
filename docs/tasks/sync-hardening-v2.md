@@ -2,7 +2,7 @@
 
 ## Status
 
-Current phase: Phase 6 - complete
+Current phase: Phase 7 - complete
 Last updated: 2026-06-06
 
 ## Verified Existing Behavior
@@ -34,6 +34,10 @@ Last updated: 2026-06-06
 - Phase 6: added `LanSyncServer.stopPairing()` to clear only the current pairing payload.
 - Phase 6: Settings `Stop Pairing` now calls `stopPairing()` and leaves `main_sync_server_enabled` unchanged.
 - Phase 6: full `LanSyncServer.stop()` behavior remains available and unchanged for intentional server shutdown.
+- Phase 7 scope: make QR/manual pairing codes short-lived setup credentials and generate separate per-device HMAC secrets for trusted Cashiers.
+- Phase 7: `POST /pair` now stores and returns a fresh generated per-device shared secret instead of reusing the pairing code as the long-term secret.
+- Phase 7: successful pairing rotates the active pairing payload secret, so an old QR pairing code cannot be reused.
+- Phase 7: `LanSyncClient.pairWithServer` now stores the returned `shared_secret`, preserving compatibility with old Main devices that still return the QR pairing secret and supporting new Main devices that return per-device secrets.
 
 ## Decisions
 
@@ -46,6 +50,9 @@ Last updated: 2026-06-06
 - Phase 4: heartbeat uses Dart's built-in WebSocket ping/pong handling instead of an app-level heartbeat message. If pongs stop arriving, Dart closes the socket; the Cashier marks the stream disconnected through `onDone` and runs snapshot sync before reconnecting.
 - Phase 5: foreground-only Cashier sync remains an explicit invariant. The controller starts while the app UI is mounted, closes the projection stream on pause/hidden/detached, and refreshes/reopens on resume. Background sync service work is out of scope.
 - Phase 6: pairing availability is an independent session state. Stopping pairing should not revoke trusted peers, unregister discovery, close projection sockets, or disable the Main sync server setting.
+- Phase 7: existing trusted peer records are not migrated because they already contain the active long-term HMAC secret. They remain compatible and continue authenticating with their stored secret.
+- Phase 7: new pairing with an updated Main may not be compatible with older Cashier builds that reject a returned `shared_secret` different from the QR `pairing_secret`; this is the documented compatibility break required to stop using the pairing code as the long-term secret.
+- Phase 7: the pairing code is rotated before the async trusted-peer write to consume the old QR code before the server yields to another pairing request.
 
 ## Tests Added
 
@@ -76,6 +83,11 @@ Last updated: 2026-06-06
 - Stop Pairing keeps an existing Cashier projection stream connected.
 - Projection broadcasts still reach the connected Cashier after pairing is stopped.
 - Settings Stop Pairing hides the QR code without disabling Main sync server persistence.
+- QR pairing stores a per-device shared secret that differs from the pairing code.
+- Two Cashiers paired during the same active pairing flow receive different long-term HMAC secrets.
+- Reusing an old QR pairing code after a successful pairing is rejected.
+- Authenticated requests verify with the returned per-device shared secret, not the old pairing code.
+- Existing trusted peer records continue authenticating with their stored secret.
 
 ## Validation Log
 
@@ -99,6 +111,13 @@ Commands run:
 - `git diff --check`
 - `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/ui/settings_screen.dart test/sync/lan_sync_server_test.dart test/ui/backup_recovery_ui_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart`
+- `docker compose run --rm flutter-dev flutter analyze`
+- `git diff --check`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart docs/tasks/sync-hardening-v2.md`
+- `docker compose run --rm flutter-dev dart format lib/src/sync/lan_sync_server.dart lib/src/sync/lan_sync_client.dart test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_server_test.dart`
+- `docker compose run --rm flutter-dev flutter test test/sync/lan_sync_client_timeout_test.dart`
 - `docker compose run --rm flutter-dev flutter test test/ui/backup_recovery_ui_test.dart`
 - `docker compose run --rm flutter-dev flutter analyze`
 - `git diff --check`
@@ -162,6 +181,13 @@ Results:
 - Phase 6 focused `flutter test test/ui/backup_recovery_ui_test.dart` passed.
 - Phase 6 `flutter analyze` passed with no issues.
 - Phase 6 `git diff --check` passed.
+- Phase 7 first format command failed because it accidentally included the Markdown task file; Dart files were formatted before the parse error, and the corrected Dart-only format command passed.
+- Phase 7 focused `flutter test test/sync/lan_sync_server_test.dart` passed.
+- Phase 7 focused `flutter test test/sync/lan_sync_client_timeout_test.dart` passed.
+- Phase 7 focused `flutter test test/ui/backup_recovery_ui_test.dart` passed.
+- Phase 7 focused `flutter test test/sync/lan_sync_server_test.dart` passed again after moving pairing-code rotation before the async trust write.
+- Phase 7 `flutter analyze` passed with no issues.
+- Phase 7 `git diff --check` passed.
 
 ## Manual QA
 
@@ -173,7 +199,7 @@ Results:
 
 ## Residual Risks
 
-- Phase 7 through Phase 11 are not implemented yet.
+- Phase 8 through Phase 11 are not implemented yet.
 - No manual multi-device QA has been run.
 
 ---
