@@ -1,0 +1,118 @@
+name: Release Android APKs
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to attach APKs to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-attach-apks:
+    name: Build signed release APKs
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Restore Android release signing files
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for secret_name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "::error::Missing required repository secret: ${secret_name}"
+              exit 1
+            fi
+          done
+
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > android/release-keystore.jks
+
+          cat > android/key.properties <<EOF
+          storePassword=${ANDROID_KEYSTORE_PASSWORD}
+          keyPassword=${ANDROID_KEY_PASSWORD}
+          keyAlias=${ANDROID_KEY_ALIAS}
+          storeFile=release-keystore.jks
+          EOF
+
+          chmod 600 android/release-keystore.jks android/key.properties
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build release APKs per Android ABI
+        run: flutter build apk --release --split-per-abi
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+
+          safe_tag="${RELEASE_TAG//\//-}"
+          mkdir -p dist
+
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            source_apk="build/app/outputs/flutter-apk/app-${abi}-release.apk"
+            target_apk="dist/dekon-${safe_tag}-android-${abi}-release.apk"
+
+            if [ ! -f "${source_apk}" ]; then
+              echo "::error::Expected APK was not generated: ${source_apk}"
+              exit 1
+            fi
+
+            cp "${source_apk}" "${target_apk}"
+          done
+
+          (
+            cd dist
+            sha256sum ./*.apk > SHA256SUMS.txt
+          )
+
+      - name: Preserve APKs as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dekon-${{ env.RELEASE_TAG }}-android-apks
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Attach APKs to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: dist/*
+          fail_on_unmatched_files: true
