@@ -1,3 +1,4 @@
+# Trigger one-shot patch after workflow installation
 name: Patch Farsi sales label
 
 on:
