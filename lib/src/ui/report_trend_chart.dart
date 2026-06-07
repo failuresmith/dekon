@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import 'report_sales_label.dart';
 import 'ui_strings.dart';
 
 class ReportTrendChart extends StatefulWidget {
@@ -142,7 +143,7 @@ class _SelectedBucketSummary extends StatelessWidget {
             children: [
               _SummaryText(label: context.strings.period, value: label),
               _SummaryText(
-                label: context.strings.revenue,
+                label: reportSalesLabel(context.strings),
                 value: context.strings.money(bucket.salesMinor),
               ),
               _SummaryText(
@@ -189,7 +190,7 @@ class _Legend extends StatelessWidget {
       children: [
         _LegendItem(
           color: ReportTrendChart._salesColor,
-          label: context.strings.revenue,
+          label: reportSalesLabel(context.strings),
         ),
         const SizedBox(width: 16),
         _LegendItem(

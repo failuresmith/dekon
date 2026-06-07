@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import 'persian_date_range_picker.dart';
+import 'report_sales_label.dart';
 import 'report_trend_page.dart';
 import 'ui_strings.dart';
 
@@ -114,7 +115,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     ],
                   ),
                 ),
-              ),
+              )
             ],
           ),
         );
@@ -194,12 +195,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
             children: [
               _metric(
                 key: const Key('sales-report-metric'),
-                label: context.strings.revenue,
+                label: reportSalesLabel(context.strings),
                 value: context.strings.money(summary.salesMinor),
                 width: width,
                 onTap: () => _showTransactions(
                   kind: TransactionHistoryKind.sale,
-                  title: context.strings.revenue,
+                  title: reportSalesLabel(context.strings),
                   range: summary.range,
                   deviceId: _selectedCashierDeviceId,
                 ),
