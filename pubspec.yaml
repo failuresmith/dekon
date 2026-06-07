@@ -1,7 +1,7 @@
 name: dekon
 description: "Offline-first inventory and POS app."
 publish_to: 'none'
-version: 0.1.4+5
+version: 0.2.0+6
 
 environment:
   sdk: ^3.12.1
