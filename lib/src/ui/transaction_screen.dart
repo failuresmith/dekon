@@ -63,6 +63,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
     (sum, line) =>
         sum + (_isSell ? line.saleTotalMinor : line.purchaseTotalMinor),
   );
+  double get _totalQuantity =>
+    _lines.fold(0, (sum, line) => sum + line.quantity);
 
   @override
   void initState() {
@@ -304,7 +306,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    context.strings.itemsCount(_lines.length),
+                    '${context.strings.itemsCount(_lines.length)} '
+              '(${context.strings.quantity(_totalQuantity)})',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
