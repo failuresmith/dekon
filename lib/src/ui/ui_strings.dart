@@ -301,7 +301,7 @@ class UiStrings {
   String get addProduct => _text(en: 'Add Product', fa: 'افزودن کالا');
   String get all => _text(en: 'All', fa: 'همه');
   String get lowStock => _text(en: 'Low Stock', fa: 'موجودی کم');
-  String get revenue => _text(en: 'Revenue', fa: 'درآمد');
+  String get revenue => _text(en: 'Sales Amount', fa: 'مبلغ فروش');
   String get purchases => _text(en: 'Restock Amount', fa: 'مبلغ تأمین');
   String get grossProfit => _text(en: 'Gross Profit', fa: 'سود ناخالص');
   String get lowStockItems {
