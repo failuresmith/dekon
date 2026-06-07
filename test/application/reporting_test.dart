@@ -318,6 +318,30 @@ void main() {
           period: ReportTrendPeriod.day,
           deviceId: _remoteCashierDeviceId,
         );
+        final saleCreatorFilters = await repository.transactionCreatorFilters(
+          TransactionHistoryKind.sale,
+        );
+        final allSaleHistory = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+          range: range,
+          limit: null,
+        );
+        final cashierSaleHistory = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+          range: range,
+          deviceId: _remoteCashierDeviceId,
+          limit: null,
+        );
+        final futureSaleHistory = await repository.transactionHistory(
+          TransactionHistoryKind.sale,
+          range: ReportDateRange(
+            startLocal: range.endLocalExclusive,
+            endLocalExclusive: range.endLocalExclusive.add(
+              const Duration(days: 1),
+            ),
+          ),
+          limit: null,
+        );
 
         expect(localSummary.salesMinor, 400);
         expect(localSummary.purchasesMinor, 300);
@@ -333,6 +357,21 @@ void main() {
         expect(selectedCashierSummary.grossMarginMinor, 500);
         expect(selectedCashierTrend.last.salesMinor, 800);
         expect(selectedCashierTrend.last.purchasesMinor, 600);
+        expect(
+          saleCreatorFilters.map((filter) => filter.label),
+          containsAll(['Cashier-1', 'This device']),
+        );
+        expect(
+          allSaleHistory.map((entry) => entry.createdByLabel),
+          containsAll(['Cashier-1', 'This device']),
+        );
+        expect(cashierSaleHistory, hasLength(1));
+        expect(
+          cashierSaleHistory.single.createdByDeviceId,
+          _remoteCashierDeviceId,
+        );
+        expect(cashierSaleHistory.single.totalMinor, 800);
+        expect(futureSaleHistory, isEmpty);
       } finally {
         await repository.close();
       }

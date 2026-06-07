@@ -189,6 +189,8 @@ class TransactionHistoryEntry {
     required this.occurredAt,
     required this.totalMinor,
     required this.lines,
+    required this.createdByDeviceId,
+    required this.createdByLabel,
     this.pendingMainApproval = false,
   });
 
@@ -197,7 +199,16 @@ class TransactionHistoryEntry {
   final DateTime occurredAt;
   final int totalMinor;
   final List<TransactionHistoryLine> lines;
+  final String createdByDeviceId;
+  final String createdByLabel;
   final bool pendingMainApproval;
+}
+
+class TransactionCreatorFilter {
+  const TransactionCreatorFilter({required this.deviceId, required this.label});
+
+  final String deviceId;
+  final String label;
 }
 
 class ReportDateRange {

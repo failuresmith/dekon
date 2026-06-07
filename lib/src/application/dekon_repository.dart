@@ -847,6 +847,50 @@ class DekonRepository {
     ];
   }
 
+  Future<List<TransactionCreatorFilter>> transactionCreatorFilters(
+    TransactionHistoryKind kind, {
+    ReportDateRange? range,
+    ReportScope scope = ReportScope.allDevices,
+    bool includePendingCashierSales = false,
+  }) async {
+    final source = _transactionSource(kind);
+    final where = ['e.type = ?', '${source.alias}.${source.statusColumn} = 0'];
+    final args = <Object?>[_transactionType(kind)];
+    _addDeviceFilter(where, args, scope, null);
+    if (range != null) {
+      where.add('${source.alias}.occurred_at >= ?');
+      where.add('${source.alias}.occurred_at < ?');
+      args
+        ..add(range.startUtc.toIso8601String())
+        ..add(range.endUtcExclusive.toIso8601String());
+    }
+    final rows = await _db.rawQuery('''
+      SELECT e.device_id, d.display_name
+      FROM events e
+      JOIN ${source.table} ${source.alias}
+        ON ${source.alias}.${source.idColumn} = e.entity_id
+      LEFT JOIN devices d ON d.device_id = e.device_id
+      WHERE ${where.join(' AND ')}
+      GROUP BY e.device_id
+      ''', args);
+    final filters = <String, TransactionCreatorFilter>{
+      for (final row in rows)
+        row['device_id'] as String: _creatorFilterFromRow(row),
+    };
+    if (includePendingCashierSales &&
+        kind == TransactionHistoryKind.sale &&
+        await _hasPendingCashierSaleHistory(scope: scope)) {
+      filters[_deviceId] = await _creatorFilterForDevice(_deviceId);
+    }
+    return filters.values.toList(growable: false)..sort((left, right) {
+      final label = left.label.toLowerCase().compareTo(
+        right.label.toLowerCase(),
+      );
+      if (label != 0) return label;
+      return left.deviceId.compareTo(right.deviceId);
+    });
+  }
+
   Future<List<ReportTrendBucket>> reportTrend({
     ReportTrendPeriod period = ReportTrendPeriod.day,
     ReportCalendar calendar = ReportCalendar.gregorian,
@@ -921,10 +965,12 @@ class DekonRepository {
         ? ''
         : 'LIMIT ${limit.clamp(1, 500)}';
     final rows = await _db.rawQuery('''
-      SELECT e.entity_id, e.payload_json, e.created_at
+      SELECT e.entity_id, e.payload_json, e.created_at, e.device_id,
+             d.display_name
       FROM events e
       JOIN ${source.table} ${source.alias}
         ON ${source.alias}.${source.idColumn} = e.entity_id
+      LEFT JOIN devices d ON d.device_id = e.device_id
       WHERE ${where.join(' AND ')}
       ORDER BY ${source.alias}.occurred_at DESC, e.created_at DESC
       $sqlLimit
@@ -1283,6 +1329,11 @@ class DekonRepository {
       occurredAt: _optionalDateTime(payload, 'occurred_at') ?? createdAt,
       totalMinor: totalMinor,
       lines: lines,
+      createdByDeviceId: row['device_id'] as String,
+      createdByLabel: _creatorLabel(
+        row['device_id'] as String,
+        row['display_name'] as String?,
+      ),
     );
   }
 
@@ -1295,6 +1346,7 @@ class DekonRepository {
     if (filterDeviceId != null && filterDeviceId != _deviceId) {
       return const [];
     }
+    final creator = await _creatorFilterForDevice(_deviceId);
     final rows = await _db.rawQuery(
       '''
       SELECT c.command_id, c.command_json, c.local_total_minor, c.created_at
@@ -1328,6 +1380,8 @@ class DekonRepository {
               row['local_total_minor'] as int? ??
               lines.fold<int>(0, (sum, line) => sum + line.lineTotalMinor),
           lines: lines,
+          createdByDeviceId: creator.deviceId,
+          createdByLabel: creator.label,
           pendingMainApproval: true,
         ),
       );
@@ -1460,6 +1514,65 @@ class DekonRepository {
 
   String _shortDeviceId(String deviceId) {
     return deviceId.length <= 8 ? deviceId : deviceId.substring(0, 8);
+  }
+
+  Future<bool> _hasPendingCashierSaleHistory({
+    required ReportScope scope,
+  }) async {
+    final filterDeviceId = _filterDeviceId(scope, null);
+    if (filterDeviceId != null && filterDeviceId != _deviceId) return false;
+    final count = Sqflite.firstIntValue(
+      await _db.rawQuery(
+        '''
+        SELECT COUNT(*)
+        FROM cashier_sale_command_outbox
+        WHERE status IN (?, ?, ?)
+        ''',
+        const ['queued', 'syncing', 'conflict'],
+      ),
+    );
+    return (count ?? 0) > 0;
+  }
+
+  TransactionCreatorFilter _creatorFilterFromRow(Map<String, Object?> row) {
+    final deviceId = row['device_id'] as String;
+    return TransactionCreatorFilter(
+      deviceId: deviceId,
+      label: _creatorLabel(deviceId, row['display_name'] as String?),
+    );
+  }
+
+  Future<TransactionCreatorFilter> _creatorFilterForDevice(
+    String deviceId,
+  ) async {
+    final rows = await _db.query(
+      'devices',
+      columns: ['display_name'],
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+    return TransactionCreatorFilter(
+      deviceId: deviceId,
+      label: _creatorLabel(
+        deviceId,
+        rows.isEmpty ? null : rows.single['display_name'] as String?,
+      ),
+    );
+  }
+
+  String _creatorLabel(String deviceId, String? displayName) {
+    final trimmed = displayName?.trim();
+    if (deviceId == _deviceId) {
+      if (trimmed == null ||
+          trimmed.isEmpty ||
+          trimmed == 'Peer' ||
+          trimmed == 'Dekon phone') {
+        return 'This device';
+      }
+      return trimmed;
+    }
+    return _cashierLabel(deviceId, trimmed);
   }
 
   DateTime? _optionalDateTime(Map<String, Object?> payload, String key) {

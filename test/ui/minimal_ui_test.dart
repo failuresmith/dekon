@@ -1133,6 +1133,52 @@ void main() {
     expect(find.textContaining('Register Tea x1'), findsNothing);
   });
 
+  testWidgets('Sale history filters by creator and exposes date range', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Register Tea',
+      barcode: 'SALE-HISTORY-REGISTER-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 3),
+    ]);
+    await repository.recordSale([
+      TransactionLineDraft(product: product, quantity: 1),
+    ]);
+    await _importFrontRegisterTransactions(repository, product.productId);
+
+    await tester.pumpWidget(testApp(repository));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sell-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sale history'), findsOneWidget);
+    expect(
+      find.byKey(const Key('sale-history-creator-filter')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('sale-history-date-filter')), findsOneWidget);
+    expect(find.text('All dates'), findsOneWidget);
+    expect(find.textContaining('Created by: This device'), findsOneWidget);
+    expect(find.textContaining('Created by: Cashier-1'), findsOneWidget);
+    expect(find.textContaining('Register Tea x1'), findsOneWidget);
+    expect(find.textContaining('Register Tea x2'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('sale-history-creator-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cashier-1').last);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Register Tea x2'), findsOneWidget);
+    expect(find.textContaining('Register Tea x1'), findsNothing);
+    expect(find.textContaining('Created by: Cashier-1'), findsOneWidget);
+    expect(find.textContaining('Created by: This device'), findsNothing);
+  });
+
   testWidgets('Sell persists sale after stock check', (tester) async {
     final repository = await createEnglishTestRepository(onboarded: true);
     final product = await repository.createProduct(

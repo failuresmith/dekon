@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../application/application.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_sync_status.dart';
+import 'persian_date_range_picker.dart';
 import 'product_lookup_field.dart';
 import 'transaction_quantity_input.dart';
 import 'ui_strings.dart';
@@ -684,26 +685,26 @@ Future<void> showTransactionHistoryDialog({
   final kind = isSell
       ? TransactionHistoryKind.sale
       : TransactionHistoryKind.purchase;
-  final history = await repository.transactionHistory(
-    kind,
-    includePendingCashierSales: isSell,
-  );
-  if (!context.mounted) return;
   await showDialog<void>(
     context: context,
-    builder: (context) =>
-        _TransactionHistoryDialog(isSell: isSell, history: history),
+    builder: (context) => _TransactionHistoryDialog(
+      repository: repository,
+      isSell: isSell,
+      kind: kind,
+    ),
   );
 }
 
 class _TransactionHistoryDialog extends StatefulWidget {
   const _TransactionHistoryDialog({
+    required this.repository,
     required this.isSell,
-    required this.history,
+    required this.kind,
   });
 
+  final DekonRepository repository;
   final bool isSell;
-  final List<TransactionHistoryEntry> history;
+  final TransactionHistoryKind kind;
 
   @override
   State<_TransactionHistoryDialog> createState() {
@@ -713,6 +714,17 @@ class _TransactionHistoryDialog extends StatefulWidget {
 
 class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
   TransactionHistoryEntry? _selectedEntry;
+  String? _selectedCreatorDeviceId;
+  DateTimeRange? _customRange;
+  late Future<List<TransactionHistoryEntry>> _historyFuture;
+  late Future<List<TransactionCreatorFilter>> _creatorFiltersFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _historyFuture = _loadHistory();
+    _creatorFiltersFuture = _loadCreatorFilters();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -723,7 +735,7 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
       content: SizedBox(
         width: double.maxFinite,
         child: selectedEntry == null
-            ? _historyList(strings)
+            ? _historyOverview(strings)
             : _historyDetail(strings, selectedEntry),
       ),
       actions: [
@@ -763,22 +775,108 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
     return widget.isSell ? strings.saleDetail : strings.restockDetail;
   }
 
-  Widget _historyList(UiStrings strings) {
-    if (widget.history.isEmpty) return Text(strings.noPreviousTransactions);
+  Widget _historyOverview(UiStrings strings) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.isSell) ...[
+          _historyFilters(strings),
+          const SizedBox(height: 12),
+        ],
+        FutureBuilder<List<TransactionHistoryEntry>>(
+          future: _historyFuture,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Text(strings.transactionHistoryFailed);
+            }
+            if (!snapshot.hasData) {
+              return const SizedBox(
+                height: 160,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return _historyList(strings, snapshot.requireData);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _historyFilters(UiStrings strings) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FutureBuilder<List<TransactionCreatorFilter>>(
+          future: _creatorFiltersFuture,
+          builder: (context, snapshot) {
+            final creators =
+                snapshot.data ?? const <TransactionCreatorFilter>[];
+            return DropdownButtonFormField<String>(
+              key: const Key('sale-history-creator-filter'),
+              initialValue: _selectedCreatorDeviceId ?? '',
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: strings.createdByField,
+              ),
+              items: [
+                DropdownMenuItem(value: '', child: Text(strings.allPersonnel)),
+                for (final creator in _creatorItems(creators))
+                  DropdownMenuItem(
+                    value: creator.deviceId,
+                    child: Text(creator.label),
+                  ),
+              ],
+              onChanged: (value) => _setCreatorFilter(value),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('sale-history-date-filter'),
+                onPressed: _pickCustomRange,
+                icon: const Icon(Icons.date_range),
+                label: Text(_dateRangeLabel(strings)),
+              ),
+            ),
+            if (_customRange != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                key: const Key('sale-history-clear-date-filter'),
+                tooltip: strings.clearDateRange,
+                onPressed: _clearDateRange,
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _historyList(
+    UiStrings strings,
+    List<TransactionHistoryEntry> history,
+  ) {
+    if (history.isEmpty) return Text(strings.noPreviousTransactions);
     return _boundedContent(
       ListView.separated(
         shrinkWrap: true,
-        itemCount: widget.history.length,
+        itemCount: history.length,
         separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
-          final entry = widget.history[index];
+          final entry = history[index];
           return ListTile(
             key: Key('transaction-history-entry-$index'),
             title: Text(strings.money(entry.totalMinor)),
             subtitle: Text(
               '${strings.timestamp(entry.occurredAt)}\n'
+              '${strings.createdBy(entry.createdByLabel)}\n'
               '${_historyLineSummary(entry, strings)}',
-              maxLines: 3,
+              maxLines: 4,
               overflow: TextOverflow.ellipsis,
             ),
             trailing: Row(
@@ -846,6 +944,11 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(strings.timestamp(entry.occurredAt)),
+          const SizedBox(height: 4),
+          Text(
+            strings.createdBy(entry.createdByLabel),
+            key: const Key('transaction-history-created-by'),
+          ),
           if (entry.pendingMainApproval) ...[
             const SizedBox(height: 8),
             Row(
@@ -872,10 +975,111 @@ class _TransactionHistoryDialogState extends State<_TransactionHistoryDialog> {
     );
   }
 
+  List<TransactionCreatorFilter> _creatorItems(
+    List<TransactionCreatorFilter> creators,
+  ) {
+    final selected = _selectedCreatorDeviceId;
+    if (selected == null ||
+        selected.isEmpty ||
+        creators.any((creator) => creator.deviceId == selected)) {
+      return creators;
+    }
+    return [
+      TransactionCreatorFilter(
+        deviceId: selected,
+        label: context.strings.selectedCreator,
+      ),
+      ...creators,
+    ];
+  }
+
+  Future<List<TransactionHistoryEntry>> _loadHistory() {
+    final filtered = _selectedCreatorDeviceId != null || _customRange != null;
+    return widget.repository.transactionHistory(
+      widget.kind,
+      range: _activeRange(),
+      deviceId: _selectedCreatorDeviceId,
+      limit: widget.isSell && filtered ? null : 20,
+      includePendingCashierSales: widget.isSell,
+    );
+  }
+
+  Future<List<TransactionCreatorFilter>> _loadCreatorFilters() {
+    if (!widget.isSell) return Future.value(const []);
+    return widget.repository.transactionCreatorFilters(
+      widget.kind,
+      includePendingCashierSales: true,
+    );
+  }
+
+  void _setCreatorFilter(String? value) {
+    setState(() {
+      _selectedEntry = null;
+      _selectedCreatorDeviceId = value == null || value.isEmpty ? null : value;
+      _historyFuture = _loadHistory();
+    });
+  }
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final firstDate = DateTime(now.year - 5);
+    final lastDate = DateTime(now.year + 1, 12, 31);
+    final initialDateRange =
+        _customRange ?? DateTimeRange(start: _dayStart(now), end: now);
+    final picked = context.strings.reportCalendar == ReportCalendar.persian
+        ? await showPersianDateRangePicker(
+            context: context,
+            firstDate: firstDate,
+            lastDate: lastDate,
+            initialDateRange: initialDateRange,
+          )
+        : await showDateRangePicker(
+            context: context,
+            firstDate: firstDate,
+            lastDate: lastDate,
+            initialDateRange: initialDateRange,
+          );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _selectedEntry = null;
+      _customRange = picked;
+      _historyFuture = _loadHistory();
+    });
+  }
+
+  void _clearDateRange() {
+    setState(() {
+      _selectedEntry = null;
+      _customRange = null;
+      _historyFuture = _loadHistory();
+    });
+  }
+
+  ReportDateRange? _activeRange() {
+    final custom = _customRange;
+    if (custom == null) return null;
+    final start = _dayStart(custom.start);
+    final end = _dayStart(custom.end).add(const Duration(days: 1));
+    return ReportDateRange(startLocal: start, endLocalExclusive: end);
+  }
+
+  DateTime _dayStart(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  String _dateRangeLabel(UiStrings strings) {
+    final custom = _customRange;
+    if (custom == null) return strings.allDates;
+    return '${strings.humanDate(custom.start)} - ${strings.humanDate(custom.end)}';
+  }
+
   Widget _boundedContent(Widget child) {
+    final overviewWithFilters = widget.isSell && _selectedEntry == null;
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.62,
+        maxHeight:
+            MediaQuery.sizeOf(context).height *
+            (overviewWithFilters ? 0.46 : 0.62),
       ),
       child: child,
     );

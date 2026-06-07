@@ -249,6 +249,18 @@ class UiStrings {
     return _text(en: 'Restock history', fa: 'سابقه تأمین');
   }
 
+  String get allPersonnel {
+    return _text(en: 'All personnel', fa: 'همه کارکنان');
+  }
+
+  String get createdByField {
+    return _text(en: 'Created by', fa: 'ثبت شده توسط');
+  }
+
+  String createdBy(String label) {
+    return _text(en: 'Created by: $label', fa: 'ثبت شده توسط: $label');
+  }
+
   String get saleDetail => _text(en: 'Sale detail', fa: 'جزئیات فروش');
   String get restockDetail {
     return _text(en: 'Restock detail', fa: 'جزئیات تأمین');
@@ -1158,6 +1170,13 @@ class UiStrings {
     return _text(en: 'No previous transactions', fa: 'تراکنش قبلی وجود ندارد');
   }
 
+  String get transactionHistoryFailed {
+    return _text(
+      en: 'Transaction history could not load. Try again.',
+      fa: 'سابقه تراکنش بارگیری نشد. دوباره تلاش کنید.',
+    );
+  }
+
   String get noLineDetails {
     return _text(en: 'No line details', fa: 'جزئیات ردیف وجود ندارد');
   }
@@ -1182,6 +1201,12 @@ class UiStrings {
     return _text(en: 'Custom range', fa: 'بازه دلخواه');
   }
 
+  String get allDates => _text(en: 'All dates', fa: 'همه تاریخ ها');
+  String get dateRange => _text(en: 'Date range', fa: 'بازه تاریخ');
+  String get clearDateRange {
+    return _text(en: 'Clear date range', fa: 'پاک کردن بازه تاریخ');
+  }
+
   String get startDate => _text(en: 'Start', fa: 'شروع');
   String get endDate => _text(en: 'End', fa: 'پایان');
   String get selectDate => _text(en: 'Select date', fa: 'انتخاب تاریخ');
@@ -1203,6 +1228,10 @@ class UiStrings {
   String nextPeriod(String unit) => _text(en: 'Next $unit', fa: '$unit بعدی');
   String get selectedCashier {
     return _text(en: 'Selected cashier', fa: 'صندوق انتخاب شده');
+  }
+
+  String get selectedCreator {
+    return _text(en: 'Selected creator', fa: 'ثبت کننده انتخاب شده');
   }
 
   String get cashierDeviceField {
