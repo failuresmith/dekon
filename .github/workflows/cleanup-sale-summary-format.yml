@@ -1,0 +1,47 @@
+name: Cleanup sale summary format
+
+on:
+  push:
+    branches:
+      - fix/sale-summary-total-quantity
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sale-summary-total-quantity
+      - name: Apply formatting cleanup
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/src/ui/transaction_screen.dart')
+          text = path.read_text()
+          old = """                    '${context.strings.itemsCount(_lines.length)} '
+              '(${context.strings.quantity(_totalQuantity)})',
+          """
+          new = """                    '${context.strings.itemsCount(_lines.length)} '
+                    '(${context.strings.quantity(_totalQuantity)})',
+          """
+          if old not in text:
+              raise SystemExit('Could not find formatting anchor')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Validate focused change
+        run: |
+          grep -q "double get _totalQuantity" lib/src/ui/transaction_screen.dart
+          grep -q "context.strings.quantity(_totalQuantity)" lib/src/ui/transaction_screen.dart
+      - name: Remove temporary workflow
+        run: rm .github/workflows/cleanup-sale-summary-format.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/src/ui/transaction_screen.dart .github/workflows/cleanup-sale-summary-format.yml
+          git commit -m "Clean up sale summary quantity formatting"
+          git push origin HEAD:fix/sale-summary-total-quantity
