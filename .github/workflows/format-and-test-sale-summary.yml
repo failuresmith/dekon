@@ -1,0 +1,33 @@
+name: Format and test sale summary fix
+
+on:
+  push:
+    branches:
+      - fix/sale-summary-total-quantity
+
+permissions:
+  contents: write
+
+jobs:
+  format-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sale-summary-total-quantity
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Format focused file
+        run: dart format lib/src/ui/transaction_screen.dart
+      - name: Run tests
+        run: flutter test
+      - name: Remove temporary workflow
+        run: rm .github/workflows/format-and-test-sale-summary.yml
+      - name: Commit formatter output
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/src/ui/transaction_screen.dart .github/workflows/format-and-test-sale-summary.yml
+          git commit -m "Format sale summary quantity fix"
+          git push origin HEAD:fix/sale-summary-total-quantity
