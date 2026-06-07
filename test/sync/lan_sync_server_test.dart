@@ -358,13 +358,13 @@ void main() {
       expect(request.direction, SyncPeerMessageDirection.received);
       expect(request.path, '/pair');
       expect(request.summary, 'Pairing request');
-      expect(request.bodyPreview, contains('"pairing_secret": "[redacted]"'));
-      expect(request.bodyPreview, isNot(contains(pairing.pairingSecret)));
+      expect(request.bodyContent, contains('"pairing_secret": "[redacted]"'));
+      expect(request.bodyContent, isNot(contains(pairing.pairingSecret)));
       expect(reply.direction, SyncPeerMessageDirection.sent);
       expect(reply.statusCode, 200);
       expect(reply.summary, 'Pairing result');
-      expect(reply.bodyPreview, contains('"shared_secret": "[redacted]"'));
-      expect(reply.bodyPreview, isNot(contains(pairing.pairingSecret)));
+      expect(reply.bodyContent, contains('"shared_secret": "[redacted]"'));
+      expect(reply.bodyContent, isNot(contains(pairing.pairingSecret)));
     });
   });
 
@@ -1353,6 +1353,18 @@ void main() {
       expect(cashierProduct?.quantity, 3);
       expect(counts[CashierSaleCommandOutboxStatus.accepted], 1);
       expect(await store.hasCashierSaleOutboxConflict(), false);
+
+      await client.syncWithPeer(peer.deviceId);
+
+      final messages = cashierRepository.recentSyncPeerMessages();
+      expect(
+        messages.where(
+          (message) =>
+              message.direction == SyncPeerMessageDirection.received &&
+              (message.bodyContent ?? '').contains('permission_denied'),
+        ),
+        isEmpty,
+      );
     } finally {
       client.close();
       await server.stop();

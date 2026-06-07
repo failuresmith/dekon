@@ -814,7 +814,7 @@ class LanSyncServer {
         statusCode: statusCode,
         peerDeviceId: request.headers[SyncAuthHeaders.deviceId],
         summary: SyncPeerMessage.summaryFrom(body),
-        bodyPreview: SyncPeerMessage.bodyPreviewFrom(body),
+        bodyContent: SyncPeerMessage.bodyContentFrom(body),
       ),
     );
   }

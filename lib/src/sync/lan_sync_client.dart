@@ -392,6 +392,10 @@ class LanSyncClient {
     }
     final importResult = await store.importEvents([localEvent]);
     _throwIfRejected('Sale command import', importResult);
+    await store.updatePushCursor(
+      peer.deviceId,
+      SyncCursor.fromEvent(localEvent),
+    );
     await fetchAndApplyCashierInventorySnapshot(peerDeviceId);
     await store.markPeerSuccess(peer.deviceId);
     return result;
@@ -978,7 +982,7 @@ class LanSyncClient {
         statusCode: statusCode,
         peerDeviceId: peerDeviceId,
         summary: SyncPeerMessage.summaryFrom(body),
-        bodyPreview: SyncPeerMessage.bodyPreviewFrom(body),
+        bodyContent: SyncPeerMessage.bodyContentFrom(body),
       ),
     );
   }

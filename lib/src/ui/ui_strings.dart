@@ -341,6 +341,47 @@ class UiStrings {
     );
   }
 
+  String syncPeerMessageIndex(int index) {
+    return _text(en: '#${integer(index)}', fa: '#${integer(index)}');
+  }
+
+  String get syncPeerMessageDetails {
+    return _text(en: 'Message details', fa: 'جزئیات پیام');
+  }
+
+  String openSyncPeerMessageDetails(int index) {
+    return _text(
+      en: 'Open details for message ${integer(index)}',
+      fa: 'باز کردن جزئیات پیام ${integer(index)}',
+    );
+  }
+
+  String get syncPeerMessageIndexLabel => _text(en: 'Index', fa: 'شماره');
+  String get syncPeerMessageTimeSent =>
+      _text(en: 'Time sent', fa: 'زمان ارسال');
+  String get syncPeerMessageTimeReceived {
+    return _text(en: 'Time received', fa: 'زمان دریافت');
+  }
+
+  String get syncPeerMessageTypeLabel => _text(en: 'Type', fa: 'نوع');
+  String get syncPeerMessageRequestLabel {
+    return _text(en: 'Request', fa: 'درخواست');
+  }
+
+  String get syncPeerMessageSummaryLabel {
+    return _text(en: 'Summary', fa: 'خلاصه');
+  }
+
+  String get syncPeerMessagePeerLabel => _text(en: 'Peer', fa: 'همتا');
+
+  String get syncPeerMessageContent {
+    return _text(en: 'Message content', fa: 'محتوای پیام');
+  }
+
+  String get noSyncPeerMessageContent {
+    return _text(en: 'No message content.', fa: 'محتوای پیام وجود ندارد.');
+  }
+
   String get clear => _text(en: 'Clear', fa: 'پاک کردن');
   String get back => _text(en: 'Back', fa: 'بازگشت');
   String get close => _text(en: 'Close', fa: 'بستن');
@@ -1351,13 +1392,6 @@ class UiStrings {
     return _text(
       en: 'Received $status$method $path',
       fa: 'دریافت شد $status$method $path',
-    );
-  }
-
-  String syncMessageTypeGroup(String type, int count) {
-    return _text(
-      en: '$type (${integer(count)})',
-      fa: '$type (${integer(count)})',
     );
   }
 

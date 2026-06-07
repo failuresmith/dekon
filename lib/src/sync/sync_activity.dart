@@ -3,9 +3,11 @@ import 'dart:collection';
 import 'dart:convert';
 
 class SyncActivityBus {
-  SyncActivityBus({this.maxPeerMessages = 50});
+  SyncActivityBus({this.maxPeerMessageBytes = defaultMaxPeerMessageBytes});
 
-  final int maxPeerMessages;
+  static const defaultMaxPeerMessageBytes = 10 * 1024 * 1024;
+
+  final int maxPeerMessageBytes;
   final _eventsChanged = StreamController<void>.broadcast();
   final _syncStateChanged = StreamController<void>.broadcast();
   final _transfers = StreamController<SyncTransferActivity>.broadcast();
@@ -13,6 +15,7 @@ class SyncActivityBus {
   final _cashierProjectionUpdates =
       StreamController<Map<String, Object?>>.broadcast();
   final _peerMessageLog = ListQueue<SyncPeerMessage>();
+  int _peerMessageBytes = 0;
 
   Stream<void> get eventsChanged => _eventsChanged.stream;
   Stream<void> get syncStateChanged => _syncStateChanged.stream;
@@ -39,10 +42,19 @@ class SyncActivityBus {
   }
 
   void recordPeerMessage(SyncPeerMessage message) {
-    if (_peerMessages.isClosed || maxPeerMessages <= 0) return;
+    if (_peerMessages.isClosed || maxPeerMessageBytes <= 0) return;
+    final messageBytes = message.estimatedMemoryBytes;
+    if (messageBytes > maxPeerMessageBytes) {
+      _peerMessageLog.clear();
+      _peerMessageBytes = 0;
+      _peerMessages.add(message);
+      return;
+    }
     _peerMessageLog.add(message);
-    while (_peerMessageLog.length > maxPeerMessages) {
-      _peerMessageLog.removeFirst();
+    _peerMessageBytes += messageBytes;
+    while (_peerMessageBytes > maxPeerMessageBytes &&
+        _peerMessageLog.isNotEmpty) {
+      _peerMessageBytes -= _peerMessageLog.removeFirst().estimatedMemoryBytes;
     }
     _peerMessages.add(message);
   }
@@ -54,6 +66,7 @@ class SyncActivityBus {
 
   void clearPeerMessages() {
     _peerMessageLog.clear();
+    _peerMessageBytes = 0;
   }
 
   Future<void> close() async {
@@ -86,7 +99,7 @@ class SyncPeerMessage {
     this.statusCode,
     this.peerDeviceId,
     this.summary,
-    this.bodyPreview,
+    this.bodyContent,
   });
 
   final DateTime timestamp;
@@ -96,21 +109,32 @@ class SyncPeerMessage {
   final int? statusCode;
   final String? peerDeviceId;
   final String? summary;
-  final String? bodyPreview;
+  final String? bodyContent;
 
-  static String? bodyPreviewFrom(String? body, {int maxLength = 1200}) {
+  int get estimatedMemoryBytes {
+    return 64 +
+        _stringMemoryBytes(method) +
+        _stringMemoryBytes(path) +
+        _stringMemoryBytes(peerDeviceId) +
+        _stringMemoryBytes(summary) +
+        _stringMemoryBytes(bodyContent);
+  }
+
+  static String? bodyContentFrom(String? body) {
     final trimmed = body?.trim();
     if (trimmed == null || trimmed.isEmpty) return null;
-    String preview;
     try {
-      preview = const JsonEncoder.withIndent(
+      return const JsonEncoder.withIndent(
         '  ',
       ).convert(_redact(jsonDecode(trimmed)));
     } on Object {
-      preview = trimmed;
+      return trimmed;
     }
-    if (preview.length <= maxLength) return preview;
-    return '${preview.substring(0, maxLength)}...';
+  }
+
+  static int _stringMemoryBytes(String? value) {
+    if (value == null) return 0;
+    return value.length * 2;
   }
 
   static String? summaryFrom(String? body) {

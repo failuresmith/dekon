@@ -124,80 +124,71 @@ class _SyncPeerMessagesDialogState extends State<SyncPeerMessagesDialog> {
   }
 
   Widget _messageList(SyncPeerMessageDirection direction) {
-    final groups = _messageGroups(direction);
-    if (groups.isEmpty) return _emptyState(direction);
+    final rows = _messageRows(direction);
+    if (rows.isEmpty) return _emptyState(direction);
     return ListView.separated(
-      itemCount: groups.length,
-      separatorBuilder: (context, index) => const Divider(height: 20),
-      itemBuilder: (context, index) => _messageGroup(groups[index]),
+      itemCount: rows.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) => _messageTile(rows[index]),
     );
   }
 
-  List<_MessageGroup> _messageGroups(SyncPeerMessageDirection direction) {
-    final grouped = <String, List<SyncPeerMessage>>{};
-    for (final message in _messages.reversed) {
+  List<_IndexedMessage> _messageRows(SyncPeerMessageDirection direction) {
+    final rows = <_IndexedMessage>[];
+    for (final message in _messages) {
       if (message.direction != direction) continue;
-      final type = _messageType(message);
-      grouped.putIfAbsent(type, () => <SyncPeerMessage>[]).add(message);
+      rows.add(
+        _IndexedMessage(
+          index: rows.length + 1,
+          message: message,
+          type: _messageType(message),
+        ),
+      );
     }
-    return [
-      for (final entry in grouped.entries)
-        _MessageGroup(type: entry.key, messages: entry.value),
-    ];
+    return rows;
   }
 
-  Widget _messageGroup(_MessageGroup group) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          context.strings.syncMessageTypeGroup(
-            group.type,
-            group.messages.length,
+  Widget _messageTile(_IndexedMessage row) {
+    final strings = context.strings;
+    final message = row.message;
+    final indexLabel = strings.syncPeerMessageIndex(row.index);
+    return Semantics(
+      button: true,
+      label: strings.openSyncPeerMessageDetails(row.index),
+      child: ListTile(
+        key: Key('sync-peer-message-${message.direction.name}-${row.index}'),
+        minVerticalPadding: 8,
+        leading: SizedBox(
+          width: 44,
+          child: Text(
+            indexLabel,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
           ),
-          style: theme.textTheme.titleSmall,
         ),
-        const SizedBox(height: 8),
-        for (var i = 0; i < group.messages.length; i++) ...[
-          if (i > 0) const Divider(height: 16),
-          _messageTile(group.messages[i]),
-        ],
-      ],
+        title: Text(row.type),
+        subtitle: Text(
+          '${_timeField(message)}: ${_timeLabel(message.timestamp)}'
+          '\n${_title(message)}',
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _showMessageDetails(row),
+      ),
     );
   }
 
-  Widget _messageTile(SyncPeerMessage message) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final bodyPreview = message.bodyPreview;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(_title(message), style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(_metadata(message), style: Theme.of(context).textTheme.bodySmall),
-        if (bodyPreview != null) ...[
-          const SizedBox(height: 8),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SelectableText(
-                  bodyPreview,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ],
+  Future<void> _showMessageDetails(_IndexedMessage row) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _SyncPeerMessageDetailsDialog(
+        row: row,
+        title: _title(row.message),
+        timeField: _timeField(row.message),
+        timeLabel: _timeLabel(row.message.timestamp),
+        peerLabel: row.message.peerDeviceId == null
+            ? null
+            : context.strings.syncPeer(_shortPeer(row.message.peerDeviceId!)),
+      ),
     );
   }
 
@@ -217,17 +208,16 @@ class _SyncPeerMessagesDialogState extends State<SyncPeerMessagesDialog> {
     };
   }
 
-  String _metadata(SyncPeerMessage message) {
-    return [
-      _timeLabel(message.timestamp),
-      if (message.summary != null) message.summary!,
-      if (message.peerDeviceId != null)
-        context.strings.syncPeer(_shortPeer(message.peerDeviceId!)),
-    ].join(' | ');
-  }
-
   String _timeLabel(DateTime timestamp) {
     return context.strings.timeOfDay(timestamp);
+  }
+
+  String _timeField(SyncPeerMessage message) {
+    return switch (message.direction) {
+      SyncPeerMessageDirection.sent => context.strings.syncPeerMessageTimeSent,
+      SyncPeerMessageDirection.received =>
+        context.strings.syncPeerMessageTimeReceived,
+    };
   }
 
   String _messageType(SyncPeerMessage message) {
@@ -273,9 +263,121 @@ class _SyncPeerMessagesDialogState extends State<SyncPeerMessagesDialog> {
   }
 }
 
-class _MessageGroup {
-  const _MessageGroup({required this.type, required this.messages});
+class _SyncPeerMessageDetailsDialog extends StatelessWidget {
+  const _SyncPeerMessageDetailsDialog({
+    required this.row,
+    required this.title,
+    required this.timeField,
+    required this.timeLabel,
+    required this.peerLabel,
+  });
 
+  final _IndexedMessage row;
+  final String title;
+  final String timeField;
+  final String timeLabel;
+  final String? peerLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final viewport = MediaQuery.sizeOf(context);
+    final strings = context.strings;
+    final width = min(max(viewport.width - 48, 280), 600).toDouble();
+    final height = min(max(viewport.height * 0.62, 320), 560).toDouble();
+    final message = row.message;
+    return AlertDialog(
+      title: Text(strings.syncPeerMessageDetails),
+      content: SizedBox(
+        width: width,
+        height: height,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailLine(
+              context,
+              strings.syncPeerMessageIndexLabel,
+              strings.syncPeerMessageIndex(row.index),
+            ),
+            _detailLine(context, timeField, timeLabel),
+            _detailLine(context, strings.syncPeerMessageTypeLabel, row.type),
+            _detailLine(context, strings.syncPeerMessageRequestLabel, title),
+            if (message.summary != null)
+              _detailLine(
+                context,
+                strings.syncPeerMessageSummaryLabel,
+                message.summary!,
+              ),
+            if (peerLabel != null)
+              _detailLine(
+                context,
+                strings.syncPeerMessagePeerLabel,
+                peerLabel!,
+              ),
+            const SizedBox(height: 12),
+            Text(
+              strings.syncPeerMessageContent,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            Expanded(child: _messageContent(context, message.bodyContent)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('close-sync-peer-message-details'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(strings.close),
+        ),
+      ],
+    );
+  }
+
+  Widget _detailLine(BuildContext context, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        '$label: $value',
+        style: Theme.of(context).textTheme.bodyMedium,
+      ),
+    );
+  }
+
+  Widget _messageContent(BuildContext context, String? content) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: content == null
+            ? Center(child: Text(context.strings.noSyncPeerMessageContent))
+            : SingleChildScrollView(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SelectableText(
+                    content,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _IndexedMessage {
+  const _IndexedMessage({
+    required this.index,
+    required this.message,
+    required this.type,
+  });
+
+  final int index;
+  final SyncPeerMessage message;
   final String type;
-  final List<SyncPeerMessage> messages;
 }
