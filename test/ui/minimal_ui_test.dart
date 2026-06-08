@@ -495,12 +495,14 @@ void main() {
 
     expect(
       find.text(
-        'Sale saved on this cashier. It will sync when the main device returns.',
+        'Sale saved on this device. It will sync when connected.',
       ),
       findsOneWidget,
     );
     expect((await repository.cashierSaleOutboxSummary()).queuedCount, 1);
 
+    await tester.tap(find.byKey(const Key('new-sale-after-completion')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('sell-history')));
     await tester.pumpAndSettle();
 
@@ -702,6 +704,8 @@ void main() {
     await tester.tap(find.byKey(const Key('finish-sale')));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const Key('new-sale-after-completion')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Inventory'));
     await tester.pumpAndSettle();
 
@@ -1199,6 +1203,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sale completed'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('new-sale-after-completion')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('sell-history')));
     await tester.pumpAndSettle();
 
@@ -1211,6 +1217,67 @@ void main() {
 
     expect(find.text('Revenue'), findsOneWidget);
     expect(find.text('400 Rial'), findsOneWidget);
+  });
+
+  testWidgets('sale receipt sharing saves customer and opens share text', (
+    tester,
+  ) async {
+    final repository = await createEnglishTestRepository(onboarded: true);
+    final product = await repository.createProduct(
+      name: 'Receipt Tea',
+      barcode: 'RECEIPT-TEA',
+      salePriceMinor: 400,
+      purchaseCostMinor: 150,
+    );
+    await repository.recordPurchase([
+      TransactionLineDraft(product: product, quantity: 2),
+    ]);
+    String? sharedText;
+    String? shareTitle;
+
+    await tester.pumpWidget(
+      testApp(
+        repository,
+        shareText: ({required text, required title}) async {
+          sharedText = text;
+          shareTitle = title;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _submitLookup(tester, 'RECEIPT-TEA');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('finish-sale')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('new-sale-after-completion')), findsOneWidget);
+    expect(find.byKey(const Key('share-receipt')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('share-receipt')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('receipt-customer-phone')),
+      '+98 912 345 6789',
+    );
+    await tester.enterText(
+      find.byKey(const Key('receipt-customer-name')),
+      'Sara Customer',
+    );
+    await tester.tap(find.byKey(const Key('send-and-save-customer')));
+    await tester.pumpAndSettle();
+
+    expect(shareTitle, 'Share Receipt');
+    expect(sharedText, contains('Receipt Tea x1'));
+    expect(sharedText, contains('Total: 400 Rial'));
+    final customers = await repository.customersMatching('Sara');
+    expect(customers, hasLength(1));
+    expect(customers.single.phoneNumber, '+98 912 345 6789');
+    expect(customers.single.fullName, 'Sara Customer');
+    final sale = (await repository.transactionHistory(
+      TransactionHistoryKind.sale,
+    )).single;
+    final linkedCustomer = await repository.customerForSale(sale.id);
+    expect(linkedCustomer?.customerId, customers.single.customerId);
   });
 
   testWidgets('Transaction history opens readable sale and restock details', (

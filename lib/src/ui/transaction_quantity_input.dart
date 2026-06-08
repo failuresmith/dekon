@@ -28,7 +28,7 @@ class _TransactionQuantityInputState extends State<TransactionQuantityInput> {
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.value.g);
+    _controller = TextEditingController();
     _focusNode = FocusNode()..addListener(_handleFocusChanged);
   }
 
@@ -118,7 +118,7 @@ class _TransactionQuantityInputState extends State<TransactionQuantityInput> {
   bool _tracksValue(double value) => _parseQuantity(_controller.text) == value;
 
   void _syncText(double value) {
-    final text = context.strings.digits(value.g);
+    final text = context.strings.quantity(value);
     _controller.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../application/application.dart';
 import '../backup/backup.dart';
+import '../platform/external_link_actions.dart';
 import '../sync/sync.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_pairing_panel.dart';
@@ -26,6 +27,7 @@ class AppShell extends StatefulWidget {
     this.scanBarcode = showBarcodeScannerDialog,
     this.backupService,
     this.backupFiles = const BackupFileActions(),
+    this.shareText = sharePlainText,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
     this.syncServiceDiscovery = const NoopSyncServiceDiscovery(),
@@ -35,6 +37,7 @@ class AppShell extends StatefulWidget {
   final BarcodeScanLauncher scanBarcode;
   final BackupRunner? backupService;
   final BackupFileActions backupFiles;
+  final TextShareLauncher shareText;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
   final SyncServiceDiscovery syncServiceDiscovery;
@@ -219,6 +222,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           repository: widget.repository,
           mode: TransactionMode.sell,
           scanBarcode: widget.scanBarcode,
+          shareText: widget.shareText,
           cashierSyncStatus: isCashier && settings.locked
               ? _cashierSyncStatus
               : null,
@@ -242,6 +246,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             repository: widget.repository,
             mode: TransactionMode.buy,
             scanBarcode: widget.scanBarcode,
+            shareText: widget.shareText,
           ),
           historyMode: TransactionMode.buy,
           destination: NavigationDestination(

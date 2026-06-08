@@ -63,6 +63,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openUrl" -> openUrl(call, result)
+                "shareText" -> shareText(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -206,6 +207,25 @@ class MainActivity : FlutterActivity() {
             result.success(null)
         } catch (error: ActivityNotFoundException) {
             result.error("no_handler", "No app is available to open this link.", null)
+        }
+    }
+
+    private fun shareText(call: MethodCall, result: MethodChannel.Result) {
+        val text = call.argument<String>("text")
+        if (text.isNullOrBlank()) {
+            result.error("invalid_arguments", "Share text is missing.", null)
+            return
+        }
+        val title = call.argument<String>("title") ?: "Share"
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        try {
+            startActivity(Intent.createChooser(intent, title))
+            result.success(null)
+        } catch (error: ActivityNotFoundException) {
+            result.error("no_handler", "No app is available to share this receipt.", null)
         }
     }
 

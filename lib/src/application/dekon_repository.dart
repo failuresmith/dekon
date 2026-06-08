@@ -544,10 +544,12 @@ class DekonRepository {
     );
   }
 
-  Future<void> _commitSaleWithStockPatch(
+  Future<SaleRecordResult> _commitSaleWithStockPatch(
     List<TransactionLineDraft> lines,
   ) async {
     final productIds = {for (final line in lines) line.product.productId};
+    String? saleId;
+    DateTime? occurredAt;
     return _replicatedMutations.run(() async {
       int? projectionVersion;
       var committed = false;
@@ -560,11 +562,12 @@ class DekonRepository {
               unitPriceMinor: line.unitPriceMinor,
             ),
         ]);
+        final saleOccurredAt = _now().toUtc();
         final event = _event(
           type: EventTypes.inventorySaleRecorded,
           entityId: _uuid.v7(),
           payload: {
-            'occurred_at': _now().toUtc().toIso8601String(),
+            'occurred_at': saleOccurredAt.toIso8601String(),
             'total_minor': saleLines.fold<int>(
               0,
               (sum, line) => sum + line.saleTotalMinor,
@@ -575,6 +578,8 @@ class DekonRepository {
         final write = await _eventStore.appendInTransaction(txn, event);
         if (write.status == EventWriteStatus.duplicate) return;
         committed = true;
+        saleId = event.entityId;
+        occurredAt = saleOccurredAt;
         await _projector.applyInTransaction(txn, event);
         projectionVersion =
             await SyncStore.incrementCashierProjectionVersionInTransaction(
@@ -582,13 +587,19 @@ class DekonRepository {
               now: _now().toUtc(),
             );
       });
-      if (!committed) return;
+      final id = saleId;
+      final at = occurredAt;
+      if (!committed || id == null || at == null) {
+        throw StateError('Sale could not be recorded.');
+      }
       _syncActivityBus.notifyEventsChanged();
       final version = projectionVersion;
-      if (version == null) return;
-      _syncActivityBus.notifyCashierProjectionUpdate(
-        await _cashierInventoryPatchMessage(version, productIds),
-      );
+      if (version != null) {
+        _syncActivityBus.notifyCashierProjectionUpdate(
+          await _cashierInventoryPatchMessage(version, productIds),
+        );
+      }
+      return SaleRecordResult.completed(saleId: id, occurredAt: at);
     });
   }
 
@@ -680,8 +691,7 @@ class DekonRepository {
     if (await _shouldSubmitCashierSaleCommand()) {
       return _recordCashierSaleCommand(lines);
     }
-    await _commitSaleWithStockPatch(lines);
-    return const SaleRecordResult.completed();
+    return _commitSaleWithStockPatch(lines);
   }
 
   Future<bool> _shouldSubmitCashierSaleCommand() async {
@@ -727,7 +737,9 @@ class DekonRepository {
     if (mainPeer == null) {
       return SaleRecordResult(
         status: SaleRecordStatus.queued,
+        saleId: command.commandId,
         commandId: command.commandId,
+        occurredAt: command.occurredAt,
       );
     }
     final client = LanSyncClient(store: store, now: _now);
@@ -740,12 +752,16 @@ class DekonRepository {
           CashierSaleCommandOutboxStatus.conflict => SaleRecordStatus.conflict,
           _ => SaleRecordStatus.queued,
         },
+        saleId: command.commandId,
         commandId: command.commandId,
+        occurredAt: command.occurredAt,
       );
     } on Object {
       return SaleRecordResult(
         status: SaleRecordStatus.queued,
+        saleId: command.commandId,
         commandId: command.commandId,
+        occurredAt: command.occurredAt,
       );
     } finally {
       client.close();
@@ -786,6 +802,119 @@ class DekonRepository {
       ),
       lines,
     );
+  }
+
+  Future<List<CustomerSummary>> customersMatching(String query) async {
+    final value = query.trim().toLowerCase();
+    if (value.isEmpty) return const [];
+    final normalizedPhone = _phoneSearchKey(value);
+    final where = [
+      "LOWER(COALESCE(full_name, '')) LIKE ? ESCAPE '\\'",
+      "LOWER(phone_number) LIKE ? ESCAPE '\\'",
+    ];
+    final whereArgs = <Object?>[
+      '%${_escapeLike(value)}%',
+      '%${_escapeLike(value)}%',
+    ];
+    if (normalizedPhone.isNotEmpty) {
+      where.add("normalized_phone LIKE ? ESCAPE '\\'");
+      whereArgs.add('%${_escapeLike(normalizedPhone)}%');
+    }
+    final rows = await _db.query(
+      'customers',
+      where: where.join(' OR '),
+      whereArgs: whereArgs,
+      orderBy: "LOWER(COALESCE(NULLIF(full_name, ''), phone_number)) ASC",
+      limit: 20,
+    );
+    return rows.map(_customerFromRow).toList(growable: false);
+  }
+
+  Future<CustomerSummary> saveCustomerForReceipt({
+    required String phoneNumber,
+    String? fullName,
+  }) async {
+    final normalizedPhone = _normalizePhone(phoneNumber);
+    final displayPhone = phoneNumber.trim();
+    final name = _blankToNull(fullName);
+    final nowText = _now().toUtc().toIso8601String();
+    return _db.transaction((txn) async {
+      final existing = await txn.query(
+        'customers',
+        where: 'normalized_phone = ?',
+        whereArgs: [normalizedPhone],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        final customerId = existing.single['customer_id'] as String;
+        final currentName = existing.single['full_name'] as String?;
+        await txn.update(
+          'customers',
+          {
+            'phone_number': displayPhone,
+            if (name != null || currentName == null) 'full_name': name,
+            'updated_at': nowText,
+          },
+          where: 'customer_id = ?',
+          whereArgs: [customerId],
+        );
+        final rows = await txn.query(
+          'customers',
+          where: 'customer_id = ?',
+          whereArgs: [customerId],
+          limit: 1,
+        );
+        return _customerFromRow(rows.single);
+      }
+
+      final customerId = _uuid.v7();
+      await txn.insert('customers', {
+        'customer_id': customerId,
+        'phone_number': displayPhone,
+        'normalized_phone': normalizedPhone,
+        'full_name': name,
+        'created_at': nowText,
+        'updated_at': nowText,
+      });
+      return CustomerSummary(
+        customerId: customerId,
+        phoneNumber: displayPhone,
+        fullName: name,
+      );
+    });
+  }
+
+  Future<void> linkCustomerToSale({
+    required String saleId,
+    required String customerId,
+  }) async {
+    final trimmedSaleId = saleId.trim();
+    final trimmedCustomerId = customerId.trim();
+    if (trimmedSaleId.isEmpty || trimmedCustomerId.isEmpty) {
+      throw ArgumentError('Sale and customer are required.');
+    }
+    final nowText = _now().toUtc().toIso8601String();
+    await _db.insert('sale_customer_links', {
+      'sale_id': trimmedSaleId,
+      'customer_id': trimmedCustomerId,
+      'created_at': nowText,
+      'updated_at': nowText,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<CustomerSummary?> customerForSale(String saleId) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT c.*
+      FROM sale_customer_links l
+      JOIN customers c ON c.customer_id = l.customer_id
+      WHERE l.sale_id = ?
+      LIMIT 1
+      ''',
+      [saleId.trim()],
+    );
+    if (rows.isEmpty) return null;
+    return _customerFromRow(rows.single);
   }
 
   Future<ReportSummary> reportSummary({
@@ -1619,6 +1748,47 @@ class DekonRepository {
       active: row['active'] == 1,
       quantity: (row['quantity'] as num).toDouble(),
     );
+  }
+
+  CustomerSummary _customerFromRow(Map<String, Object?> row) {
+    return CustomerSummary(
+      customerId: row['customer_id'] as String,
+      phoneNumber: row['phone_number'] as String,
+      fullName: row['full_name'] as String?,
+    );
+  }
+
+  String _normalizePhone(String value) {
+    final normalized = _phoneSearchKey(value);
+    final digitCount = normalized.replaceAll(RegExp('[^0-9]'), '').length;
+    if (digitCount < 7) {
+      throw const FormatException('Phone number is too short.');
+    }
+    return normalized;
+  }
+
+  String _phoneSearchKey(String value) {
+    final trimmed = value.trim();
+    final buffer = StringBuffer();
+    for (var index = 0; index < trimmed.length; index++) {
+      final char = trimmed[index];
+      if (index == 0 && char == '+') {
+        buffer.write(char);
+      } else {
+        final digit = _digitValue(char);
+        if (digit != null) buffer.write(digit);
+      }
+    }
+    return buffer.toString();
+  }
+
+  int? _digitValue(String value) {
+    if (value.length != 1) return null;
+    final code = value.codeUnitAt(0);
+    if (code >= 48 && code <= 57) return code - 48;
+    if (code >= 0x06F0 && code <= 0x06F9) return code - 0x06F0;
+    if (code >= 0x0660 && code <= 0x0669) return code - 0x0660;
+    return null;
   }
 
   String? _blankToNull(String? value) {

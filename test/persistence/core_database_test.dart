@@ -32,6 +32,8 @@ void main() {
           'projection_applied_events',
           'cashier_sale_command_outbox',
           'cashier_sale_command_outbox_lines',
+          'customers',
+          'sale_customer_links',
         }),
       );
       expect(await db.getVersion(), CoreDatabase.schemaVersion);
@@ -60,6 +62,7 @@ void main() {
       try {
         expect(await upgraded.getVersion(), CoreDatabase.schemaVersion);
         expect(await _tableNames(upgraded), contains('products_projection'));
+        expect(await _tableNames(upgraded), contains('customers'));
       } finally {
         await upgraded.close();
       }

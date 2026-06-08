@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'src/app_config.dart';
 import 'src/application/application.dart';
 import 'src/backup/backup.dart';
+import 'src/platform/external_link_actions.dart';
 import 'src/sync/sync.dart';
 import 'src/ui/app_shell.dart';
 import 'src/ui/barcode_scanner_dialog.dart';
@@ -22,6 +23,7 @@ class MainApp extends StatefulWidget {
     this.scanBarcode,
     this.backupService,
     this.backupFiles = const BackupFileActions(),
+    this.shareText = sharePlainText,
     this.pairWithMainDevice,
     this.pairWithMainDeviceAddress,
     this.syncServiceDiscovery = const AndroidSyncServiceDiscovery(),
@@ -31,6 +33,7 @@ class MainApp extends StatefulWidget {
   final BarcodeScanLauncher? scanBarcode;
   final BackupRunner? backupService;
   final BackupFileActions backupFiles;
+  final TextShareLauncher shareText;
   final MainDevicePairer? pairWithMainDevice;
   final MainDeviceAddressPairer? pairWithMainDeviceAddress;
   final SyncServiceDiscovery syncServiceDiscovery;
@@ -98,6 +101,7 @@ class _MainAppState extends State<MainApp> {
                 scanBarcode: widget.scanBarcode ?? showBarcodeScannerDialog,
                 backupService: widget.backupService,
                 backupFiles: widget.backupFiles,
+                shareText: widget.shareText,
                 pairWithMainDevice: widget.pairWithMainDevice,
                 pairWithMainDeviceAddress: widget.pairWithMainDeviceAddress,
                 syncServiceDiscovery: widget.syncServiceDiscovery,

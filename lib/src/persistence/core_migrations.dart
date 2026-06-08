@@ -19,7 +19,7 @@ class CoreMigration {
 }
 
 abstract final class CoreMigrations {
-  static const currentVersion = 7;
+  static const currentVersion = 8;
 
   static final List<CoreMigration> migrations = [
     CoreMigration(
@@ -53,6 +53,7 @@ abstract final class CoreMigrations {
       name: 'cashier_applied_projection_ack',
       apply: _cashierAppliedProjectionAck,
     ),
+    CoreMigration(version: 8, name: 'customer_receipts', apply: _customers),
   ];
 
   static Future<void> apply(
@@ -345,6 +346,39 @@ abstract final class CoreMigrations {
       'ALTER TABLE sync_peers ADD COLUMN '
       'last_applied_cashier_projection_version INTEGER',
     );
+  }
+
+  static Future<void> _customers(DatabaseExecutor db) async {
+    await _createCustomerTables(db);
+  }
+
+  static Future<void> _createCustomerTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS customers (
+        customer_id TEXT PRIMARY KEY,
+        phone_number TEXT NOT NULL,
+        normalized_phone TEXT NOT NULL UNIQUE,
+        full_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS customers_full_name_idx
+      ON customers (full_name COLLATE NOCASE)
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sale_customer_links (
+        sale_id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS sale_customer_links_customer_idx
+      ON sale_customer_links (customer_id, created_at DESC)
+    ''');
   }
 
   static Future<void> _backfillInventoryLots(DatabaseExecutor db) async {

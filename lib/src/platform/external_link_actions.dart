@@ -1,9 +1,17 @@
 import 'package:flutter/services.dart';
 
 typedef ExternalLinkLauncher = Future<void> Function(Uri uri);
+typedef TextShareLauncher = Future<void> Function({
+  required String text,
+  required String title,
+});
 
 Future<void> openExternalHttpsLink(Uri uri) {
   return const ExternalLinkActions().openHttps(uri);
+}
+
+Future<void> sharePlainText({required String text, required String title}) {
+  return const ExternalLinkActions().shareText(text: text, title: title);
 }
 
 class ExternalLinkActions {
@@ -23,8 +31,28 @@ class ExternalLinkActions {
       throw const ExternalLinkException();
     }
   }
+
+  Future<void> shareText({required String text, required String title}) async {
+    if (text.trim().isEmpty) {
+      throw const ExternalShareException();
+    }
+    try {
+      await _channel.invokeMethod<void>('shareText', {
+        'text': text,
+        'title': title,
+      });
+    } on PlatformException {
+      throw const ExternalShareException();
+    } on MissingPluginException {
+      throw const ExternalShareException();
+    }
+  }
 }
 
 class ExternalLinkException implements Exception {
   const ExternalLinkException();
+}
+
+class ExternalShareException implements Exception {
+  const ExternalShareException();
 }

@@ -111,14 +111,41 @@ class TransactionLineDraft {
 enum SaleRecordStatus { completed, queued, conflict }
 
 class SaleRecordResult {
-  const SaleRecordResult({required this.status, this.commandId});
+  const SaleRecordResult({
+    required this.status,
+    this.saleId,
+    this.commandId,
+    this.occurredAt,
+  });
 
-  const SaleRecordResult.completed()
-    : status = SaleRecordStatus.completed,
+  const SaleRecordResult.completed({
+    required String this.saleId,
+    required DateTime this.occurredAt,
+  }) : status = SaleRecordStatus.completed,
       commandId = null;
 
   final SaleRecordStatus status;
+  final String? saleId;
   final String? commandId;
+  final DateTime? occurredAt;
+}
+
+class CustomerSummary {
+  const CustomerSummary({
+    required this.customerId,
+    required this.phoneNumber,
+    required this.fullName,
+  });
+
+  final String customerId;
+  final String phoneNumber;
+  final String? fullName;
+
+  String get displayName {
+    final name = fullName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return phoneNumber;
+  }
 }
 
 class CashierSaleOutboxSummary {

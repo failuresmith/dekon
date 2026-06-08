@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/application.dart';
+import '../platform/external_link_actions.dart';
 import 'barcode_scanner_dialog.dart';
 import 'cashier_sync_status.dart';
 import 'persian_date_range_picker.dart';
 import 'product_lookup_field.dart';
+import 'sale_receipt_share_dialog.dart';
 import 'transaction_quantity_input.dart';
 import 'ui_strings.dart';
 
@@ -18,12 +20,14 @@ class TransactionScreen extends StatefulWidget {
     required this.repository,
     required this.mode,
     this.scanBarcode = showBarcodeScannerDialog,
+    this.shareText = sharePlainText,
     this.cashierSyncStatus,
   });
 
   final DekonRepository repository;
   final TransactionMode mode;
   final BarcodeScanLauncher scanBarcode;
+  final TextShareLauncher shareText;
   final CashierSyncStatus? cashierSyncStatus;
 
   @override
@@ -471,11 +475,12 @@ class _TransactionScreenState extends State<TransactionScreen> {
     if (_saving) return;
     final strings = context.strings;
     final messenger = ScaffoldMessenger.of(context);
+    final transactionLines = List<TransactionLineDraft>.unmodifiable(_lines);
     setState(() => _saving = true);
     try {
       if (_isSell) {
         final negativeProductIds = await widget.repository
-            .negativeStockProductIds(_lines);
+            .negativeStockProductIds(transactionLines);
         if (!mounted) return;
         if (negativeProductIds.isNotEmpty) {
           setState(() {
@@ -489,16 +494,36 @@ class _TransactionScreenState extends State<TransactionScreen> {
         }
       }
       if (_isSell) {
-        final result = await widget.repository.recordSale(_lines);
+        final result = await widget.repository.recordSale(transactionLines);
         if (!mounted) return;
-        _message(messenger, switch (result.status) {
-          SaleRecordStatus.completed => strings.saleCompleted,
-          SaleRecordStatus.queued => strings.cashierSaleQueued,
-          SaleRecordStatus.conflict => strings.cashierSaleConflictSaved,
-        });
         unawaited(_refreshOutboxSummary());
+        setState(() {
+          _lines.clear();
+          _negativeProductIds.clear();
+        });
+        if (result.status == SaleRecordStatus.conflict ||
+            result.saleId == null ||
+            result.occurredAt == null) {
+          _message(messenger, strings.cashierSaleConflictSaved);
+          return;
+        }
+        if (result.status == SaleRecordStatus.queued) {
+          _message(messenger, strings.cashierSaleQueued);
+        }
+        setState(() => _saving = false);
+        await showSaleCompletedDialog(
+          context: context,
+          repository: widget.repository,
+          receipt: SaleReceiptDraft.fromSale(
+            saleId: result.saleId!,
+            occurredAt: result.occurredAt!,
+            lines: transactionLines,
+          ),
+          shareText: widget.shareText,
+        );
+        return;
       } else {
-        await widget.repository.recordPurchase(_lines);
+        await widget.repository.recordPurchase(transactionLines);
         if (!mounted) return;
         _message(messenger, strings.inventoryUpdated);
       }
